@@ -11,8 +11,7 @@ CREATE TABLE IF NOT EXISTS post_views (
 
 -- Used by feed: exclude posts seen >= 2 times by this device in last 24h
 CREATE INDEX IF NOT EXISTS idx_post_views_device_recent
-    ON post_views(device_id, last_seen DESC)
-    WHERE last_seen >= NOW() - INTERVAL '24 hours';
+    ON post_views(device_id, last_seen DESC);
 
 -- Used by cold-start rescue: find posts with 0 views in last 2 hours
 CREATE INDEX IF NOT EXISTS idx_post_views_post_count
