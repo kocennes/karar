@@ -68,15 +68,9 @@ public sealed class ImageModerationWorker(
         {
             if (ct.IsCancellationRequested) break;
 
-            // Convert public URL to GCS URI if needed
-            var gcsUri = ToGcsUri(imageUrl);
-            if (gcsUri is null)
-            {
-                await SetModerationStatusAsync(connection, postId, "active", "approved", ct);
-                continue;
-            }
-
-            var result = await safeSearch.AnalyzeAsync(gcsUri, ct);
+            // Analyze directly via public URL or GCS URI
+            // Cloud Vision supports publicly accessible HTTP/HTTPS URLs.
+            var result = await safeSearch.AnalyzeAsync(imageUrl, ct);
             if (result is null)
             {
                 // API unavailable — mark as skipped so it's not retried indefinitely
@@ -124,26 +118,5 @@ public sealed class ImageModerationWorker(
             cmd.Parameters.AddWithValue("postStatus", postStatus);
 
         await cmd.ExecuteNonQueryAsync(ct);
-    }
-
-    /// <summary>Converts a public GCS HTTPS URL back to gs:// URI for the Vision API.</summary>
-    private static string? ToGcsUri(string imageUrl)
-    {
-        // Already a gs:// URI
-        if (imageUrl.StartsWith("gs://", StringComparison.OrdinalIgnoreCase))
-            return imageUrl;
-
-        // https://storage.googleapis.com/{bucket}/{object}
-        const string storagePfx = "https://storage.googleapis.com/";
-        if (imageUrl.StartsWith(storagePfx, StringComparison.OrdinalIgnoreCase))
-        {
-            var path = imageUrl[storagePfx.Length..];
-            var slash = path.IndexOf('/');
-            if (slash > 0)
-                return $"gs://{path[..slash]}/{path[(slash + 1)..]}";
-        }
-
-        // CDN URL or unrecognised format — skip SafeSearch
-        return null;
     }
 }

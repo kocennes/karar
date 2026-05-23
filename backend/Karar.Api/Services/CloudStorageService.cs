@@ -7,18 +7,14 @@ namespace Karar.Api.Services;
 /// Uses Application Default Credentials — works automatically on Cloud Run.
 /// Locally: set GOOGLE_APPLICATION_CREDENTIALS env var.
 /// </summary>
-public sealed class CloudStorageService(IConfiguration config, ILogger<CloudStorageService> logger)
+public sealed class CloudStorageService(IConfiguration config, ILogger<CloudStorageService> logger) : IStorageService
 {
     private readonly string _bucketName = config["GCS:BucketName"] ?? "karar-images";
     private readonly string _cdnBase = config["GCS:CdnBase"] ?? "";
 
     public bool IsEnabled => !string.IsNullOrWhiteSpace(config["GCS:BucketName"]);
 
-    /// <summary>
-    /// Uploads <paramref name="stream"/> to GCS under <paramref name="objectName"/>.
-    /// Returns (publicHttpUrl, gsUri) on success, null on failure.
-    /// </summary>
-    public async Task<(string PublicUrl, string GcsUri)?> UploadAsync(
+    public async Task<(string PublicUrl, string StorageUri)?> UploadAsync(
         Stream stream,
         string contentType,
         string objectName,
@@ -42,13 +38,13 @@ public sealed class CloudStorageService(IConfiguration config, ILogger<CloudStor
             };
             await client.UploadObjectAsync(obj, stream, cancellationToken: ct);
 
-            var gcsUri = $"gs://{_bucketName}/{objectName}";
+            var storageUri = $"gs://{_bucketName}/{objectName}";
             var publicUrl = string.IsNullOrWhiteSpace(_cdnBase)
                 ? $"https://storage.googleapis.com/{_bucketName}/{objectName}"
                 : $"{_cdnBase.TrimEnd('/')}/{objectName}";
 
             logger.LogInformation("Uploaded {Object} to GCS", objectName);
-            return (publicUrl, gcsUri);
+            return (publicUrl, storageUri);
         }
         catch (Exception ex)
         {

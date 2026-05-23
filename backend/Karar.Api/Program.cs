@@ -70,7 +70,15 @@ builder.Services.AddHttpClient("perspective", c =>
 .AddHttpMessageHandler<SsrfProtectionHandler>()
 .AddStandardResilienceHandler();
 
-builder.Services.AddSingleton<CloudStorageService>();
+var storageProvider = builder.Configuration["Storage:Provider"]?.ToLowerInvariant();
+if (storageProvider == "supabase")
+{
+    builder.Services.AddSingleton<IStorageService, SupabaseStorageService>();
+}
+else
+{
+    builder.Services.AddSingleton<IStorageService, CloudStorageService>();
+}
 builder.Services.AddSingleton<SafeSearchService>();
 builder.Services.AddSingleton<ImageProcessorService>();
 builder.Services.AddSingleton<ShareImageService>();
@@ -1787,7 +1795,7 @@ app.MapPost("/api/v1/posts", async (
     RequestDevice requestDevice,
     ContentModerationService moderationService,
     PerspectiveApiService perspectiveService,
-    CloudStorageService storageService,
+    IStorageService storageService,
     ImageProcessorService imageProcessorService,
     JwtService jwtService,
     RedisService redis,
@@ -1896,7 +1904,6 @@ app.MapPost("/api/v1/posts", async (
             return BadRequest("IMAGE_PROCESSING_FAILED", "Görsel işlenemedi. Lütfen farklı bir dosya deneyin.");
 
         var uploaded = await storageService.UploadAsync(processedStream, "image/jpeg", objectName);
-        // GCS başarısız olursa görselsiz devam et (geçici altyapı hatası, içerik yayınlanabilir)
         if (uploaded is not null)
         {
             imageUrl = uploaded.Value.PublicUrl;
