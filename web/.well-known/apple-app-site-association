@@ -1,0 +1,14 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "TEAMID.app.karar.mobile",
+        "paths": [
+          "/posts/*",
+          "/users/*"
+        ]
+      }
+    ]
+  }
+}

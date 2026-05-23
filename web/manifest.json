@@ -1,0 +1,42 @@
+{
+    "name": "Karar",
+    "short_name": "Karar",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#F8F9FA",
+    "theme_color": "#1A1A2E",
+    "description": "Topluluk yargılama platformu.",
+    "orientation": "portrait-primary",
+    "prefer_related_applications": false,
+    "related_applications": [
+        {
+            "platform": "play",
+            "id": "app.karar.mobile",
+            "url": "https://play.google.com/store/apps/details?id=app.karar.mobile"
+        }
+    ],
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}

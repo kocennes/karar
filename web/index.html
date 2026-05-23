@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#6366F1">
+  <meta name="description" content="Günlük çatışmalarını anonim paylaş, topluluk haklı mı haksız mı oyluyor. Türkiye'nin topluluk yargılama platformu.">
+  <meta name="keywords" content="karar, haklı mıyım, anonim paylaşım, topluluk kararı, AITA Türkçe, sosyal yargılama, anlaşmazlık">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://karar.app">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Karar">
+  <meta property="og:title" content="Karar — Haklı mısın?">
+  <meta property="og:description" content="Durumunu anlat, topluluk haklı mı haksız mı karar versin.">
+  <meta property="og:image" content="https://karar.app/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:url" content="https://karar.app">
+  <meta property="og:locale" content="tr_TR">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Karar — Haklı mısın?">
+  <meta name="twitter:description" content="Durumunu anlat, topluluk haklı mı haksız mı karar versin.">
+  <meta name="twitter:image" content="https://karar.app/og-image.png">
+  <meta name="twitter:url" content="https://karar.app">
+
+  <meta name="google-play-app" content="app-id=app.karar.mobile">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="Karar">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <title>Karar — Haklı mısın? Topluluk karar versin</title>
+  <link rel="manifest" href="manifest.json">
+
+  <script>
+    window.deferredPrompt = null;
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      window.deferredPrompt = e;
+      if (window.onBeforeInstallPrompt) {
+        window.onBeforeInstallPrompt();
+      }
+    });
+
+    window.addEventListener('appinstalled', (evt) => {
+      window.deferredPrompt = null;
+    });
+
+    window.isPwaInstalled = () => {
+      return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+    };
+
+    window.promptPwaInstall = async () => {
+      if (!window.deferredPrompt) return false;
+      window.deferredPrompt.prompt();
+      const { outcome } = await window.deferredPrompt.userChoice;
+      window.deferredPrompt = null;
+      return outcome === 'accepted';
+    };
+
+    // W32: simple fire-and-forget install prompt (no Promise needed)
+    window.showInstallPrompt = () => {
+      if (!window.deferredPrompt) return;
+      window.deferredPrompt.prompt();
+      window.deferredPrompt.userChoice.then(() => {
+        window.deferredPrompt = null;
+      }).catch(() => {
+        window.deferredPrompt = null;
+      });
+    };
+
+    // W34: service worker update detection
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (window.onSwUpdateReady) window.onSwUpdateReady();
+      });
+    }
+  </script>
+</head>
+<body>
+  <!--
+    You can customize the "flutter_bootstrap.js" script.
+    This is useful to provide a custom configuration to the Flutter loader
+    or to give the user feedback during the initialization process.
+
+    For more details:
+    * https://docs.flutter.dev/platform-integration/web/initialization
+  -->
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

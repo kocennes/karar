@@ -1,0 +1,110 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+
+import '../../shared/widgets/empty_state.dart';
+import '../../shared/widgets/error_view.dart';
+import '../../shared/widgets/skeleton.dart';
+import '../../shared/widgets/centered_content.dart';
+import '../feed/post_card.dart';
+import 'my_posts_provider.dart';
+
+const _sortOptions = [
+  ('new', 'En Yeni'),
+  ('old', 'En Eski'),
+  ('votes', 'En Çok Oy'),
+  ('comments', 'En Çok Yorum'),
+];
+
+class MyPostsScreen extends ConsumerWidget {
+  const MyPostsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Paylaşımlarım'),
+        centerTitle: true,
+        actions: [
+          Consumer(
+            builder: (context, ref, _) {
+              final state = ref.watch(myPostsProvider);
+              return PopupMenuButton<String>(
+                icon: const Icon(Icons.sort),
+                tooltip: 'Sırala',
+                onSelected: (s) => ref.read(myPostsProvider.notifier).setSort(s),
+                itemBuilder: (_) => _sortOptions
+                    .map((o) => PopupMenuItem(
+                          value: o.$1,
+                          child: Row(
+                            children: [
+                              if (state.sort == o.$1)
+                                const Icon(Icons.check, size: 16)
+                              else
+                                const SizedBox(width: 16),
+                              const SizedBox(width: 8),
+                              Text(o.$2),
+                            ],
+                          ),
+                        ))
+                    .toList(),
+              );
+            },
+          ),
+        ],
+      ),
+      body: const CenteredContent(
+        child: _MyPostsList(),
+      ),
+    );
+  }
+}
+
+class _MyPostsList extends ConsumerWidget {
+  const _MyPostsList();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(myPostsProvider);
+
+    if (state.isLoading && state.posts.isEmpty) {
+      return ListView.separated(
+        padding: const EdgeInsets.all(16),
+        itemCount: 3,
+        separatorBuilder: (_, __) => const SizedBox(height: 10),
+        itemBuilder: (_, __) => const PostCardSkeleton(),
+      );
+    }
+
+    if (state.error != null && state.posts.isEmpty) {
+      return ErrorView(
+        message: state.error!,
+        onRetry: () => ref.read(myPostsProvider.notifier).load(),
+      );
+    }
+
+    if (state.posts.isEmpty) {
+      return const EmptyState(
+        message: 'Henüz bir durum paylaşmadın. Paylaşınca burada göreceksin.',
+        icon: Icons.post_add_outlined,
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: () => ref.read(myPostsProvider.notifier).load(),
+      child: ListView.separated(
+        padding: const EdgeInsets.all(16),
+        itemCount: state.posts.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 10),
+        itemBuilder: (context, index) {
+          final post = state.posts[index];
+          return PostCard(
+            post: post,
+            onTap: () => context.push('/posts/${post.id}', extra: post),
+          );
+        },
+      ),
+    );
+  }
+}
+

@@ -1,0 +1,124 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../core/app_services.dart';
+import '../../core/providers.dart';
+import '../../shared/data/sample_posts.dart';
+import '../../shared/models/post.dart';
+import 'data/notification_item.dart';
+import 'data/notification_repository.dart';
+
+class NotificationsState {
+  const NotificationsState({
+    this.items = const [],
+    this.unreadCount = 0,
+    this.isLoading = false,
+    this.error,
+  });
+
+  final List<NotificationItem> items;
+  final int unreadCount;
+  final bool isLoading;
+  final String? error;
+
+  NotificationsState copyWith({
+    List<NotificationItem>? items,
+    int? unreadCount,
+    bool? isLoading,
+    String? error,
+    bool clearError = false,
+  }) =>
+      NotificationsState(
+        items: items ?? this.items,
+        unreadCount: unreadCount ?? this.unreadCount,
+        isLoading: isLoading ?? this.isLoading,
+        error: clearError ? null : (error ?? this.error),
+      );
+}
+
+class NotificationsNotifier extends Notifier<NotificationsState> {
+  @override
+  NotificationsState build() {
+    Future.microtask(load);
+    return const NotificationsState(isLoading: true);
+  }
+
+  NotificationRepository get _repo => ref.read(notificationRepositoryProvider);
+
+  Future<void> load() async {
+    if (!AppRuntime.useRemoteApi) {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      state = state.copyWith(
+        items: [
+          NotificationItem(
+            id: '1',
+            type: 'verdict_milestone',
+            title: 'Topluluk karar verdi!',
+            body: 'Paylaşımın 10 oya ulaştı. %78 Haklı buluyor.',
+            isRead: false,
+            createdAt: DateTime.now().subtract(const Duration(minutes: 15)),
+            postId: '1',
+          ),
+          NotificationItem(
+            id: '2',
+            type: 'comment_on_post',
+            title: 'Yeni yorum',
+            body: 'Paylaşımına yeni bir yorum geldi.',
+            isRead: true,
+            createdAt: DateTime.now().subtract(const Duration(hours: 2)),
+            postId: '1',
+          ),
+        ],
+        unreadCount: 1,
+        isLoading: false,
+      );
+      return;
+    }
+
+    state = state.copyWith(isLoading: true, clearError: true);
+    try {
+      final page = await _repo.fetchNotifications();
+      state = state.copyWith(
+        items: page.items,
+        unreadCount: page.unreadCount,
+        isLoading: false,
+      );
+    } catch (_) {
+      state = state.copyWith(
+        isLoading: false,
+        error: 'Bildirimler yüklenemedi.',
+      );
+    }
+  }
+
+  Future<void> markAllRead() async {
+    try {
+      await _repo.markAllRead();
+      state = state.copyWith(
+        items: [for (final item in state.items) item.copyWith(isRead: true)],
+        unreadCount: 0,
+      );
+    } catch (_) {}
+  }
+}
+
+final notificationsProvider =
+    NotifierProvider<NotificationsNotifier, NotificationsState>(
+  NotificationsNotifier.new,
+);
+
+final digestPostsProvider = FutureProvider.autoDispose<List<Post>>((ref) async {
+  if (!AppRuntime.useRemoteApi) {
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    final sorted = [...samplePosts]
+      ..sort((a, b) => b.totalVotes.compareTo(a.totalVotes));
+    return sorted.take(3).toList();
+  }
+  try {
+    return await ref.read(postRepositoryProvider).fetchFeed(
+          sort: 'trending',
+          limit: 3,
+        );
+  } catch (_) {
+    return [];
+  }
+});

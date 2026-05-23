@@ -1,0 +1,58 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: karar-postgres
+    environment:
+      POSTGRES_DB: karar
+      POSTGRES_USER: karar
+      POSTGRES_PASSWORD: karar_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - karar_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U karar -d karar"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: karar-redis
+    ports:
+      - "6379:6379"
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Karar.Api/Dockerfile
+    container_name: karar-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=karar;Username=karar;Password=karar_dev_password
+      ConnectionStrings__Redis: redis:6379
+    command: ["migrate"]
+
+  api:
+    build:
+      context: .
+      dockerfile: Karar.Api/Dockerfile
+    container_name: karar-api
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=karar;Username=karar;Password=karar_dev_password
+      ConnectionStrings__Redis: redis:6379
+      Admin__Email: admin@karar.local
+      Admin__Token: dev-admin-token
+    ports:
+      - "5088:8080"
+
+volumes:
+  karar_pgdata:

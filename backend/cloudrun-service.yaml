@@ -1,0 +1,114 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: karar-api
+  # Kopyala ve PROJECT_ID + REGION değiştir.
+  # Deploy: gcloud run services replace backend/cloudrun-service.yaml --region=europe-west3
+  annotations:
+    run.googleapis.com/launch-stage: GA
+    run.googleapis.com/binary-authorization: default
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: '1'
+        autoscaling.knative.dev/maxScale: '10'
+        run.googleapis.com/startup-cpu-boost: 'true'
+    spec:
+      timeoutSeconds: 30
+      containerConcurrency: 80
+      containers:
+        - image: gcr.io/PROJECT_ID/karar-api:latest
+          securityContext:
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1001
+          ports:
+            - name: http1
+              containerPort: 8080
+          resources:
+            limits:
+              cpu: '2'
+              memory: 2Gi
+          env:
+            - name: ASPNETCORE_ENVIRONMENT
+              value: Production
+            - name: ASPNETCORE_URLS
+              value: http://+:8080
+            - name: Database__UseIamAuth
+              value: 'true'
+            - name: Database__IamUser
+              valueFrom:
+                secretKeyRef:
+                  name: cloud-sql-iam-user
+                  key: latest
+            - name: Jwt__PrivateKeyPem
+              valueFrom:
+                secretKeyRef:
+                  name: jwt-private-key-pem
+                  key: latest
+            - name: Jwt__PublicKeyPem
+              valueFrom:
+                secretKeyRef:
+                  name: jwt-public-key-pem
+                  key: latest
+            - name: Jwt__KeyId
+              valueFrom:
+                secretKeyRef:
+                  name: jwt-key-id
+                  key: latest
+            - name: Jwt__PreviousPublicKeyPem
+              valueFrom:
+                secretKeyRef:
+                  name: jwt-previous-public-key-pem
+                  key: latest
+            - name: Jwt__PreviousKeyId
+              valueFrom:
+                secretKeyRef:
+                  name: jwt-previous-key-id
+                  key: latest
+            - name: Admin__Token
+              valueFrom:
+                secretKeyRef:
+                  name: admin-token
+                  key: latest
+            - name: Admin__PreviousToken
+              valueFrom:
+                secretKeyRef:
+                  name: admin-previous-token
+                  key: latest
+            - name: AuditLogs__GcsBucket
+              valueFrom:
+                secretKeyRef:
+                  name: audit-logs-bucket
+                  key: latest
+          envFrom: []
+          # Secret Manager referansları — Secret Manager'da bu secretlar oluşturulmuş olmalı.
+          # gcloud run services update ile eklenebilir:
+          #   --set-secrets=ConnectionStrings__Postgres=db-connection-string:latest
+          #   --set-secrets=Admin__Token=admin-token:latest
+          #   --set-secrets=Jwt__Secret=jwt-secret:latest
+          #   --set-secrets=Compliance__DailySalt=compliance-daily-salt:latest
+          #   --set-secrets=AuditLogs__GcsBucket=audit-logs-bucket:latest
+          # Android:PackageName yalnızca env var (secret değil): app.karar.mobile
+          #   --set-env-vars=Android__PackageName=app.karar.mobile
+          #
+          # Startup probe: container hazır olana kadar liveness kontrolü yapılmaz.
+          # /health/ready — Postgres + Redis kontrolü yapar.
+          startupProbe:
+            httpGet:
+              path: /health/ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 6       # 60 saniye bekleme penceresi
+            timeoutSeconds: 5
+          # Liveness probe: yalnızca process sağlığını kontrol eder (no external deps).
+          # /health/live — sadece "self" check (Postgres/Redis dahil değil).
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8080
+            periodSeconds: 30
+            failureThreshold: 3
+            timeoutSeconds: 5

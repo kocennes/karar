@@ -1,0 +1,16 @@
+{
+  "lifecycle": {
+    "rule": [
+      {
+        "action": {
+          "type": "SetStorageClass",
+          "storageClass": "ARCHIVE"
+        },
+        "condition": {
+          "age": 365,
+          "matchesPrefix": ["audit-logs/"]
+        }
+      }
+    ]
+  }
+}
