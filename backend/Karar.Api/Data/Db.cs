@@ -41,7 +41,7 @@ public sealed class Db
 
     // Neon ve benzeri sağlayıcılar postgresql:// URI formatı döner;
     // Npgsql 6.x bunu NpgsqlConnectionStringBuilder'a doğrudan kabul etmez.
-    private static string ConvertToKeyValue(string connectionString)
+    internal static string ConvertToKeyValue(string connectionString)
     {
         if (!connectionString.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase) &&
             !connectionString.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase))

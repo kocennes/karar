@@ -220,7 +220,8 @@ builder.Services.AddResponseCompression(opt =>
     opt.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(["application/json"]);
 });
 
-var postgresCs = builder.Configuration.GetConnectionString("Postgres")!;
+var postgresCs = Karar.Api.Data.Db.ConvertToKeyValue(
+    builder.Configuration.GetConnectionString("Postgres")!);
 var redisCs = builder.Configuration.GetConnectionString("Redis");
 var healthChecks = builder.Services.AddHealthChecks()
     .AddNpgSql(postgresCs, name: "postgres", tags: ["ready", "db"])
