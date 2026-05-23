@@ -56,3 +56,19 @@ app.*.map.json
 
 # MacOS related
 .DS_Store
+
+# Hassas / iç dokümanlar — GitHub'a push'lanmaz
+yapılanlar
+docs/
+TODO.md
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+.claude/
+admin-panel/
+cloudbuild-admin.yaml
+cloudbuild-mobile.yaml
+cloudbuild.yaml
+logo/
+.metadata
+README.md
