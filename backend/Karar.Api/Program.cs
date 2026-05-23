@@ -254,12 +254,19 @@ app.UseMiddleware<RedactedRequestLoggingMiddleware>();
 app.Use(async (ctx, next) =>
 {
     var sw = System.Diagnostics.Stopwatch.StartNew();
-    ctx.Response.Headers["X-Request-Id"] = Guid.NewGuid().ToString("N")[..12];
+    var requestId = Guid.NewGuid().ToString("N")[..12];
+    ctx.Response.OnStarting(() =>
+    {
+        sw.Stop();
+        if (!ctx.Response.HasStarted)
+        {
+            ctx.Response.Headers["X-Request-Id"] = requestId;
+            ctx.Response.Headers["X-Response-Time"] = $"{sw.ElapsedMilliseconds}ms";
+        }
+        return Task.CompletedTask;
+    });
 
     await next();
-
-    sw.Stop();
-    ctx.Response.Headers["X-Response-Time"] = $"{sw.ElapsedMilliseconds}ms";
 });
 
 // Request body boyut limiti: 6 MB (gÃ¶rsel 5 MB + meta)
