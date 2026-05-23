@@ -1,13 +1,30 @@
 
 # Karar - Örnek İçerik Yükleme Scripti
-# Bu script yerel veya canlı API'ye 5 tane gerçekçi "Karar" senaryosu yükler.
+$baseUrl = "https://karar-oq5t.onrender.com"
+$adminToken = "kral-token-123"
 
-$baseUrl = "http://localhost:5088" # Canlıya çıkınca burayı güncellersin kral
-$adminToken = "dev-admin-token"    # appsettings.json'daki Admin:Token
+# 1. Önce bir dummy cihaz kaydedelim ki "X-Device-Token" geçerli olsun
+Write-Host "📱 Dummy cihaz kaydediliyor..." -ForegroundColor Cyan
+$regBody = @{
+    fingerprint = "seed-dummy-device-001"
+    platform = "web"
+    appVersion = "1.0.0"
+} | ConvertTo-Json
 
+try {
+    $regResponse = Invoke-RestMethod -Uri "$baseUrl/api/v1/devices/register" -Method Post -Body $regBody -ContentType "application/json"
+    $deviceToken = $regResponse.deviceToken
+    Write-Host "✅ Cihaz kaydedildi. Token: $deviceToken" -ForegroundColor Green
+} catch {
+    Write-Host "❌ Cihaz kaydı başarısız: $($_.Exception.Message)" -ForegroundColor Red
+    return
+}
+
+# 2. Örnek postları yükleyelim
 $headers = @{
     "Content-Type" = "application/json"
     "X-Admin-Token" = $adminToken
+    "X-Device-Token" = $deviceToken
 }
 
 $posts = @(
@@ -38,7 +55,7 @@ $posts = @(
     }
 )
 
-Write-Host "🚀 Örnek içerikler yükleniyor..." -ForegroundColor Cyan
+Write-Host "`n🚀 Örnek içerikler yükleniyor..." -ForegroundColor Cyan
 
 foreach ($post in $posts) {
     try {

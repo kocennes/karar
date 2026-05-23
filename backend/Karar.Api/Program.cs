@@ -229,13 +229,17 @@ var healthChecks = builder.Services.AddHealthChecks()
 if (!string.IsNullOrEmpty(redisCs))
     healthChecks.AddRedis(redisCs, name: "redis", tags: ["ready", "cache"]);
 
-if (args.Contains("migrate", StringComparer.OrdinalIgnoreCase))
+// Migration check
+if (args.Contains("migrate", StringComparer.OrdinalIgnoreCase) ||
+    Environment.GetEnvironmentVariable("AUTO_MIGRATE") == "true")
 {
     var connectionString = builder.Configuration.GetConnectionString("Postgres")
         ?? throw new InvalidOperationException("ConnectionStrings:Postgres is missing.");
     var migrationsPath = Path.Combine(AppContext.BaseDirectory, "migrations");
     await MigrationsRunner.RunAsync(connectionString, migrationsPath);
-    return;
+
+    // If explicitly called via CLI "migrate", exit. If via AUTO_MIGRATE, continue to start the app.
+    if (args.Contains("migrate", StringComparer.OrdinalIgnoreCase)) return;
 }
 
 var app = builder.Build();
