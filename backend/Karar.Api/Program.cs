@@ -235,7 +235,14 @@ var healthChecks = builder.Services.AddHealthChecks()
     .AddNpgSql(postgresCs, name: "postgres", tags: ["ready", "db"])
     .AddCheck("self", () => HealthCheckResult.Healthy(), tags: ["live"]);
 if (!string.IsNullOrEmpty(redisCs))
-    healthChecks.AddRedis(redisCs, name: "redis", tags: ["ready", "cache"]);
+{
+    var redisPassword = builder.Configuration["Redis:Password"];
+    var redisSsl = builder.Configuration.GetValue<bool>("Redis:Ssl");
+    var redisFullCs = string.IsNullOrEmpty(redisPassword)
+        ? redisCs
+        : $"{redisCs},password={redisPassword},ssl={redisSsl.ToString().ToLower()}";
+    healthChecks.AddRedis(redisFullCs, name: "redis", tags: ["ready", "cache"]);
+}
 
 // Migration check
 if (args.Contains("migrate", StringComparer.OrdinalIgnoreCase) ||
