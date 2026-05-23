@@ -11,8 +11,9 @@ public sealed class VerdictReminderJob(
     private static readonly TimeSpan Interval = TimeSpan.FromHours(1);
     private static readonly TimeSpan SentFlagExpiry = TimeSpan.FromDays(30);
 
-    private readonly string _connectionString = configuration.GetConnectionString("Postgres")
-        ?? throw new InvalidOperationException("ConnectionStrings:Postgres is missing.");
+    private readonly string _connectionString = Karar.Api.Data.Db.ConvertToKeyValue(
+        configuration.GetConnectionString("Postgres")
+        ?? throw new InvalidOperationException("ConnectionStrings:Postgres is missing."));
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

@@ -14,8 +14,9 @@ public sealed class NotificationDispatcher(
     NotificationRateLimiter rateLimiter)
     : BackgroundService
 {
-    private readonly string _connectionString = configuration.GetConnectionString("Postgres")
-        ?? throw new InvalidOperationException("ConnectionStrings:Postgres is missing.");
+    private readonly string _connectionString = Karar.Api.Data.Db.ConvertToKeyValue(
+        configuration.GetConnectionString("Postgres")
+        ?? throw new InvalidOperationException("ConnectionStrings:Postgres is missing."));
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(30);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

@@ -233,8 +233,9 @@ if (!string.IsNullOrEmpty(redisCs))
 if (args.Contains("migrate", StringComparer.OrdinalIgnoreCase) ||
     Environment.GetEnvironmentVariable("AUTO_MIGRATE") == "true")
 {
-    var connectionString = builder.Configuration.GetConnectionString("Postgres")
-        ?? throw new InvalidOperationException("ConnectionStrings:Postgres is missing.");
+    var connectionString = Karar.Api.Data.Db.ConvertToKeyValue(
+        builder.Configuration.GetConnectionString("Postgres")
+        ?? throw new InvalidOperationException("ConnectionStrings:Postgres is missing."));
     var migrationsPath = Path.Combine(AppContext.BaseDirectory, "migrations");
     await MigrationsRunner.RunAsync(connectionString, migrationsPath);
 

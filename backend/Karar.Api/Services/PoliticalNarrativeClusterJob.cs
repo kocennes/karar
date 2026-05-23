@@ -13,8 +13,9 @@ public sealed class PoliticalNarrativeClusterJob(
     CategoryThrottleService throttleService)
     : BackgroundService
 {
-    private readonly string _connectionString = configuration.GetConnectionString("Postgres")
-        ?? throw new InvalidOperationException("ConnectionStrings:Postgres is missing.");
+    private readonly string _connectionString = Karar.Api.Data.Db.ConvertToKeyValue(
+        configuration.GetConnectionString("Postgres")
+        ?? throw new InvalidOperationException("ConnectionStrings:Postgres is missing."));
 
     private static readonly TimeSpan Interval = TimeSpan.FromHours(1);
     private static readonly TimeSpan AutoThrottleDuration = TimeSpan.FromHours(4);

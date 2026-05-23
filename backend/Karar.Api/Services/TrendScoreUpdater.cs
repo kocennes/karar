@@ -8,8 +8,9 @@ public sealed class TrendScoreUpdater(
     RedisService redis)
     : BackgroundService
 {
-    private readonly string _connectionString = configuration.GetConnectionString("Postgres")
-        ?? throw new InvalidOperationException("ConnectionStrings:Postgres is missing.");
+    private readonly string _connectionString = Karar.Api.Data.Db.ConvertToKeyValue(
+        configuration.GetConnectionString("Postgres")
+        ?? throw new InvalidOperationException("ConnectionStrings:Postgres is missing."));
     private static readonly TimeSpan Interval = TimeSpan.FromMinutes(2); // Reduced interval for distributed updates
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

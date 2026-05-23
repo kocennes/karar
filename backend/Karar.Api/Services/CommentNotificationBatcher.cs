@@ -14,8 +14,9 @@ public sealed class CommentNotificationBatcher(
     private static readonly TimeSpan BatchExpiry = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan FlushInterval = TimeSpan.FromMinutes(1);
 
-    private readonly string _connectionString = configuration.GetConnectionString("Postgres")
-        ?? throw new InvalidOperationException("ConnectionStrings:Postgres is missing.");
+    private readonly string _connectionString = Karar.Api.Data.Db.ConvertToKeyValue(
+        configuration.GetConnectionString("Postgres")
+        ?? throw new InvalidOperationException("ConnectionStrings:Postgres is missing."));
 
     public async Task HandleNewCommentAsync(Guid postId, Guid commenterDeviceId, Guid commentId, Guid? parentCommentId = null)
     {
