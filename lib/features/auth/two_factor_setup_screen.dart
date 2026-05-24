@@ -64,7 +64,7 @@ class _TwoFactorSetupScreenState extends ConsumerState<TwoFactorSetupScreen> {
       context.pushReplacement('/2fa/backup-codes', extra: codes);
     } on ApiException catch (e) {
       setState(() {
-        _error = e.message;
+        _error = e.friendlyMessage;
         _isLoading = false;
       });
     } catch (_) {

@@ -48,7 +48,7 @@ class _FeedbackScreenState extends ConsumerState<FeedbackScreen> {
       );
       Navigator.pop(context);
     } on ApiException catch (e) {
-      _showError(e.message);
+      _showError(e.friendlyMessage);
     } catch (_) {
       _showError('Geri bildirim gönderilemedi. Tekrar dene.');
     } finally {

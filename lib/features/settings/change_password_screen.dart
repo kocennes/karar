@@ -54,7 +54,7 @@ class _ChangePasswordScreenState extends ConsumerState<ChangePasswordScreen> {
         context.pop();
       }
     } on ApiException catch (e) {
-      setState(() => _error = e.message);
+      setState(() => _error = e.friendlyMessage);
     } catch (_) {
       setState(() => _error = 'Şifre güncellenemedi. Tekrar dene.');
     } finally {

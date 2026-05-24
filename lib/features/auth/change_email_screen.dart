@@ -71,7 +71,7 @@ class _ChangeEmailScreenState extends ConsumerState<ChangeEmailScreen> {
         setState(() { _newEmail = newEmail; _step = _Step.confirm; });
       }
     } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
+      if (mounted) setState(() => _error = e.friendlyMessage);
     } catch (_) {
       if (mounted) setState(() => _error = 'İstek gönderilemedi. Tekrar dene.');
     } finally {
@@ -100,7 +100,7 @@ class _ChangeEmailScreenState extends ConsumerState<ChangeEmailScreen> {
         setState(() => _step = _Step.done);
       }
     } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
+      if (mounted) setState(() => _error = e.friendlyMessage);
     } catch (_) {
       if (mounted) setState(() => _error = 'E-posta değiştirilemedi. Tekrar dene.');
     } finally {

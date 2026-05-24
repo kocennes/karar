@@ -50,7 +50,7 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
       await ref.read(authServiceProvider).forgotPassword(email);
       if (mounted) setState(() { _email = email; _step = _Step.verify; });
     } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
+      if (mounted) setState(() => _error = e.friendlyMessage);
     } catch (_) {
       if (mounted) setState(() => _error = 'Kod gönderilemedi. Tekrar dene.');
     } finally {
@@ -76,7 +76,7 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
           );
       if (mounted) setState(() => _step = _Step.done);
     } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
+      if (mounted) setState(() => _error = e.friendlyMessage);
     } catch (_) {
       if (mounted) setState(() => _error = 'Şifre sıfırlanamadı. Tekrar dene.');
     } finally {

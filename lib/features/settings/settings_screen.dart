@@ -573,7 +573,7 @@ class SettingsScreen extends ConsumerWidget {
               if (!ctx.mounted) return;
               setState(() {
                 isDisabling = false;
-                errorText = e.message;
+                errorText = e.friendlyMessage;
               });
             } catch (_) {
               if (!ctx.mounted) return;
@@ -777,7 +777,7 @@ class SettingsScreen extends ConsumerWidget {
               if (!ctx.mounted) return;
               setState(() {
                 isDeleting = false;
-                errorText = e.message;
+                errorText = e.friendlyMessage;
               });
             } catch (_) {
               if (!ctx.mounted) return;

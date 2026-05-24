@@ -45,7 +45,7 @@ class _MyCommentsScreenState extends ConsumerState<MyCommentsScreen> {
     } on ApiException catch (e) {
       if (mounted) {
         setState(() {
-          _error = e.message;
+          _error = e.friendlyMessage;
           _isLoading = false;
         });
       }

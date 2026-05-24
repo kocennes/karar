@@ -450,7 +450,7 @@ class _EventTileState extends ConsumerState<_EventTile> {
         ),
       );
     } on ApiException catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text(e.message)));
+      messenger.showSnackBar(SnackBar(content: Text(e.friendlyMessage)));
     } catch (_) {
       _openAppeal(event);
       messenger.showSnackBar(
