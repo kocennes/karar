@@ -191,6 +191,26 @@ public sealed record AdminUserDto(
     int CommentCount
 );
 
+public sealed record AdminUserDetailDto(
+    AdminUserDto User,
+    IReadOnlyList<AdminUserPostDto> RecentPosts,
+    IReadOnlyList<AdminUserStrikeDto> Strikes
+);
+
+public sealed record AdminUserPostDto(
+    Guid Id,
+    string Title,
+    string Status,
+    DateTimeOffset CreatedAt
+);
+
+public sealed record AdminUserStrikeDto(
+    Guid Id,
+    string Reason,
+    string Severity,
+    DateTimeOffset CreatedAt
+);
+
 public sealed record AdminOverviewResponse(
     AdminOverviewStats Stats
 );

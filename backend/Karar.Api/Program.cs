@@ -189,6 +189,19 @@ builder.Services.AddRateLimiter(options =>
         )
     );
 
+    // Cihaz başına saatte max 10 rapor
+    options.AddPolicy("report-create", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromHours(1),
+                QueueLimit = 0
+            }
+        )
+    );
+
     options.OnRejected = async (ctx, _) =>
     {
         ctx.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
@@ -4589,6 +4602,90 @@ app.MapGet("/api/v1/admin/users", async (
     ));
 });
 
+app.MapGet("/api/v1/admin/users/{id:guid}", async (
+    Guid id,
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth
+) =>
+{
+    if (RequireAdmin(httpRequest, adminAuth) is { } unauthorized)
+    {
+        return unauthorized;
+    }
+
+    await using var connection = await db.OpenConnectionAsync();
+
+    await using var userCmd = new NpgsqlCommand(
+        """
+        SELECT u.id, u.device_id, u.username, COALESCE(u.email, ''), u.karma,
+               u.auth_provider, u.email_verified, u.is_banned, u.ban_expires_at,
+               u.ban_reason, u.created_at, u.deleted_at,
+               (SELECT COUNT(*) FROM posts p WHERE p.user_id = u.id AND p.status != 'deleted'),
+               (SELECT COUNT(*) FROM comments c WHERE c.user_id = u.id AND c.status != 'deleted')
+        FROM users u
+        WHERE u.id = @id
+        """,
+        connection
+    );
+    userCmd.Parameters.AddWithValue("id", id);
+    await using var userReader = await userCmd.ExecuteReaderAsync();
+    if (!await userReader.ReadAsync())
+    {
+        return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
+    }
+    var user = ReadAdminUser(userReader);
+    await userReader.CloseAsync();
+
+    await using var postsCmd = new NpgsqlCommand(
+        """
+        SELECT id, title, status, created_at
+        FROM posts
+        WHERE user_id = @id
+        ORDER BY created_at DESC
+        LIMIT 10
+        """,
+        connection
+    );
+    postsCmd.Parameters.AddWithValue("id", id);
+    var recentPosts = new List<AdminUserPostDto>();
+    await using var postsReader = await postsCmd.ExecuteReaderAsync();
+    while (await postsReader.ReadAsync())
+    {
+        recentPosts.Add(new AdminUserPostDto(
+            postsReader.GetGuid(0),
+            postsReader.GetString(1),
+            postsReader.GetString(2),
+            postsReader.GetFieldValue<DateTimeOffset>(3)
+        ));
+    }
+    await postsReader.CloseAsync();
+
+    await using var strikesCmd = new NpgsqlCommand(
+        """
+        SELECT id, reason, severity, created_at
+        FROM user_strikes
+        WHERE user_id = @id
+        ORDER BY created_at DESC
+        """,
+        connection
+    );
+    strikesCmd.Parameters.AddWithValue("id", id);
+    var strikes = new List<AdminUserStrikeDto>();
+    await using var strikesReader = await strikesCmd.ExecuteReaderAsync();
+    while (await strikesReader.ReadAsync())
+    {
+        strikes.Add(new AdminUserStrikeDto(
+            strikesReader.GetGuid(0),
+            strikesReader.GetString(1),
+            strikesReader.GetString(2),
+            strikesReader.GetFieldValue<DateTimeOffset>(3)
+        ));
+    }
+
+    return Results.Ok(new AdminUserDetailDto(user, recentPosts, strikes));
+});
+
 app.MapPost("/api/v1/admin/users/{id:guid}/ban", async (
     Guid id,
     AdminBanUserRequest request,
@@ -4937,6 +5034,71 @@ app.MapPost("/api/v1/admin/users/{id:guid}/strike", async (
         autoAction,
         userId = id,
     });
+});
+
+// ── ADMIN KVKK DELETE ────────────────────────────────────────────────────
+
+app.MapPost("/api/v1/admin/users/{id:guid}/delete", async (
+    Guid id,
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth,
+    ComplianceLogService complianceLog
+) =>
+{
+    var adminEmail = adminAuth.TryGetAdminEmail(httpRequest);
+    if (adminEmail is null)
+    {
+        return Unauthorized();
+    }
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var transaction = await connection.BeginTransactionAsync();
+
+    var exists = await new NpgsqlCommand(
+        "SELECT EXISTS(SELECT 1 FROM users WHERE id = @id AND deleted_at IS NULL)",
+        connection,
+        transaction
+    ) { Parameters = { new("id", id) } }.ExecuteScalarAsync();
+
+    if (exists is not true)
+    {
+        await transaction.RollbackAsync();
+        return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı veya zaten silinmiş.");
+    }
+
+    // KVKK hard delete: kişisel verileri anonimleştir
+    await using var anonCmd = new NpgsqlCommand(
+        """
+        UPDATE users SET
+            username        = 'deleted_' || SUBSTR(id::text, 1, 8),
+            email           = NULL,
+            password_hash   = NULL,
+            totp_secret     = NULL,
+            bio             = NULL,
+            deleted_at      = NOW()
+        WHERE id = @id
+        """,
+        connection,
+        transaction
+    );
+    anonCmd.Parameters.AddWithValue("id", id);
+    await anonCmd.ExecuteNonQueryAsync();
+
+    await LogAdminActionAsync(connection, transaction, adminEmail, "kvkk_delete", "user", id, null);
+    await transaction.CommitAsync();
+
+    await complianceLog.LogAsync(
+        "kvkk_user_delete",
+        GetClientIpBlock(httpRequest),
+        null,
+        id,
+        null,
+        null,
+        new { adminEmail, deletedUserId = id }
+    );
+
+    return Results.NoContent();
 });
 
 // ── ADMIN CATEGORY THROTTLE ──────────────────────────────────────────────
