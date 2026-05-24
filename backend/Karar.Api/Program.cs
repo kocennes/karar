@@ -8803,15 +8803,15 @@ static async Task<IReadOnlyList<PostDto>> ReadPostsAsync(NpgsqlCommand command)
         // 17 cols (0-16): post detail — col14=isUnlisted, col15=tags, col16=ai_summary
         // 18 cols (0-17): other-user profile query — col13=isOwner, col14=isEdited, col15=isSaved, col16=authorName, col17=tags
         var fc = reader.FieldCount;
-        var isOwner = fc > 13 && reader.GetBoolean(13);
+        var isOwner = fc > 13 && !reader.IsDBNull(13) && reader.GetBoolean(13);
         bool isEdited, isSaved, isUnlisted;
         string? authorName = null;
         IReadOnlyList<string>? tags = null;
         string? aiSummary = null;
         if (fc >= 18)
         {
-            isEdited = reader.GetBoolean(14);
-            isSaved = reader.GetBoolean(15);
+            isEdited = !reader.IsDBNull(14) && reader.GetBoolean(14);
+            isSaved = !reader.IsDBNull(15) && reader.GetBoolean(15);
             authorName = reader.IsDBNull(16) ? null : reader.GetString(16);
             tags = reader.IsDBNull(17) ? null : reader.GetFieldValue<string[]>(17);
             isUnlisted = false;
@@ -8820,7 +8820,7 @@ static async Task<IReadOnlyList<PostDto>> ReadPostsAsync(NpgsqlCommand command)
         {
             isEdited = false;
             isSaved = false;
-            isUnlisted = reader.GetBoolean(14);
+            isUnlisted = !reader.IsDBNull(14) && reader.GetBoolean(14);
             tags = reader.IsDBNull(15) ? null : reader.GetFieldValue<string[]>(15);
             aiSummary = reader.IsDBNull(16) ? null : reader.GetString(16);
         }
@@ -8828,7 +8828,7 @@ static async Task<IReadOnlyList<PostDto>> ReadPostsAsync(NpgsqlCommand command)
         {
             isEdited = false;
             isSaved = false;
-            isUnlisted = reader.GetBoolean(14);
+            isUnlisted = !reader.IsDBNull(14) && reader.GetBoolean(14);
             tags = reader.IsDBNull(15) ? null : reader.GetFieldValue<string[]>(15);
         }
         else
