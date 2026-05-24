@@ -499,7 +499,7 @@ class PostDetailNotifier extends FamilyNotifier<PostDetailState, String> {
       await ref.read(postRepositoryProvider).deleteComment(comment.id);
       _removeComment(comment);
     } on ApiException catch (e) {
-      state = state.copyWith(error: e.message);
+      state = state.copyWith(error: e.friendlyMessage);
     } catch (_) {
       state = state.copyWith(error: 'Yorum silinemedi.');
     }

@@ -52,7 +52,7 @@ class MyPostsNotifier extends Notifier<MyPostsState> {
           .fetchMyPosts(sort: state.sort);
       state = state.copyWith(posts: posts, isLoading: false);
     } on ApiException catch (e) {
-      state = state.copyWith(isLoading: false, error: e.message);
+      state = state.copyWith(isLoading: false, error: e.friendlyMessage);
     } catch (_) {
       state = state.copyWith(isLoading: false, error: 'Gönderilerin yüklenemedi.');
     }

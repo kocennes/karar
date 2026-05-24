@@ -232,7 +232,7 @@ class FeedNotifier extends Notifier<FeedState> {
       state = state.copyWith(
         isLoading: false,
         isLoadingMore: false,
-        error: e.message,
+        error: e.friendlyMessage,
       );
     } catch (_) {
       state = state.copyWith(
