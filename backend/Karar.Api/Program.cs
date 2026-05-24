@@ -3383,7 +3383,8 @@ app.MapPost("/api/v1/reports", async (
     Db db,
     RequestDevice requestDevice,
     ReportThresholdService reportThresholdService,
-    JwtService jwtService
+    JwtService jwtService,
+    RedisService redis
 ) =>
 {
     if (ValidateRequest(request) is { } validationError)
@@ -3393,18 +3394,24 @@ app.MapPost("/api/v1/reports", async (
 
     if (request.TargetType is not ("post" or "comment"))
     {
-        return BadRequest("INVALID_TARGET_TYPE", "Hedef tipi post veya comment olmalÄ±.");
+        return BadRequest("INVALID_TARGET_TYPE", "Hedef tipi post veya comment olmalı.");
     }
 
     if (request.Reason is not ("hate_speech" or "harassment" or "personal_info" or "spam" or "self_harm" or "illegal" or "other"))
     {
-        return BadRequest("INVALID_REPORT_REASON", "GeÃ§ersiz rapor sebebi.");
+        return BadRequest("INVALID_REPORT_REASON", "Geçersiz rapor sebebi.");
     }
 
     var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
     if (deviceId is null)
     {
         return Unauthorized();
+    }
+
+    // Cihaz bazlı sliding window: saatte max 10 rapor
+    if (!await redis.IsAllowedAsync("report-device", deviceId.Value.ToString("N"), 10, TimeSpan.FromHours(1)))
+    {
+        return TooManyRequests("RATE_LIMIT_REPORTS", "Çok fazla şikayet gönderdiniz. Bir süre sonra tekrar deneyin.", 3600);
     }
 
     var reporterPrincipal = GetJwtPrincipal(httpRequest, jwtService);
