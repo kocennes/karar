@@ -1105,7 +1105,17 @@ class _PostContent extends ConsumerWidget {
           const SizedBox(height: 24),
           PostPollWidget(
             poll: post.poll!,
-            onVote: notifier.votePoll,
+            onVote: (optionId) {
+              if (ref.read(currentUserProvider) == null) {
+                LoginNudge.show(
+                  context,
+                  title: 'Ankete Oy Ver',
+                  message: 'Ankete oy vermek için hesap oluşturman gerekiyor.',
+                );
+                return;
+              }
+              notifier.votePoll(optionId);
+            },
           ),
         ],
         const SizedBox(height: 16),
