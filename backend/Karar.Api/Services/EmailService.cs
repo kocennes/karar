@@ -13,9 +13,11 @@ public sealed class EmailService
     private readonly string _fromName;
 
     private readonly bool _configured;
+    private readonly ILogger<EmailService> _logger;
 
     public EmailService(IConfiguration configuration, ILogger<EmailService> logger)
     {
+        _logger = logger;
         _smtpHost = configuration["Email:SmtpHost"] ?? "smtp.gmail.com";
         _smtpPort = int.Parse(configuration["Email:SmtpPort"] ?? "587");
         _smtpUser = configuration["Email:SmtpUser"] ?? "";
@@ -82,9 +84,17 @@ public sealed class EmailService
         message.Body = new TextPart("plain") { Text = body };
 
         using var client = new SmtpClient();
-        await client.ConnectAsync(_smtpHost, _smtpPort, MailKit.Security.SecureSocketOptions.StartTls);
-        await client.AuthenticateAsync(_smtpUser, _smtpPass);
-        await client.SendAsync(message);
-        await client.DisconnectAsync(quit: true);
+        try
+        {
+            await client.ConnectAsync(_smtpHost, _smtpPort, MailKit.Security.SecureSocketOptions.StartTls);
+            await client.AuthenticateAsync(_smtpUser, _smtpPass);
+            await client.SendAsync(message);
+            await client.DisconnectAsync(quit: true);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "SMTP gönderim hatası: {To} {Subject}", toEmail, subject);
+            throw;
+        }
     }
 }
