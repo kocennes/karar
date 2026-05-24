@@ -63,6 +63,10 @@ public sealed class BruteForceService
     public static int ComputeDelayMs(int failedAttempts) =>
         failedAttempts < 3 ? 0 : (int)Math.Min(Math.Pow(2, failedAttempts - 2) * 100, 5000);
 
-    // IP adresi + endpoint kombinasyonu için identity oluşturur.
-    public static string IdentityFor(string ip, string endpoint) => $"{ip}:{endpoint}";
+    // IP + device + endpoint kombinasyonu icin identity olusturur.
+    public static string IdentityFor(string ip, string endpoint, Guid? deviceId = null)
+    {
+        var devicePart = deviceId?.ToString("N") ?? "unknown-device";
+        return $"{ip}:{devicePart}:{endpoint}";
+    }
 }

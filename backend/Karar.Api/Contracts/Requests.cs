@@ -130,7 +130,7 @@ public sealed record PostFeedbackRequest(
 public sealed record AdminLoginRequest(
     [Required, EmailAddress] string Email,
     [Required] string Password,
-    [Required, StringLength(6, MinimumLength = 6)] string TotpCode
+    [StringLength(6, MinimumLength = 6)] string? TotpCode = null
 );
 
 public sealed record BulkModerationRequest(

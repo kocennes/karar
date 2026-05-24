@@ -9,7 +9,6 @@ public sealed class AdminAuthService
     private readonly string _email;
     private readonly string _password;
     private readonly string? _passwordHash;
-    private readonly string? _totpSecret;
     private readonly HashSet<IPAddress> _ipAllowlist;
 
     public AdminAuthService(IConfiguration configuration, IWebHostEnvironment env)
@@ -19,8 +18,7 @@ public sealed class AdminAuthService
         var token = configuration["Admin:Token"];
         if (isProduction && string.IsNullOrWhiteSpace(token))
             throw new InvalidOperationException(
-                "Admin:Token Secret Manager'dan yüklenmeli. " +
-                "Cloud Run servisini --set-secrets=Admin__Token=admin-token:latest ile yapılandırın.");
+                "Admin:Token Secret Manager'dan yuklenmeli.");
 
         _staticToken = token ?? "dev-admin-token";
         _previousStaticToken = configuration["Admin:PreviousToken"];
@@ -31,18 +29,8 @@ public sealed class AdminAuthService
         if (isProduction && _passwordHash is null or { Length: 0 } &&
             (_password == "dev-admin-password" || string.IsNullOrWhiteSpace(_password)))
             throw new InvalidOperationException(
-                "Admin:PasswordHash Secret Manager'dan yüklenmeli. " +
-                "Cloud Run servisini --set-secrets=Admin__PasswordHash=admin-password-hash:latest ile yapılandırın.");
+                "Admin:Password veya Admin:PasswordHash production ortaminda zorunludur.");
 
-        // Admin:TotpSecret → Base32 secret (Google Authenticator ile taranır).
-        // Boşsa dev ortamında TOTP doğrulaması atlanır, prod'da zorunlu.
-        _totpSecret = configuration["Admin:TotpSecret"];
-        if (isProduction && string.IsNullOrWhiteSpace(_totpSecret))
-            throw new InvalidOperationException(
-                "Admin:TotpSecret Secret Manager'dan yüklenmeli. " +
-                "Cloud Run servisini --set-secrets=Admin__TotpSecret=admin-totp-secret:latest ile yapılandırın.");
-
-        // Admin:IpAllowlist → virgülle ayrılmış IP adresleri (boşsa kısıtlama yok).
         var allowlistRaw = configuration["Admin:IpAllowlist"] ?? "";
         _ipAllowlist = ParseIpAllowlist(allowlistRaw);
     }
@@ -54,23 +42,14 @@ public sealed class AdminAuthService
         return IsValidToken(token) ? _email : null;
     }
 
-    // Giriş doğrulama: e-posta + şifre + TOTP (secret tanımlıysa zorunlu).
-    public bool ValidateLogin(string email, string password, string totpCode)
+    public bool ValidateCredentials(string email, string password)
     {
         if (!string.Equals(email, _email, StringComparison.OrdinalIgnoreCase))
             return false;
 
-        var passwordOk = _passwordHash is { Length: > 0 }
+        return _passwordHash is { Length: > 0 }
             ? PasswordService.Verify(password, _passwordHash)
             : password == _password;
-
-        if (!passwordOk) return false;
-
-        // Prod: TotpSecret tanımlıysa RFC 6238 doğrula; dev: secret yoksa atla.
-        if (!string.IsNullOrWhiteSpace(_totpSecret))
-            return TotpService.Validate(_totpSecret, totpCode);
-
-        return true;
     }
 
     public string IssueToken() => _staticToken;

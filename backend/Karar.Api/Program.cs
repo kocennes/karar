@@ -121,18 +121,19 @@ builder.Services.AddSingleton<GeoService>();
 builder.Services.AddSingleton<DeviceTrustService>();
 builder.Services.AddSingleton<ComplianceLogService>();
 builder.Services.AddSingleton<BusinessMetricsService>();
+builder.Services.AddSingleton<SubnetBanService>();
 builder.Services.AddScoped<RequestDevice>();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
-    // Global: 300 istek / dakika / IP
+    // Global: 100 istek / dakika / IP
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
         RateLimitPartition.GetFixedWindowLimiter(
             context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             _ => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = 300,
+                PermitLimit = 100,
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0
             }
@@ -151,14 +152,14 @@ builder.Services.AddRateLimiter(options =>
         )
     );
 
-    // Admin login: 10 deneme / 15 dakika / IP (gerçek koruma DistributedRateLimitMiddleware'de Redis ile)
+    // Auth fallback: 60 istek / dakika / IP. Redis brute-force korumasi ayrıca 10 deneme / 15 dakika uygular.
     options.AddPolicy("auth-strict", context =>
         RateLimitPartition.GetFixedWindowLimiter(
             context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             _ => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = 10,
-                Window = TimeSpan.FromMinutes(15),
+                PermitLimit = 60,
+                Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0
             }
         )
@@ -358,6 +359,7 @@ app.Use(async (ctx, next) =>
     await next();
 });
 
+app.UseMiddleware<SubnetBanMiddleware>();
 app.UseRateLimiter();
 app.UseMiddleware<DistributedRateLimitMiddleware>();
 app.UseMiddleware<AdminSecurityMiddleware>();
@@ -3667,7 +3669,9 @@ app.MapPost("/api/v1/admin/auth/login", async (
     HttpContext httpContext,
     AdminAuthService adminAuth,
     BruteForceService bruteForce,
-    Db db
+    Db db,
+    RedisService redis,
+    EmailService emailService
 ) =>
 {
     if (ValidateRequest(request) is { } validationError)
@@ -3689,13 +3693,36 @@ app.MapPost("/api/v1/admin/auth/login", async (
         return TooManyRequests("ACCOUNT_LOCKED", "Ã‡ok fazla baÅŸarÄ±sÄ±z deneme. 15 dakika bekleyin.");
     }
 
-    if (!adminAuth.ValidateLogin(request.Email, request.Password, request.TotpCode))
+    if (!adminAuth.ValidateCredentials(request.Email, request.Password))
     {
         await bruteForce.RecordFailedAttemptAsync(bfIdentity);
         await using var connection = await db.OpenConnectionAsync();
         await LogAdminActionAsync(connection, null!, request.Email, "login_failed", "auth", null, $"IP: {ip}");
         return Unauthorized();
     }
+
+    var otpKey = $"admin:login:otp:{request.Email.ToLowerInvariant()}";
+    if (string.IsNullOrWhiteSpace(request.TotpCode))
+    {
+        if (!await redis.IsAllowedAsync("admin-login-email-otp", request.Email.ToLowerInvariant(), 3, TimeSpan.FromMinutes(15)))
+        {
+            return TooManyRequests("OTP_RATE_LIMIT", "Cok fazla kod istediniz. Biraz sonra tekrar deneyin.", 900);
+        }
+
+        var otp = PasswordService.GenerateOtp();
+        await redis.GetDb().StringSetAsync(otpKey, PasswordService.HashOtp(otp), TimeSpan.FromMinutes(10));
+        await emailService.SendAdminLoginOtpAsync(request.Email, otp);
+        return Results.Ok(new { requiresEmailOtp = true });
+    }
+
+    var storedOtpHash = await redis.GetDb().StringGetAsync(otpKey);
+    if (!storedOtpHash.HasValue || storedOtpHash.ToString() != PasswordService.HashOtp(request.TotpCode))
+    {
+        await bruteForce.RecordFailedAttemptAsync(bfIdentity);
+        return Unauthorized();
+    }
+
+    await redis.GetDb().KeyDeleteAsync(otpKey);
 
     await bruteForce.ClearAsync(bfIdentity);
 
@@ -6097,7 +6124,8 @@ app.MapPost("/api/v1/auth/login", async (
     }
 
     var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-    var bfIdentity = BruteForceService.IdentityFor(ip, "login");
+    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    var bfIdentity = BruteForceService.IdentityFor(ip, "login", deviceId);
 
     if (await bruteForce.IsLockedOutAsync(bfIdentity))
     {
@@ -6182,8 +6210,6 @@ app.MapPost("/api/v1/auth/login", async (
     }
 
     await bruteForce.ClearAsync(bfIdentity);
-
-    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
 
     await using var transaction = await connection.BeginTransactionAsync();
 

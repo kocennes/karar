@@ -60,6 +60,13 @@ public sealed class EmailService
                 Eğer bu işlemi siz yapmadıysanız şifrenizi değiştirmenizi öneririz.
                 """);
 
+    public Task SendAdminLoginOtpAsync(string toEmail, string otp) =>
+        SendAsync(toEmail, "Karar Admin giris kodunuz", $"""
+                Karar Admin giris kodunuz: {otp}
+
+                Bu kod 10 dakika gecerlidir. Kodu kimseyle paylasmayin.
+                """);
+
     public Task SendAccountRecoveryAsync(string toEmail, string username, string recoveryUrl) =>
         SendAsync(toEmail, "Karar — Hesabınızı Geri Alın", $"""
                 Merhaba {username},
