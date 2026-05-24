@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../shared/widgets/centered_content.dart';
+import '../../shared/widgets/karar_logo.dart';
 
 class BackupCodesScreen extends StatefulWidget {
   const BackupCodesScreen({super.key, required this.codes});
@@ -28,12 +29,12 @@ class _BackupCodesScreenState extends State<BackupCodesScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        leadingWidth: 130,
+        leadingWidth: 160,
         leading: InkWell(
           onTap: () => context.go('/'),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            child: Image.asset('logo/logo.png', fit: BoxFit.contain),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: KararLogo(size: LogoSize.medium),
           ),
         ),
         title: const Text('Yedek Kodlar'),

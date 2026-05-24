@@ -13,6 +13,7 @@ import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/login_nudge.dart';
 import '../../shared/widgets/skeleton.dart';
 import '../../core/history/history_provider.dart';
+import '../../shared/widgets/karar_logo.dart';
 import '../../core/network/connectivity_provider.dart';
 import '../../core/theme/app_colors.dart';
 import '../ads/banner_ad_widget.dart';
@@ -339,9 +340,9 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
               context.go('/');
             }
           },
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            child: Image.asset('logo/logo.png', fit: BoxFit.contain),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: KararLogo(size: LogoSize.medium),
           ),
         ),
         actions: [

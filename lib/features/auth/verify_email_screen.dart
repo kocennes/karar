@@ -5,6 +5,7 @@ import '../../core/auth/auth_service.dart';
 import '../../core/utils/validators.dart';
 import '../../shared/widgets/karar_button.dart';
 import '../../shared/widgets/centered_content.dart';
+import '../../shared/widgets/karar_logo.dart';
 
 class VerifyEmailScreen extends StatefulWidget {
   const VerifyEmailScreen({
@@ -92,12 +93,12 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        leadingWidth: 130,
+        leadingWidth: 160,
         leading: InkWell(
           onTap: () => context.go('/'),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            child: Image.asset('logo/logo.png', fit: BoxFit.contain),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: KararLogo(size: LogoSize.medium),
           ),
         ),
         title: const Text('Doğrulama'),

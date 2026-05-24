@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/api/api_exception.dart';
 import '../../core/providers.dart';
 import '../../shared/widgets/centered_content.dart';
+import '../../shared/widgets/karar_logo.dart';
 
 class TwoFactorSetupScreen extends ConsumerStatefulWidget {
   const TwoFactorSetupScreen({super.key});
@@ -78,12 +79,12 @@ class _TwoFactorSetupScreenState extends ConsumerState<TwoFactorSetupScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        leadingWidth: 130,
+        leadingWidth: 160,
         leading: InkWell(
           onTap: () => context.go('/'),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            child: Image.asset('logo/logo.png', fit: BoxFit.contain),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: KararLogo(size: LogoSize.medium),
           ),
         ),
         title: const Text('2FA Kurulumu'),
