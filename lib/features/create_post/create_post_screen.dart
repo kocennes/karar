@@ -336,6 +336,21 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
                     ),
                     const SizedBox(height: 12),
 
+                    // Anonymous toggle
+                    if (ref.watch(currentUserProvider) != null)
+                      SwitchListTile.adaptive(
+                        title: const Text('Anonim paylaş'),
+                        subtitle: const Text(
+                          'Adın gözükmez. Yorumlar her zaman kullanıcı adıyla gösterilir.',
+                        ),
+                        value: state.isAnonymous,
+                        onChanged: (val) => ref
+                            .read(createPostProvider.notifier)
+                            .setAnonymous(val),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    const SizedBox(height: 12),
+
                     // Unlisted toggle
                     SwitchListTile.adaptive(
                       title: const Text('Liste dışı paylaş'),

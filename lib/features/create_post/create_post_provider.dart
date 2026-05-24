@@ -21,6 +21,7 @@ class CreatePostState {
     this.tags = const [],
     this.pollOptions = const [],
     this.isUnlisted = false,
+    this.isAnonymous = true,
   });
 
   final int? selectedCategoryId;
@@ -34,6 +35,7 @@ class CreatePostState {
   final List<String> tags;
   final List<String> pollOptions;
   final bool isUnlisted;
+  final bool isAnonymous;
 
   static const int maxTags = 3;
   static const int maxPollOptions = 4;
@@ -56,6 +58,7 @@ class CreatePostState {
     List<String>? tags,
     List<String>? pollOptions,
     bool? isUnlisted,
+    bool? isAnonymous,
   }) =>
       CreatePostState(
         selectedCategoryId: clearCategoryId
@@ -72,6 +75,7 @@ class CreatePostState {
         tags: tags ?? this.tags,
         pollOptions: pollOptions ?? this.pollOptions,
         isUnlisted: isUnlisted ?? this.isUnlisted,
+        isAnonymous: isAnonymous ?? this.isAnonymous,
       );
 
   bool get isDailyPostLimit =>
@@ -213,6 +217,10 @@ class CreatePostNotifier extends Notifier<CreatePostState> {
     state = state.copyWith(isUnlisted: value);
   }
 
+  void setAnonymous(bool value) {
+    state = state.copyWith(isAnonymous: value);
+  }
+
   Future<bool> submit({
     required String title,
     required String content,
@@ -252,6 +260,7 @@ class CreatePostNotifier extends Notifier<CreatePostState> {
             pollOptions:
                 state.pollOptions.isNotEmpty ? state.pollOptions : null,
             isUnlisted: state.isUnlisted,
+            isAnonymous: state.isAnonymous,
           );
 
       // Log analytics

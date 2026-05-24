@@ -292,6 +292,7 @@ class Post {
     this.aiSummary,
     this.poll,
     this.isUnlisted = false,
+    this.isAnonymous = false,
     this.rankingReason,
     this.rankingLabel,
   });
@@ -324,6 +325,7 @@ class Post {
   final String? aiSummary;
   final PostPoll? poll;
   final bool isUnlisted;
+  final bool isAnonymous;
   final String? rankingReason;
   final String? rankingLabel;
 
@@ -390,6 +392,7 @@ class Post {
     String? aiSummary,
     PostPoll? poll,
     bool? isUnlisted,
+    bool? isAnonymous,
     String? rankingReason,
     String? rankingLabel,
   }) {
@@ -421,6 +424,7 @@ class Post {
       aiSummary: aiSummary ?? this.aiSummary,
       poll: poll ?? this.poll,
       isUnlisted: isUnlisted ?? this.isUnlisted,
+      isAnonymous: isAnonymous ?? this.isAnonymous,
       rankingReason: rankingReason ?? this.rankingReason,
       rankingLabel: rankingLabel ?? this.rankingLabel,
     );

@@ -119,7 +119,10 @@ public sealed record AdminPostDto(
     int CommentCount,
     string? ImageUrl,
     DateTimeOffset CreatedAt,
-    Guid DeviceId
+    Guid DeviceId,
+    Guid? UserId = null,
+    string? AuthorName = null,
+    bool IsAnonymous = false
 );
 
 public sealed record ModerationTransparencyResponse(

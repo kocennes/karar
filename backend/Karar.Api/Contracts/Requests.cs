@@ -25,6 +25,7 @@ public sealed record CreatePostRequest(
     [Range(1, int.MaxValue)] int CategoryId,
     string? ImageUrl = null,
     bool IsUnlisted = false,
+    bool IsAnonymous = false,
     IReadOnlyList<string>? Tags = null
 );
 

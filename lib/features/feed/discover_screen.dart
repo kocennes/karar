@@ -23,7 +23,7 @@ class DiscoverScreen extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(
-        leadingWidth: 160,
+        leadingWidth: 180,
         leading: InkWell(
           onTap: () => context.go('/'),
           child: const Padding(

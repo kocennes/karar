@@ -259,16 +259,22 @@ class _CommentTile extends ConsumerWidget {
             spacing: 8,
             runSpacing: 4,
             children: [
-              if (comment.authorName != null) ...[
+              if (comment.authorName != null || comment.isPostOwner) ...[
                 GestureDetector(
-                  onTap: () => context.push('/users/${comment.authorName}'),
+                  onTap: comment.authorName != null
+                      ? () => context.push('/users/${comment.authorName}')
+                      : null,
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        '@${comment.authorName}',
+                        comment.authorName != null
+                            ? '@${comment.authorName}'
+                            : '@anonim',
                         style: textTheme.labelSmall?.copyWith(
-                          color: colorScheme.primary,
+                          color: comment.authorName != null
+                              ? colorScheme.primary
+                              : colorScheme.onSurfaceVariant,
                           fontWeight: FontWeight.bold,
                         ),
                       ),

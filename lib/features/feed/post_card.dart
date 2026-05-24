@@ -80,22 +80,33 @@ class _PostCardState extends ConsumerState<PostCard> {
                   children: [
                     Row(
                       children: [
-                        KararAvatar(
-                          username: post.authorName ?? 'Misafir',
-                          radius: 12,
-                          fontSize: 10,
-                        ),
+                        post.isAnonymous
+                            ? CircleAvatar(
+                                radius: 12,
+                                backgroundColor: Colors.grey.shade300,
+                                child: const Icon(Icons.person_outline,
+                                    size: 14, color: Colors.grey),
+                              )
+                            : KararAvatar(
+                                username: post.authorName ?? 'Misafir',
+                                radius: 12,
+                                fontSize: 10,
+                              ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            '@${post.authorName ?? 'misafir'}',
+                            post.isAnonymous
+                                ? '@anonim'
+                                : '@${post.authorName ?? 'misafir'}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: Theme.of(context)
                                 .textTheme
                                 .labelMedium
                                 ?.copyWith(
-                                  color: AppColors.textSecondary,
+                                  color: post.isAnonymous
+                                      ? AppColors.textTertiary
+                                      : AppColors.textSecondary,
                                   fontWeight: FontWeight.w700,
                                 ),
                           ),

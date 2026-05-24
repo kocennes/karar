@@ -182,11 +182,14 @@ class _HomeShellState extends ConsumerState<HomeShell> {
             ),
     );
 
-    // Keyboard shortcuts for Web/Desktop — skip when a text field is focused
+    // Keyboard shortcuts for Web/Desktop — skip when any text input is focused
     bool isTextFieldFocused() {
-      final focused = FocusScope.of(context).focusedChild;
-      return focused != null && focused.context != null &&
-          focused.context!.widget is EditableText;
+      FocusNode? node = FocusScope.of(context).focusedChild;
+      while (node != null) {
+        if (node.context?.widget is EditableText) return true;
+        node = node.parent;
+      }
+      return false;
     }
 
     return CallbackShortcuts(

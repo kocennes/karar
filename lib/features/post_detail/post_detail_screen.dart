@@ -685,14 +685,16 @@ class _TopRationaleCard extends StatelessWidget {
               height: 1.5,
             ),
           ),
-          if (comment.authorName != null) ...[
+          ...[
             const SizedBox(height: 8),
             Text(
-              '@${comment.authorName}',
+              comment.authorName != null ? '@${comment.authorName}' : '@anonim',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: theme.textTheme.labelSmall?.copyWith(
-                color: AppColors.textSecondary,
+                color: comment.authorName != null
+                    ? AppColors.textSecondary
+                    : AppColors.textTertiary,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -752,14 +754,16 @@ class _BalancedRationaleCard extends StatelessWidget {
               height: 1.5,
             ),
           ),
-          if (comment.authorName != null) ...[
+          ...[
             const SizedBox(height: 8),
             Text(
-              '@${comment.authorName}',
+              comment.authorName != null ? '@${comment.authorName}' : '@anonim',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: theme.textTheme.labelSmall?.copyWith(
-                color: AppColors.textSecondary,
+                color: comment.authorName != null
+                    ? AppColors.textSecondary
+                    : AppColors.textTertiary,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -989,7 +993,20 @@ class _PostContent extends ConsumerWidget {
         ],
         Row(
           children: [
-            if (post.authorName != null) ...[
+            if (post.isAnonymous) ...[
+              Flexible(
+                child: Text(
+                  '@anonim',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: AppColors.textTertiary,
+                        fontWeight: FontWeight.bold,
+                      ),
+                ),
+              ),
+              const Text(' · '),
+            ] else if (post.authorName != null) ...[
               Flexible(
                 child: GestureDetector(
                   onTap: () => context.push('/users/${post.authorName}'),

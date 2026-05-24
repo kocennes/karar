@@ -1237,7 +1237,8 @@ app.MapGet("/api/v1/posts", async (
                 SELECT p.id, p.title, p.content, p.image_url, c.id AS cat_id, c.name AS cat_name, c.emoji,
                        p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                        v.vote_type, p.trend_score, p.created_at,
-                       (p.device_id = @deviceId OR p.user_id = @userId) AS is_owner,
+                       (p.device_id = @deviceId OR p.user_id = @userId),
+                       p.is_anonymous AS is_owner,
                        ROW_NUMBER() OVER (PARTITION BY p.category_id ORDER BY p.trend_score DESC, p.created_at DESC) AS cat_rank,
                        ROW_NUMBER() OVER (PARTITION BY COALESCE(p.user_id::text, p.device_id::text) ORDER BY p.trend_score DESC, p.created_at DESC) AS author_rank
                 FROM posts p
@@ -1273,7 +1274,8 @@ app.MapGet("/api/v1/posts", async (
             SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                    p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                    v.vote_type, p.trend_score, p.created_at,
-                   (p.device_id = @deviceId OR p.user_id = @userId)
+                   (p.device_id = @deviceId OR p.user_id = @userId),
+                   p.is_unlisted, p.is_anonymous, p.tags
             FROM posts p
             JOIN categories c ON c.id = p.category_id
             LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -1316,7 +1318,8 @@ app.MapGet("/api/v1/posts", async (
             SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                    p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                    v.vote_type, p.trend_score, p.created_at,
-                   (p.device_id = @deviceId OR p.user_id = @userId)
+                   (p.device_id = @deviceId OR p.user_id = @userId),
+                   p.is_unlisted, p.is_anonymous, p.tags
             FROM posts p
             JOIN categories c ON c.id = p.category_id
             LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -1363,7 +1366,8 @@ app.MapGet("/api/v1/posts", async (
                 SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                        p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                        v.vote_type, p.trend_score, p.created_at,
-                       (p.device_id = @deviceId OR p.user_id = @userId)
+                       (p.device_id = @deviceId OR p.user_id = @userId),
+                       p.is_anonymous
                 FROM posts p
                 JOIN categories c ON c.id = p.category_id
                 LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -1447,7 +1451,7 @@ app.MapGet("/api/v1/posts/discover", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
-               p.is_unlisted, p.tags
+               p.is_unlisted, p.is_anonymous, p.tags
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -1473,7 +1477,7 @@ app.MapGet("/api/v1/posts/discover", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
-               p.is_unlisted, p.tags
+               p.is_unlisted, p.is_anonymous, p.tags
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -1500,7 +1504,7 @@ app.MapGet("/api/v1/posts/discover", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
-               p.is_unlisted, p.tags
+               p.is_unlisted, p.is_anonymous, p.tags
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -1532,7 +1536,8 @@ app.MapGet("/api/v1/posts/discover", async (
                 SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                        p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                        v.vote_type, p.trend_score, p.created_at,
-                       (p.device_id = @deviceId OR p.user_id = @userId)
+                       (p.device_id = @deviceId OR p.user_id = @userId),
+                       p.is_anonymous
                 FROM posts p
                 JOIN categories c ON c.id = p.category_id
                 LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -1634,7 +1639,7 @@ app.MapGet("/api/v1/posts/{id:guid}/similar", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
-               p.is_unlisted, p.tags
+               p.is_unlisted, p.is_anonymous, p.tags
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         CROSS JOIN target t
@@ -1713,7 +1718,7 @@ app.MapGet("/api/v1/posts/weekly-featured", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
-               p.is_unlisted, p.tags
+               p.is_unlisted, p.is_anonymous, p.tags
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -1753,7 +1758,7 @@ app.MapGet("/api/v1/posts/today", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
-               p.is_unlisted, p.tags
+               p.is_unlisted, p.is_anonymous, p.tags
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -1802,7 +1807,7 @@ app.MapGet("/api/v1/posts/trending/city", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
-               p.is_unlisted, p.tags
+               p.is_unlisted, p.is_anonymous, p.tags
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -1964,6 +1969,7 @@ app.MapPost("/api/v1/posts", async (
             slug,
             distribution_stage,
             is_unlisted,
+            is_anonymous,
             tags
         )
         VALUES (
@@ -1984,6 +1990,7 @@ app.MapPost("/api/v1/posts", async (
             @slug,
             1,
             @isUnlisted,
+            @isAnonymous,
             @tags
         )
         RETURNING status, created_at
@@ -2018,6 +2025,7 @@ app.MapPost("/api/v1/posts", async (
             : (object)DBNull.Value);
     command.Parameters.AddWithValue("slug", postSlug);
     command.Parameters.AddWithValue("isUnlisted", request.IsUnlisted);
+    command.Parameters.AddWithValue("isAnonymous", request.IsAnonymous && userId != null);
     var normalizedTags = (request.Tags ?? [])
         .Select(t => t.TrimStart('#').ToLowerInvariant().Trim())
         .Where(t => t.Length is >= 1 and <= 32)
@@ -2073,7 +2081,7 @@ app.MapGet("/api/v1/posts/{id:guid}", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
-               p.is_unlisted, p.tags, p.ai_summary
+               p.is_unlisted, p.is_anonymous, p.tags, p.ai_summary
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -2193,7 +2201,7 @@ app.MapPost("/api/v1/posts/{id:guid}/ai-summary", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
-               p.is_unlisted, p.tags, p.ai_summary
+               p.is_unlisted, p.is_anonymous, p.tags, p.ai_summary
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -2891,7 +2899,10 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
     const string commentSelectColumns = """
         cm.id, cm.content, cm.upvote_count, cm.downvote_count, cu.comment_id IS NOT NULL, cd.comment_id IS NOT NULL,
                (cm.device_id = @deviceId OR cm.user_id = @userId), cm.created_at,
-               cm.is_pinned, u.username, cm.user_id, cm.is_edited,
+               cm.is_pinned,
+               CASE WHEN p.is_anonymous = TRUE AND cm.user_id = p.user_id THEN NULL ELSE u.username END AS username,
+               CASE WHEN p.is_anonymous = TRUE AND cm.user_id = p.user_id THEN NULL ELSE cm.user_id END AS author_id,
+               cm.is_edited,
                ((cm.user_id IS NOT NULL AND cm.user_id = p.user_id) OR (cm.user_id IS NULL AND cm.device_id = p.device_id)) AS is_post_owner,
                (SELECT COUNT(*)::int FROM comment_upvotes cu_h
                 JOIN votes v_h ON v_h.device_id = cu_h.device_id AND v_h.post_id = @postId AND v_h.vote_type = 'hakli'
@@ -4274,11 +4285,13 @@ app.MapGet("/api/v1/admin/posts", async (
 
     await using var command = new NpgsqlCommand(
         $"""
-        SELECT id, title, content, status, category_id, vote_count_hakli,
-               vote_count_haksiz, comment_count, image_url, created_at, device_id
-        FROM posts
+        SELECT p.id, p.title, p.content, p.status, p.category_id, p.vote_count_hakli,
+               p.vote_count_haksiz, p.comment_count, p.image_url, p.created_at, p.device_id,
+               p.user_id, u.username, p.is_anonymous
+        FROM posts p
+        LEFT JOIN users u ON u.id = p.user_id
         WHERE TRUE {statusWhere} {searchWhere}
-        ORDER BY created_at DESC
+        ORDER BY p.created_at DESC
         LIMIT @limit OFFSET @offset
         """,
         connection
@@ -4309,7 +4322,10 @@ app.MapGet("/api/v1/admin/posts", async (
             reader.GetInt32(7),
             reader.IsDBNull(8) ? null : reader.GetString(8),
             reader.GetFieldValue<DateTimeOffset>(9),
-            reader.GetGuid(10)
+            reader.GetGuid(10),
+            reader.IsDBNull(11) ? null : reader.GetGuid(11),
+            reader.IsDBNull(12) ? null : reader.GetString(12),
+            !reader.IsDBNull(13) && reader.GetBoolean(13)
         ));
     }
 
@@ -7334,7 +7350,7 @@ app.MapGet("/api/v1/users/me/posts", async (
         $"""
         SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
-               NULL::text, p.trend_score, p.created_at, TRUE
+               NULL::text, p.trend_score, p.created_at, TRUE, FALSE, FALSE, NULL::text, p.is_anonymous, NULL::text[]
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         WHERE p.user_id = @userId AND p.status != 'deleted'
@@ -7392,7 +7408,7 @@ app.MapGet("/api/v1/users/me/saved", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
-               p.is_unlisted, p.tags
+               p.is_unlisted, p.is_anonymous, p.tags
         FROM saved_posts sp
         JOIN posts p ON p.id = sp.post_id
         JOIN categories c ON c.id = p.category_id
@@ -8802,12 +8818,25 @@ static async Task<IReadOnlyList<PostDto>> ReadPostsAsync(NpgsqlCommand command)
         // 16 cols (0-15): standard feed/discover/saved — col13=isOwner, col14=isUnlisted, col15=tags
         // 17 cols (0-16): post detail — col14=isUnlisted, col15=tags, col16=ai_summary
         // 18 cols (0-17): other-user profile query — col13=isOwner, col14=isEdited, col15=isSaved, col16=authorName, col17=tags
+
+        // We are adding is_anonymous to these.
         var fc = reader.FieldCount;
         var isOwner = fc > 13 && !reader.IsDBNull(13) && reader.GetBoolean(13);
-        bool isEdited, isSaved, isUnlisted;
+        bool isEdited, isSaved, isUnlisted, isAnonymous = false;
         string? authorName = null;
+        Guid? authorId = null;
         IReadOnlyList<string>? tags = null;
         string? aiSummary = null;
+
+        // Note: We need to update SELECTs to include is_anonymous.
+        // For now, let's look for column name "is_anonymous" if available.
+        int anonIdx = -1;
+        try { anonIdx = reader.GetOrdinal("is_anonymous"); } catch {}
+
+        if (anonIdx != -1) {
+            isAnonymous = reader.GetBoolean(anonIdx);
+        }
+
         if (fc >= 18)
         {
             isEdited = !reader.IsDBNull(14) && reader.GetBoolean(14);
@@ -8837,6 +8866,13 @@ static async Task<IReadOnlyList<PostDto>> ReadPostsAsync(NpgsqlCommand command)
             isSaved = false;
             isUnlisted = false;
         }
+
+        // Redact author if anonymous
+        if (isAnonymous) {
+            authorName = null;
+            authorId = null;
+        }
+
         var createdAt = reader.GetFieldValue<DateTimeOffset>(12);
         var isClosed = createdAt.AddDays(7) <= DateTimeOffset.UtcNow;
         posts.Add(new PostDto(
@@ -8855,13 +8891,14 @@ static async Task<IReadOnlyList<PostDto>> ReadPostsAsync(NpgsqlCommand command)
             IsEdited: isEdited,
             IsSaved: isSaved,
             AuthorName: authorName,
+            AuthorId: authorId,
             IsUnlisted: isUnlisted,
+            IsAnonymous: isAnonymous,
             IsClosed: isClosed,
             Tags: tags,
             AiSummary: aiSummary
         ));
     }
-
     return posts;
 }
 
@@ -8877,6 +8914,11 @@ static async Task<(IReadOnlyList<PostDto> Posts, int Total)> ReadPostsWithTotalA
         var tags = reader.FieldCount > 16 && !reader.IsDBNull(16)
             ? reader.GetFieldValue<string[]>(16)
             : null;
+
+        int anonIdx = -1;
+        try { anonIdx = reader.GetOrdinal("is_anonymous"); } catch {}
+        bool isAnonymous = anonIdx != -1 && reader.GetBoolean(anonIdx);
+
         var createdAt = reader.GetFieldValue<DateTimeOffset>(12);
         var isClosed = createdAt.AddDays(7) <= DateTimeOffset.UtcNow;
         posts.Add(new PostDto(
@@ -8892,6 +8934,7 @@ static async Task<(IReadOnlyList<PostDto> Posts, int Total)> ReadPostsWithTotalA
             reader.GetDouble(11),
             createdAt,
             isOwner,
+            IsAnonymous: isAnonymous,
             IsClosed: isClosed,
             Tags: tags
         ));
@@ -9188,6 +9231,7 @@ static async Task<(CreatePostRequest? Request, IFormFile? Image)> ReadCreatePost
     var content = form["content"].ToString();
     _ = int.TryParse(form["categoryId"].ToString(), out var categoryId);
     _ = bool.TryParse(form["isUnlisted"].ToString(), out var isUnlisted);
+    _ = bool.TryParse(form["isAnonymous"].ToString(), out var isAnonymous);
     var imageFile = form.Files.GetFile("image");
 
     // Tags: comma-separated in form data (e.g. "haber,spor") or individual values
@@ -9203,7 +9247,7 @@ static async Task<(CreatePostRequest? Request, IFormFile? Image)> ReadCreatePost
                       .ToList();
     }
 
-    return (new CreatePostRequest(title, content, categoryId, null, isUnlisted, tags), imageFile);
+    return (new CreatePostRequest(title, content, categoryId, null, isUnlisted, isAnonymous, tags), imageFile);
 }
 
 static async Task<DeleteAccountRequest?> ReadOptionalDeleteAccountRequestAsync(HttpRequest request)

@@ -188,6 +188,7 @@ class PostRepository {
     List<String> tags = const [],
     List<String>? pollOptions,
     bool isUnlisted = false,
+    bool isAnonymous = true,
   }) async {
     if (images != null && images.isNotEmpty) {
       final image = images.first;
@@ -199,6 +200,7 @@ class PostRepository {
         if (tags.isNotEmpty) 'tags': tags.join(','),
         if (pollOptions != null) 'pollOptions': pollOptions.join(','),
         'isUnlisted': isUnlisted.toString(),
+        'isAnonymous': isAnonymous.toString(),
         'image_0': MultipartFile.fromBytes(
           bytes,
           filename: image.name.isEmpty ? 'image.jpg' : image.name,
@@ -217,6 +219,7 @@ class PostRepository {
           if (tags.isNotEmpty) 'tags': tags,
           if (pollOptions != null) 'pollOptions': pollOptions,
           'isUnlisted': isUnlisted,
+          'isAnonymous': isAnonymous,
         },
       );
     }
@@ -605,6 +608,7 @@ class PostRepository {
           ? _pollFromJson(json['poll'] as Map<String, Object?>)
           : null,
       isUnlisted: json['isUnlisted'] as bool? ?? false,
+      isAnonymous: json['isAnonymous'] as bool? ?? false,
       rankingReason: json['ranking_reason'] as String?,
       rankingLabel: json['ranking_label'] as String?,
     );

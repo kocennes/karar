@@ -30,6 +30,7 @@ public sealed record PostDto(
     string? AuthorName = null,
     Guid? AuthorId = null,
     bool IsUnlisted = false,
+    bool IsAnonymous = false,
     bool IsClosed = false,
     [property: JsonPropertyName("ranking_reason")]
     string? RankingReason = null,

@@ -11,27 +11,27 @@ class KararLogo extends StatelessWidget {
   Widget build(BuildContext context) {
     final iconBoxSize = switch (size) {
       LogoSize.small => 28.0,
-      LogoSize.medium => 36.0,
+      LogoSize.medium => 43.0,
       LogoSize.large => 48.0,
     };
     final scaleIconSize = switch (size) {
       LogoSize.small => 14.0,
-      LogoSize.medium => 18.0,
+      LogoSize.medium => 22.0,
       LogoSize.large => 24.0,
     };
     final badgeSize = switch (size) {
       LogoSize.small => 10.0,
-      LogoSize.medium => 13.0,
+      LogoSize.medium => 16.0,
       LogoSize.large => 17.0,
     };
     final badgeIconSize = switch (size) {
       LogoSize.small => 6.0,
-      LogoSize.medium => 8.0,
+      LogoSize.medium => 10.0,
       LogoSize.large => 11.0,
     };
     final wordmarkSize = switch (size) {
       LogoSize.small => 15.0,
-      LogoSize.medium => 20.0,
+      LogoSize.medium => 24.0,
       LogoSize.large => 26.0,
     };
     final gap = switch (size) {

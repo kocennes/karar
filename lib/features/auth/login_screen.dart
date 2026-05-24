@@ -101,7 +101,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        leadingWidth: 160,
+        leadingWidth: 180,
         leading: InkWell(
           onTap: () => context.go('/'),
           child: const Padding(

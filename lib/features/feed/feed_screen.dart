@@ -331,7 +331,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        leadingWidth: 160,
+        leadingWidth: 180,
         leading: InkWell(
           onTap: () {
             if (GoRouterState.of(context).uri.toString() == '/') {
