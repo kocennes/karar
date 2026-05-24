@@ -12,12 +12,16 @@ public static class MigrationsRunner
         await EnsureMigrationsTableAsync(connection);
 
         var scripts = Directory.GetFiles(migrationsPath, "V*.sql")
-            .OrderBy(f =>
+            .Select(f =>
             {
                 var name = Path.GetFileNameWithoutExtension(f);
                 var numStr = name.TrimStart('V', 'v').Split('_')[0];
-                return int.TryParse(numStr, out var n) ? n : int.MaxValue;
+                var version = int.TryParse(numStr, out var n) ? n : int.MaxValue;
+                return new { Path = f, Version = version, Name = name };
             })
+            .OrderBy(s => s.Version)
+            .ThenBy(s => s.Name, StringComparer.Ordinal)
+            .Select(s => s.Path)
             .ToList();
 
         foreach (var scriptPath in scripts)

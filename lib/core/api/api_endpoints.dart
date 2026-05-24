@@ -69,11 +69,4 @@ abstract final class ApiEndpoints {
   static const String moderationTransparency =
       '/api/v1/moderation/transparency';
 
-  // ── Admin ────────────────────────────────────────────────────────────────
-  static const String adminLogin = '/api/v1/admin/auth/login';
-  static const String adminModerationQueue = '/api/v1/admin/moderation/queue';
-  static const String adminReports = '/api/v1/admin/reports';
-  static const String adminUsers = '/api/v1/admin/users';
-  static const String adminPosts = '/api/v1/admin/posts';
-  static const String adminDevices = '/api/v1/admin/devices';
 }

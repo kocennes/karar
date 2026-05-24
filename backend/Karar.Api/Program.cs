@@ -444,6 +444,16 @@ app.MapGet("/.well-known/jwks.json", (JwtService jwtService) =>
     return jwks is not null ? Results.Ok(jwks) : Results.NotFound();
 });
 
+app.MapGet("/api/v1/version", (IConfiguration configuration) =>
+{
+    return Results.Ok(new
+    {
+        minimumVersion = configuration["Version:MinimumVersion"] ?? "1.0.0",
+        androidStoreUrl = configuration["Version:AndroidStoreUrl"] ?? "https://play.google.com/store/apps/details?id=app.karar",
+        iosStoreUrl = configuration["Version:IosStoreUrl"] ?? "https://apps.apple.com/app/karar/id0000000000"
+    });
+});
+
 app.MapGet("/sitemap.xml", async (HttpContext httpContext, Db db, IConfiguration configuration) =>
 {
     var webBaseUrl = GetWebBaseUrl(configuration);

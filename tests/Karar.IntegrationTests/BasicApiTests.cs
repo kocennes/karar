@@ -86,6 +86,19 @@ public class HealthCheckTests : IClassFixture<CustomWebApplicationFactory>
     }
 
     [Fact]
+    public async Task Version_ReturnsForceUpdateContract()
+    {
+        var response = await _client.GetAsync("/api/v1/version");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var body = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>();
+        Assert.NotNull(body);
+        Assert.Equal("1.0.0", body["minimumVersion"]);
+        Assert.StartsWith("https://", body["androidStoreUrl"]);
+        Assert.StartsWith("https://", body["iosStoreUrl"]);
+    }
+
+    [Fact]
     public async Task AdminEndpoint_WithoutToken_Returns401()
     {
         var response = await _client.GetAsync("/api/v1/admin/moderation/queue");

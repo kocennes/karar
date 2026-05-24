@@ -30,13 +30,13 @@ class AppColors {
   // SurfaceVariant: #2D3748 — nested/secondary elevation.
   // Border: #374151 (Tailwind gray-700) — visible card separation.
   // Text: off-white to avoid eye strain, not pure white.
-  static const darkBackground = Color(0xFF111827);    // Tailwind gray-900
-  static const darkSurface = Color(0xFF1F2937);       // Tailwind gray-800
+  static const darkBackground = Color(0xFF111827); // Tailwind gray-900
+  static const darkSurface = Color(0xFF1F2937); // Tailwind gray-800
   static const darkSurfaceVariant = Color(0xFF2D3748); // Tailwind gray-750
-  static const darkBorder = Color(0xFF374151);         // Tailwind gray-700
-  static const darkTextPrimary = Color(0xFFE8EAED);   // Off-white, no halation
+  static const darkBorder = Color(0xFF374151); // Tailwind gray-700
+  static const darkTextPrimary = Color(0xFFE8EAED); // Off-white, no halation
   static const darkTextSecondary = Color(0xFF9CA3AF); // Tailwind gray-400
-  static const darkTextTertiary = Color(0xFF6B7280);  // Tailwind gray-500
+  static const darkTextTertiary = Color(0xFF9CA3AF); // Tailwind gray-400
 
   // Status.
   static const success = hakli;

@@ -25,6 +25,7 @@ class HomeShell extends ConsumerStatefulWidget {
 class _HomeShellState extends ConsumerState<HomeShell> {
   bool _showPwaBanner = false;
   bool _iosGuide = false;
+  bool _textInputFocused = false;
 
   static const _dismissKey = 'pwa_dismiss_ms';
   static const _dismissDuration = Duration(days: 7);
@@ -33,6 +34,33 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   void initState() {
     super.initState();
     _initPwaBanner();
+    FocusManager.instance.addListener(_handleFocusChanged);
+  }
+
+  @override
+  void dispose() {
+    FocusManager.instance.removeListener(_handleFocusChanged);
+    super.dispose();
+  }
+
+  void _handleFocusChanged() {
+    final focused = _isTextInputFocused();
+    if (focused == _textInputFocused || !mounted) return;
+    setState(() => _textInputFocused = focused);
+  }
+
+  bool _isTextInputFocused() {
+    FocusNode? node = FocusManager.instance.primaryFocus;
+    while (node != null) {
+      final context = node.context;
+      if (context != null &&
+          (context.widget is EditableText ||
+              context.findAncestorWidgetOfExactType<EditableText>() != null)) {
+        return true;
+      }
+      node = node.parent;
+    }
+    return false;
   }
 
   Future<void> _initPwaBanner() async {
@@ -183,49 +211,42 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     );
 
     // Keyboard shortcuts for Web/Desktop — skip when any text input is focused
-    bool isTextFieldFocused() {
-      FocusNode? node = FocusScope.of(context).focusedChild;
-      while (node != null) {
-        if (node.context?.widget is EditableText) return true;
-        node = node.parent;
-      }
-      return false;
-    }
+    if (_textInputFocused) return shell;
 
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.digit1): () {
-          if (!isTextFieldFocused()) widget.navigationShell.goBranch(0);
+          widget.navigationShell.goBranch(0);
         },
         const SingleActivator(LogicalKeyboardKey.digit2): () {
-          if (!isTextFieldFocused()) widget.navigationShell.goBranch(1);
+          widget.navigationShell.goBranch(1);
         },
         const SingleActivator(LogicalKeyboardKey.digit3): () {
-          if (!isTextFieldFocused()) widget.navigationShell.goBranch(2);
+          widget.navigationShell.goBranch(2);
         },
         const SingleActivator(LogicalKeyboardKey.digit4): () {
-          if (!isTextFieldFocused()) widget.navigationShell.goBranch(3);
+          widget.navigationShell.goBranch(3);
         },
         const SingleActivator(LogicalKeyboardKey.slash): () {
-          if (!isTextFieldFocused()) context.push('/search');
+          context.push('/search');
         },
         const SingleActivator(LogicalKeyboardKey.keyN): () {
-          if (!isTextFieldFocused()) widget.navigationShell.goBranch(1);
+          widget.navigationShell.goBranch(1);
         },
         const SingleActivator(LogicalKeyboardKey.keyR): () {
-          if (!isTextFieldFocused() && widget.navigationShell.currentIndex == 0) {
+          if (widget.navigationShell.currentIndex == 0) {
             ref.read(feedProvider.notifier).refresh();
             ref.read(feedFocusIndexProvider.notifier).state = null;
           }
         },
         const SingleActivator(LogicalKeyboardKey.keyJ): () {
-          if (!isTextFieldFocused()) _moveFeedFocus(1);
+          _moveFeedFocus(1);
         },
         const SingleActivator(LogicalKeyboardKey.keyK): () {
-          if (!isTextFieldFocused()) _moveFeedFocus(-1);
+          _moveFeedFocus(-1);
         },
         const SingleActivator(LogicalKeyboardKey.enter): () {
-          if (!isTextFieldFocused()) _openFocusedFeedPost();
+          _openFocusedFeedPost();
         },
       },
       child: shell,

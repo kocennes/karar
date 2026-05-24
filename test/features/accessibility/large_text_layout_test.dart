@@ -57,6 +57,7 @@ void main() {
           ],
           postId: samplePosts.first.id,
           onUpvote: (_) {},
+          onDownvote: (_) {},
           onDelete: (_) {},
           onReply: (_) {},
           onPin: (_) {},

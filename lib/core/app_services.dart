@@ -1,6 +1,3 @@
-import 'package:flutter/foundation.dart';
-
-import '../features/admin/admin_service.dart';
 import '../features/feed/post_repository.dart';
 import 'update/force_update_service.dart';
 import '../features/notifications/data/notification_repository.dart';
@@ -32,7 +29,6 @@ class AppServices {
     required this.shareService,
     required this.forceUpdateService,
     required this.remoteConfig,
-    required this.adminService,
   });
 
   final ApiClient apiClient;
@@ -47,8 +43,6 @@ class AppServices {
   final ShareService shareService;
   final ForceUpdateService forceUpdateService;
   final RemoteConfigService remoteConfig;
-  final AdminService adminService;
-
   static Future<AppServices> create({
     void Function(LogoutReason)? onLogout,
     void Function()? onMaintenance,
@@ -113,7 +107,6 @@ class AppServices {
       shareService: shareService,
       forceUpdateService: ForceUpdateService(apiClient: apiClient),
       remoteConfig: remoteConfig,
-      adminService: AdminService(apiClient: apiClient),
     );
   }
 }

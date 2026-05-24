@@ -41,10 +41,13 @@ class KararLogo extends StatelessWidget {
     };
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final boxColor = isDark ? AppColors.darkSurfaceVariant : AppColors.surfaceVariant;
+    final boxColor =
+        isDark ? AppColors.darkSurfaceVariant : AppColors.surfaceVariant;
     final boxBorder = isDark ? AppColors.darkBorder : AppColors.border;
-    final scaleColor = isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
-    final wordmarkColor = isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
+    final scaleColor =
+        isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
+    final wordmarkColor =
+        isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
     final hakliColor = isDark ? AppColors.darkHakli : AppColors.hakli;
     final haksizColor = isDark ? AppColors.darkHaksiz : AppColors.haksiz;
 
@@ -87,7 +90,8 @@ class KararLogo extends StatelessWidget {
                     shape: BoxShape.circle,
                   ),
                   child: Center(
-                    child: Icon(Icons.check, size: badgeIconSize, color: Colors.white),
+                    child: Icon(Icons.check,
+                        size: badgeIconSize, color: Colors.white),
                   ),
                 ),
               ),
@@ -102,7 +106,8 @@ class KararLogo extends StatelessWidget {
                     shape: BoxShape.circle,
                   ),
                   child: Center(
-                    child: Icon(Icons.close, size: badgeIconSize, color: Colors.white),
+                    child: Icon(Icons.close,
+                        size: badgeIconSize, color: Colors.white),
                   ),
                 ),
               ),
@@ -110,15 +115,19 @@ class KararLogo extends StatelessWidget {
           ),
         ),
         SizedBox(width: gap),
-        Text(
-          'karar',
-          style: TextStyle(
-            fontFamily: 'PlusJakartaSans',
-            fontSize: wordmarkSize,
-            fontWeight: FontWeight.w800,
-            color: wordmarkColor,
-            letterSpacing: -0.5,
-            height: 1,
+        Flexible(
+          child: Text(
+            'karar',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontFamily: 'PlusJakartaSans',
+              fontSize: wordmarkSize,
+              fontWeight: FontWeight.w800,
+              color: wordmarkColor,
+              letterSpacing: 0,
+              height: 1,
+            ),
           ),
         ),
       ],

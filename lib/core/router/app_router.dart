@@ -40,13 +40,6 @@ import '../../features/settings/feedback_screen.dart';
 import '../../features/auth/backup_codes_screen.dart';
 import '../../features/auth/change_email_screen.dart';
 import '../../features/auth/forgot_password_screen.dart';
-import '../../features/admin/admin_devices_screen.dart';
-import '../../features/admin/admin_login_screen.dart';
-import '../../features/admin/admin_posts_screen.dart';
-import '../../features/admin/admin_queue_screen.dart';
-import '../../features/admin/admin_reports_screen.dart';
-import '../../features/admin/admin_shell.dart';
-import '../../features/admin/admin_users_screen.dart';
 import '../../features/onboarding/onboarding_screen.dart';
 import '../../shared/models/post.dart';
 
@@ -256,46 +249,6 @@ GoRouter buildRouter(AppServices services) => GoRouter(
               initialCommentId: commentId,
             );
           },
-        ),
-
-        // ── Admin ────────────────────────────────────────────────────────────
-        GoRoute(
-          path: '/admin/login',
-          builder: (_, __) =>
-              AdminLoginScreen(adminService: services.adminService),
-        ),
-        ShellRoute(
-          builder: (context, state, child) => AdminShell(
-            adminService: services.adminService,
-            child: child,
-          ),
-          routes: [
-            GoRoute(
-              path: '/admin',
-              builder: (_, __) =>
-                  AdminQueueScreen(adminService: services.adminService),
-            ),
-            GoRoute(
-              path: '/admin/reports',
-              builder: (_, __) =>
-                  AdminReportsScreen(adminService: services.adminService),
-            ),
-            GoRoute(
-              path: '/admin/users',
-              builder: (_, __) =>
-                  AdminUsersScreen(adminService: services.adminService),
-            ),
-            GoRoute(
-              path: '/admin/posts',
-              builder: (_, __) =>
-                  AdminPostsScreen(adminService: services.adminService),
-            ),
-            GoRoute(
-              path: '/admin/devices',
-              builder: (_, __) =>
-                  AdminDevicesScreen(adminService: services.adminService),
-            ),
-          ],
         ),
 
         // ── Profiles ────────────────────────────────────────────────────────
