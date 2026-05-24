@@ -211,6 +211,22 @@ public sealed record AdminUserStrikeDto(
     DateTimeOffset CreatedAt
 );
 
+public sealed record AdminSuspiciousDeviceDto(
+    Guid Id,
+    string Fingerprint,
+    string Platform,
+    bool IsBanned,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset LastSeenAt,
+    int PostCount,
+    int CommentCount,
+    int ReportCount,
+    string SuspiciousReason,
+    int FailedIntegrityCount,
+    double TrustScore
+);
+
+
 public sealed record AdminOverviewResponse(
     AdminOverviewStats Stats
 );

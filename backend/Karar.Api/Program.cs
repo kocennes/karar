@@ -5101,6 +5101,286 @@ app.MapPost("/api/v1/admin/users/{id:guid}/delete", async (
     return Results.NoContent();
 });
 
+// ── ADMIN MODERATION NOTIFY ──────────────────────────────────────────────
+
+app.MapPost("/api/v1/admin/moderation/{targetType}/{targetId:guid}/notify", async (
+    string targetType,
+    Guid targetId,
+    AdminNotifyRequest request,
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth
+) =>
+{
+    var adminEmail = adminAuth.TryGetAdminEmail(httpRequest);
+    if (adminEmail is null) return Unauthorized();
+
+    if (ValidateRequest(request) is { } ve) return ve;
+
+    if (targetType is not ("post" or "comment"))
+        return BadRequest("INVALID_TARGET_TYPE", "Hedef tipi post veya comment olmalı.");
+
+    await using var connection = await db.OpenConnectionAsync();
+
+    // post veya comment'ten device_id ve user_id'yi bul
+    var table = targetType == "post" ? "posts" : "comments";
+    await using var findCmd = new NpgsqlCommand(
+        $"SELECT device_id, user_id FROM {table} WHERE id = @id",
+        connection
+    );
+    findCmd.Parameters.AddWithValue("id", targetId);
+    await using var findReader = await findCmd.ExecuteReaderAsync();
+    if (!await findReader.ReadAsync())
+        return NotFound("TARGET_NOT_FOUND", "İçerik bulunamadı.");
+
+    var deviceId = findReader.GetGuid(0);
+    var userId = findReader.IsDBNull(1) ? (Guid?)null : findReader.GetGuid(1);
+    await findReader.CloseAsync();
+
+    await using var transaction = await connection.BeginTransactionAsync();
+
+    await using var notifyCmd = new NpgsqlCommand(
+        """
+        INSERT INTO notifications (device_id, type, title, body, post_id)
+        VALUES (@deviceId, 'moderation_result', @title, @body, @postId)
+        """,
+        connection,
+        transaction
+    );
+    notifyCmd.Parameters.AddWithValue("deviceId", deviceId);
+    notifyCmd.Parameters.AddWithValue("title", "İçeriğiniz Hakkında");
+    notifyCmd.Parameters.AddWithValue("body", request.Message);
+    notifyCmd.Parameters.AddWithValue("postId", targetType == "post" ? (object)targetId : DBNull.Value);
+    await notifyCmd.ExecuteNonQueryAsync();
+
+    await LogAdminActionAsync(connection, transaction, adminEmail, "notify_user", targetType, targetId, request.Message);
+    await transaction.CommitAsync();
+
+    return Results.NoContent();
+});
+
+// ── ADMIN USERS DATA EXPORT ──────────────────────────────────────────────
+
+app.MapGet("/api/v1/admin/users/{id:guid}/data-export", async (
+    Guid id,
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth
+) =>
+{
+    if (RequireAdmin(httpRequest, adminAuth) is { } unauthorized) return unauthorized;
+
+    await using var connection = await db.OpenConnectionAsync();
+
+    await using var userCmd = new NpgsqlCommand(
+        """
+        SELECT id, username, email, created_at, bio, deleted_at
+        FROM users WHERE id = @id
+        """,
+        connection
+    );
+    userCmd.Parameters.AddWithValue("id", id);
+    await using var ur = await userCmd.ExecuteReaderAsync();
+    if (!await ur.ReadAsync()) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
+
+    var exportUser = new
+    {
+        Id = ur.GetGuid(0),
+        Username = ur.GetString(1),
+        Email = ur.IsDBNull(2) ? null : ur.GetString(2),
+        CreatedAt = ur.GetFieldValue<DateTimeOffset>(3),
+        Bio = ur.IsDBNull(4) ? null : ur.GetString(4),
+        DeletedAt = ur.IsDBNull(5) ? (DateTimeOffset?)null : ur.GetFieldValue<DateTimeOffset>(5)
+    };
+    await ur.CloseAsync();
+
+    await using var postsCmd = new NpgsqlCommand(
+        "SELECT id, title, content, status, created_at FROM posts WHERE user_id = @id ORDER BY created_at DESC",
+        connection
+    );
+    postsCmd.Parameters.AddWithValue("id", id);
+    var posts = new List<object>();
+    await using var pr = await postsCmd.ExecuteReaderAsync();
+    while (await pr.ReadAsync())
+        posts.Add(new { Id = pr.GetGuid(0), Title = pr.GetString(1), Content = pr.GetString(2), Status = pr.GetString(3), CreatedAt = pr.GetFieldValue<DateTimeOffset>(4) });
+    await pr.CloseAsync();
+
+    await using var commentsCmd = new NpgsqlCommand(
+        "SELECT id, content, status, created_at FROM comments WHERE user_id = @id ORDER BY created_at DESC",
+        connection
+    );
+    commentsCmd.Parameters.AddWithValue("id", id);
+    var comments = new List<object>();
+    await using var cr = await commentsCmd.ExecuteReaderAsync();
+    while (await cr.ReadAsync())
+        comments.Add(new { Id = cr.GetGuid(0), Content = cr.GetString(1), Status = cr.GetString(2), CreatedAt = cr.GetFieldValue<DateTimeOffset>(3) });
+    await cr.CloseAsync();
+
+    await using var votesCmd = new NpgsqlCommand(
+        "SELECT post_id, vote_type, created_at FROM votes WHERE user_id = @id ORDER BY created_at DESC",
+        connection
+    );
+    votesCmd.Parameters.AddWithValue("id", id);
+    var votes = new List<object>();
+    await using var vr = await votesCmd.ExecuteReaderAsync();
+    while (await vr.ReadAsync())
+        votes.Add(new { PostId = vr.GetGuid(0), VoteType = vr.GetString(1), CreatedAt = vr.GetFieldValue<DateTimeOffset>(2) });
+    await vr.CloseAsync();
+
+    return Results.Ok(new { User = exportUser, Posts = posts, Comments = comments, Votes = votes, ExportedAt = DateTimeOffset.UtcNow });
+});
+
+// ── ADMIN POST FEATURE ──────────────────────────────────────────────────
+
+app.MapPost("/api/v1/admin/posts/{id:guid}/feature", async (
+    Guid id,
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth
+) =>
+{
+    var adminEmail = adminAuth.TryGetAdminEmail(httpRequest);
+    if (adminEmail is null) return Unauthorized();
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var transaction = await connection.BeginTransactionAsync();
+
+    await using var cmd = new NpgsqlCommand(
+        """
+        UPDATE posts
+        SET is_featured = NOT is_featured,
+            featured_at = CASE WHEN NOT is_featured THEN NOW() ELSE NULL END
+        WHERE id = @id AND status = 'active'
+        RETURNING is_featured
+        """,
+        connection,
+        transaction
+    );
+    cmd.Parameters.AddWithValue("id", id);
+
+    var result = await cmd.ExecuteScalarAsync();
+    if (result is null)
+    {
+        await transaction.RollbackAsync();
+        return NotFound("POST_NOT_FOUND", "Post bulunamadı veya aktif değil.");
+    }
+
+    var isFeatured = (bool)result;
+    await LogAdminActionAsync(connection, transaction, adminEmail, isFeatured ? "feature_post" : "unfeature_post", "post", id, null);
+    await transaction.CommitAsync();
+
+    return Results.Ok(new { IsFeatured = isFeatured });
+});
+
+// ── ADMIN DEVICES SUSPICIOUS ─────────────────────────────────────────────
+
+app.MapGet("/api/v1/admin/devices/suspicious", async (
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth,
+    int page = 1,
+    int limit = 30
+) =>
+{
+    if (RequireAdmin(httpRequest, adminAuth) is { } unauthorized) return unauthorized;
+
+    page = Math.Max(1, page);
+    limit = Math.Clamp(limit, 1, 100);
+    var offset = (page - 1) * limit;
+
+    await using var connection = await db.OpenConnectionAsync();
+
+    var total = Convert.ToInt32(await new NpgsqlCommand(
+        "SELECT COUNT(*) FROM device_trust_scores WHERE is_suspicious = TRUE",
+        connection
+    ).ExecuteScalarAsync());
+
+    await using var cmd = new NpgsqlCommand(
+        """
+        SELECT d.id, d.fingerprint, d.platform, d.is_banned, d.created_at, d.last_seen_at,
+               (SELECT COUNT(*) FROM posts p WHERE p.device_id = d.id AND p.status != 'deleted') AS post_count,
+               (SELECT COUNT(*) FROM comments c WHERE c.device_id = d.id AND c.status != 'deleted') AS comment_count,
+               (SELECT COUNT(*) FROM reports r WHERE r.reporter_device_id = d.id) AS report_count,
+               dts.suspicious_reason,
+               dts.failed_integrity_count,
+               dts.trust_score
+        FROM device_trust_scores dts
+        JOIN devices d ON d.id = dts.device_id
+        WHERE dts.is_suspicious = TRUE
+        ORDER BY dts.trust_score ASC, dts.failed_integrity_count DESC
+        LIMIT @limit OFFSET @offset
+        """,
+        connection
+    );
+    cmd.Parameters.AddWithValue("limit", limit);
+    cmd.Parameters.AddWithValue("offset", offset);
+
+    var devices = new List<AdminSuspiciousDeviceDto>();
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        devices.Add(new AdminSuspiciousDeviceDto(
+            reader.GetGuid(0),
+            reader.GetString(1),
+            reader.GetString(2),
+            reader.GetBoolean(3),
+            reader.GetFieldValue<DateTimeOffset>(4),
+            reader.GetFieldValue<DateTimeOffset>(5),
+            Convert.ToInt32(reader.GetInt64(6)),
+            Convert.ToInt32(reader.GetInt64(7)),
+            Convert.ToInt32(reader.GetInt64(8)),
+            reader.IsDBNull(9) ? "unknown" : reader.GetString(9),
+            reader.GetInt32(10),
+            reader.IsDBNull(11) ? 1.0 : reader.GetDouble(11)
+        ));
+    }
+
+    return Results.Ok(new PagedResponse<AdminSuspiciousDeviceDto>(
+        devices,
+        new PagedPagination(page, limit, total, offset + devices.Count < total)
+    ));
+});
+
+// ── ADMIN DEVICES BAN SUBNET ─────────────────────────────────────────────
+
+app.MapPost("/api/v1/admin/devices/ban-subnet", async (
+    AdminBanSubnetRequest request,
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth
+) =>
+{
+    var adminEmail = adminAuth.TryGetAdminEmail(httpRequest);
+    if (adminEmail is null) return Unauthorized();
+
+    if (ValidateRequest(request) is { } ve) return ve;
+
+    if (string.IsNullOrWhiteSpace(request.Subnet) || string.IsNullOrWhiteSpace(request.Reason))
+        return BadRequest("INVALID_REQUEST", "Subnet ve reason zorunludur.");
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var transaction = await connection.BeginTransactionAsync();
+
+    await using var cmd = new NpgsqlCommand(
+        """
+        INSERT INTO banned_subnets (subnet, reason, admin_email)
+        VALUES (@subnet, @reason, @adminEmail)
+        ON CONFLICT (subnet) DO UPDATE SET reason = @reason, admin_email = @adminEmail
+        """,
+        connection,
+        transaction
+    );
+    cmd.Parameters.AddWithValue("subnet", request.Subnet.Trim());
+    cmd.Parameters.AddWithValue("reason", request.Reason);
+    cmd.Parameters.AddWithValue("adminEmail", adminEmail);
+    await cmd.ExecuteNonQueryAsync();
+
+    await LogAdminActionAsync(connection, transaction, adminEmail, "ban_subnet", "subnet", null, $"{request.Subnet}: {request.Reason}");
+    await transaction.CommitAsync();
+
+    return Results.NoContent();
+});
+
 // ── ADMIN CATEGORY THROTTLE ──────────────────────────────────────────────
 
 app.MapGet("/api/v1/admin/categories/{id:int}/throttle", async (

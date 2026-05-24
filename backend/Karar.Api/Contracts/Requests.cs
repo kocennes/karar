@@ -157,6 +157,15 @@ public sealed record VerifyEmailRequest(
     [Required, StringLength(6, MinimumLength = 6)] string Otp
 );
 
+public sealed record AdminNotifyRequest(
+    [Required, StringLength(500, MinimumLength = 5)] string Message
+);
+
+public sealed record AdminBanSubnetRequest(
+    [Required, MinLength(7)] string Subnet,
+    [Required, StringLength(500, MinimumLength = 3)] string Reason
+);
+
 public sealed record ResendOtpRequest(
     [Required, EmailAddress] string Email
 );
