@@ -1,5 +1,15 @@
 {
   "projects": {
     "default": "judge-app-karar"
-  }
+  },
+  "targets": {
+    "judge-app-karar": {
+      "hosting": {
+        "app": [
+          "judge-app-karar"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }

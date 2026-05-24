@@ -3,10 +3,21 @@
     {
       "target": "app",
       "public": "build/web",
-      "ignore": [
-        "firebase.json",
-        "**/.*",
-        "**/node_modules/**"
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "headers": [
+        {
+          "source": "**",
+          "headers": [
+            {
+              "key": "Cross-Origin-Embedder-Policy",
+              "value": "require-corp"
+            },
+            {
+              "key": "Cross-Origin-Opener-Policy",
+              "value": "same-origin"
+            }
+          ]
+        }
       ],
       "rewrites": [
         {
@@ -18,11 +29,7 @@
     {
       "target": "admin",
       "public": "admin-panel/out",
-      "ignore": [
-        "firebase.json",
-        "**/.*",
-        "**/node_modules/**"
-      ],
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
       "rewrites": [
         {
           "source": "**",
@@ -30,5 +37,17 @@
         }
       ]
     }
-  ]
+  ],
+  "flutter": {
+    "platforms": {
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "judge-app-karar",
+          "configurations": {
+            "web": "1:438832261411:web:de3959bacc21a94235c496"
+          }
+        }
+      }
+    }
+  }
 }
