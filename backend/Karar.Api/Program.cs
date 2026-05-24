@@ -7512,7 +7512,8 @@ app.MapGet("/api/v1/users/me/posts", async (
         $"""
         SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
-               NULL::text, p.trend_score, p.created_at, TRUE, FALSE, FALSE, NULL::text, p.is_anonymous, NULL::text[]
+               NULL::text, p.trend_score, p.created_at, TRUE,
+               p.status, p.moderation_reason, p.is_anonymous
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         WHERE p.user_id = @userId AND p.status != 'deleted'
@@ -8981,7 +8982,6 @@ static async Task<IReadOnlyList<PostDto>> ReadPostsAsync(NpgsqlCommand command)
         // 17 cols (0-16): post detail — col14=isUnlisted, col15=tags, col16=ai_summary
         // 18 cols (0-17): other-user profile query — col13=isOwner, col14=isEdited, col15=isSaved, col16=authorName, col17=tags
 
-        // We are adding is_anonymous to these.
         var fc = reader.FieldCount;
         var isOwner = fc > 13 && !reader.IsDBNull(13) && reader.GetBoolean(13);
         bool isEdited, isSaved, isUnlisted, isAnonymous = false;
@@ -8990,14 +8990,17 @@ static async Task<IReadOnlyList<PostDto>> ReadPostsAsync(NpgsqlCommand command)
         IReadOnlyList<string>? tags = null;
         string? aiSummary = null;
 
-        // Note: We need to update SELECTs to include is_anonymous.
-        // For now, let's look for column name "is_anonymous" if available.
         int anonIdx = -1;
         try { anonIdx = reader.GetOrdinal("is_anonymous"); } catch {}
+        if (anonIdx != -1) isAnonymous = reader.GetBoolean(anonIdx);
 
-        if (anonIdx != -1) {
-            isAnonymous = reader.GetBoolean(anonIdx);
-        }
+        int statusIdx = -1;
+        try { statusIdx = reader.GetOrdinal("status"); } catch {}
+        string? status = statusIdx != -1 && !reader.IsDBNull(statusIdx) ? reader.GetString(statusIdx) : null;
+
+        int modReasonIdx = -1;
+        try { modReasonIdx = reader.GetOrdinal("moderation_reason"); } catch {}
+        string? moderationReason = modReasonIdx != -1 && !reader.IsDBNull(modReasonIdx) ? reader.GetString(modReasonIdx) : null;
 
         if (fc >= 18)
         {
@@ -9050,6 +9053,8 @@ static async Task<IReadOnlyList<PostDto>> ReadPostsAsync(NpgsqlCommand command)
             reader.GetDouble(11),
             createdAt,
             isOwner,
+            Status: status,
+            ModerationReason: moderationReason,
             IsEdited: isEdited,
             IsSaved: isSaved,
             AuthorName: authorName,

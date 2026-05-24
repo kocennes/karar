@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/theme/app_colors.dart';
+import '../../shared/models/post.dart';
 import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/skeleton.dart';
@@ -98,11 +100,84 @@ class _MyPostsList extends ConsumerWidget {
         separatorBuilder: (_, __) => const SizedBox(height: 10),
         itemBuilder: (context, index) {
           final post = state.posts[index];
-          return PostCard(
-            post: post,
-            onTap: () => context.push('/posts/${post.id}', extra: post),
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (post.status != 'active') _ModerationStatusBanner(post: post),
+              PostCard(
+                post: post,
+                onTap: () => context.push('/posts/${post.id}', extra: post),
+              ),
+            ],
           );
         },
+      ),
+    );
+  }
+}
+
+class _ModerationStatusBanner extends StatelessWidget {
+  const _ModerationStatusBanner({required this.post});
+  final Post post;
+
+  @override
+  Widget build(BuildContext context) {
+    final (icon, label, color) = switch (post.status) {
+      'under_review' => (
+          Icons.hourglass_top_rounded,
+          'İncelemede',
+          Colors.orange,
+        ),
+      'auto_hidden' => (
+          Icons.visibility_off_outlined,
+          'Gizlendi',
+          AppColors.haksiz,
+        ),
+      _ => (
+          Icons.block_outlined,
+          'Kaldırıldı',
+          AppColors.haksiz,
+        ),
+    };
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: color,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
+                if (post.moderationReason != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    post.moderationReason!,
+                    style: TextStyle(
+                      color: color.withValues(alpha: 0.8),
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
