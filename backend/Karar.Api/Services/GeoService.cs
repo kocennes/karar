@@ -46,5 +46,22 @@ public sealed class GeoService : IDisposable
         return null;
     }
 
+    public string? GetRegion(System.Net.IPAddress? ip)
+    {
+        if (_reader is null || ip is null) return null;
+        try
+        {
+            if (_reader.TryCity(ip, out var response))
+                return response?.Subdivisions.FirstOrDefault()?.IsoCode
+                    ?? response?.Country.IsoCode;
+        }
+        catch (AddressNotFoundException) { }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "GeoIP region lookup failed");
+        }
+        return null;
+    }
+
     public void Dispose() => _reader?.Dispose();
 }

@@ -2675,6 +2675,8 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
     }
 
     var voterIpBlock = GetClientIpBlock(httpRequest);
+    var voterIp = httpRequest.HttpContext.Connection.RemoteIpAddress;
+    var voterRegion = geo.GetRegion(voterIp);
     var trustDecision = await deviceTrust.EvaluateForVoteAsync(connection, transaction, effectiveDeviceId.Value);
 
     int hakli, haksiz;
@@ -2687,7 +2689,8 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
             effectiveDeviceId.Value,
             request.VoteType,
             voterIpBlock,
-            trustDecision.ShouldQuarantineVote
+            trustDecision.ShouldQuarantineVote,
+            voterRegion
         );
         (hakli, haksiz) = await UpdateVoteCountersReturningAsync(connection, transaction, id, oldVote, request.VoteType);
     }
@@ -2715,7 +2718,6 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
         await redis.MarkPostDirtyAsync(id);
 
     // City-level trending: fire-and-forget update
-    var voterIp = httpRequest.HttpContext.Connection.RemoteIpAddress;
     var city = geo.GetCity(voterIp);
     if (city is not null && !trustDecision.ShouldQuarantineVote)
         _ = redis.UpdateCityTrendingAsync(city, id, newTotal);
@@ -9496,17 +9498,19 @@ static async Task UpsertVoteAsync(
     Guid deviceId,
     string voteType,
     string? voterIpBlock = null,
-    bool isQuarantined = false
+    bool isQuarantined = false,
+    string? voterRegion = null
 )
 {
     await using var command = new NpgsqlCommand(
         """
-        INSERT INTO votes (post_id, device_id, vote_type, voter_ip_block, is_quarantined)
-        VALUES (@postId, @deviceId, @voteType, @ipBlock, @isQuarantined)
+        INSERT INTO votes (post_id, device_id, vote_type, voter_ip_block, is_quarantined, voter_region)
+        VALUES (@postId, @deviceId, @voteType, @ipBlock, @isQuarantined, @voterRegion)
         ON CONFLICT (post_id, device_id)
         DO UPDATE SET
             vote_type = @voteType,
             voter_ip_block = COALESCE(@ipBlock, votes.voter_ip_block),
+            voter_region = COALESCE(@voterRegion, votes.voter_region),
             is_quarantined = @isQuarantined,
             updated_at = NOW()
         """,
@@ -9518,6 +9522,7 @@ static async Task UpsertVoteAsync(
     command.Parameters.AddWithValue("voteType", voteType);
     command.Parameters.AddWithValue("ipBlock", (object?)voterIpBlock ?? DBNull.Value);
     command.Parameters.AddWithValue("isQuarantined", isQuarantined);
+    command.Parameters.AddWithValue("voterRegion", (object?)voterRegion ?? DBNull.Value);
     await command.ExecuteNonQueryAsync();
 }
 

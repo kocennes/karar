@@ -85,7 +85,7 @@ public sealed class TrendScoreUpdater(
     {
         if (postIds.Count == 0) return [];
 
-        // Fingerprint-deduplicated vote counts per post
+        // Fingerprint-deduplicated vote counts per post, with geographic spread count
         await using var cmd = new NpgsqlCommand(
             """
             SELECT p.id,
@@ -94,7 +94,8 @@ public sealed class TrendScoreUpdater(
                    p.comment_count,
                    p.created_at,
                    COALESCE(pvd.avg_dwell_seconds, 0) AS avg_dwell_seconds,
-                   COALESCE(pvd.total_exposures, 0)::int AS total_exposures
+                   COALESCE(pvd.total_exposures, 0)::int AS total_exposures,
+                   COUNT(DISTINCT v.voter_region) FILTER (WHERE v.voter_region IS NOT NULL)::int AS distinct_regions
             FROM posts p
             LEFT JOIN votes v ON v.post_id = p.id AND v.is_quarantined = FALSE
             LEFT JOIN devices d ON d.id = v.device_id AND NOT d.is_banned
@@ -124,6 +125,7 @@ public sealed class TrendScoreUpdater(
             var createdAt = reader.GetFieldValue<DateTimeOffset>(4);
             var averageDwellSeconds = reader.GetDouble(5);
             var totalExposures = reader.GetInt32(6);
+            var distinctRegions = reader.GetInt32(7);
             var ageHours = (DateTimeOffset.UtcNow - createdAt).TotalHours;
 
             // Total unique voters — use for EWMA velocity computation
@@ -145,7 +147,12 @@ public sealed class TrendScoreUpdater(
                 averageDwellSeconds,
                 totalExposures
             );
-            updates.Add((id, score));
+
+            // Geographic spread guard: posts with < 3 distinct voter regions get a
+            // 70% score penalty to prevent locally-coordinated content from trending nationally.
+            // Penalty is lifted proportionally as more regions contribute.
+            var geoMultiplier = distinctRegions >= 3 ? 1.0 : 0.3 + (distinctRegions / 3.0) * 0.7;
+            updates.Add((id, score * geoMultiplier));
         }
 
         return updates;
