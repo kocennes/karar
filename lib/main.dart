@@ -11,6 +11,7 @@ import 'app.dart';
 import 'core/ads/ad_service.dart';
 import 'core/app_services.dart';
 import 'core/providers.dart';
+import 'firebase_options.dart';
 import 'shared/widgets/offline_view.dart';
 
 Future<void> main() async {
@@ -18,7 +19,9 @@ Future<void> main() async {
   usePathUrlStrategy();
 
   try {
-    await Firebase.initializeApp();
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
 
     if (!kIsWeb) {
       FlutterError.onError =
