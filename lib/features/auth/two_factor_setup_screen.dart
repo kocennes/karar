@@ -78,10 +78,11 @@ class _TwoFactorSetupScreenState extends ConsumerState<TwoFactorSetupScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leadingWidth: 96,
         leading: InkWell(
           onTap: () => context.go('/'),
           child: Padding(
-            padding: const EdgeInsets.all(8.0),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             child: Image.asset('logo/logo.png', fit: BoxFit.contain),
           ),
         ),

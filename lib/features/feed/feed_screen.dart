@@ -330,6 +330,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
 
     return Scaffold(
       appBar: AppBar(
+        leadingWidth: 120,
         leading: InkWell(
           onTap: () {
             if (GoRouterState.of(context).uri.toString() == '/') {
@@ -339,11 +340,10 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
             }
           },
           child: Padding(
-            padding: const EdgeInsets.all(8.0),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Image.asset('logo/logo.png', fit: BoxFit.contain),
           ),
         ),
-        title: const Text('karar'),
         actions: [
           IconButton(
             tooltip: 'Keşfet',

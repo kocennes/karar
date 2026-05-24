@@ -322,7 +322,17 @@ class PostRepository {
         if (parentId != null) 'parentId': parentId,
       },
     );
-    return _commentFromJson(json);
+    // Backend returns CommentMutationResponse (id, content, status, createdAt)
+    // which lacks full comment fields — build a minimal Comment from it.
+    final createdAt = DateTime.parse(json['createdAt'] as String);
+    return Comment(
+      id: json['id'].toString(),
+      content: json['content'] as String,
+      upvoteCount: 0,
+      createdAgo: _relativeTime(createdAt),
+      isOwner: true,
+      parentId: parentId,
+    );
   }
 
   Future<void> deleteComment(String commentId) async {
