@@ -52,6 +52,17 @@ public sealed class BruteForceService
         await _db.KeyDeleteAsync(LockoutKey(identity));
     }
 
+    public async Task<int> GetFailedAttemptCountAsync(string identity)
+    {
+        var val = await _db.StringGetAsync(AttemptsKey(identity));
+        return val.TryParse(out int n) ? n : 0;
+    }
+
+    // Başarısız deneme sayısına göre progressive delay süresi (ms).
+    // 3. denemeden itibaren 2^(n-2) × 100ms, max 5 saniye.
+    public static int ComputeDelayMs(int failedAttempts) =>
+        failedAttempts < 3 ? 0 : (int)Math.Min(Math.Pow(2, failedAttempts - 2) * 100, 5000);
+
     // IP adresi + endpoint kombinasyonu için identity oluşturur.
     public static string IdentityFor(string ip, string endpoint) => $"{ip}:{endpoint}";
 }

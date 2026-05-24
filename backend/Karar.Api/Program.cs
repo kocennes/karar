@@ -6091,8 +6091,14 @@ app.MapPost("/api/v1/auth/login", async (
 
     if (await bruteForce.IsLockedOutAsync(bfIdentity))
     {
-        return TooManyRequests("ACCOUNT_LOCKED", "Ã‡ok fazla baÅŸarÄ±sÄ±z deneme. 15 dakika bekleyin.");
+        return TooManyRequests("ACCOUNT_LOCKED", "Çok fazla başarısız deneme. 15 dakika bekleyin.");
     }
+
+    // Progressive delay: 3+ başarısız denemede sunucu taraflı gecikme (brute-force yavaşlatma)
+    var failedAttempts = await bruteForce.GetFailedAttemptCountAsync(bfIdentity);
+    var delayMs = BruteForceService.ComputeDelayMs(failedAttempts);
+    if (delayMs > 0)
+        await Task.Delay(delayMs, httpContext.RequestAborted);
 
     await using var connection = await db.OpenConnectionAsync();
 
