@@ -330,7 +330,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        leadingWidth: 120,
+        leadingWidth: 160,
         leading: InkWell(
           onTap: () {
             if (GoRouterState.of(context).uri.toString() == '/') {
@@ -340,7 +340,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
             }
           },
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             child: Image.asset('logo/logo.png', fit: BoxFit.contain),
           ),
         ),

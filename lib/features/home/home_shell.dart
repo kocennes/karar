@@ -182,34 +182,48 @@ class _HomeShellState extends ConsumerState<HomeShell> {
             ),
     );
 
-    // Keyboard shortcuts for Web/Desktop
+    // Keyboard shortcuts for Web/Desktop — skip when a text field is focused
+    bool isTextFieldFocused() {
+      final focused = FocusScope.of(context).focusedChild;
+      return focused != null && focused.context != null &&
+          focused.context!.widget is EditableText;
+    }
+
     return CallbackShortcuts(
       bindings: {
-        const SingleActivator(LogicalKeyboardKey.digit1): () =>
-            widget.navigationShell.goBranch(0),
-        const SingleActivator(LogicalKeyboardKey.digit2): () =>
-            widget.navigationShell.goBranch(1),
-        const SingleActivator(LogicalKeyboardKey.digit3): () =>
-            widget.navigationShell.goBranch(2),
-        const SingleActivator(LogicalKeyboardKey.digit4): () =>
-            widget.navigationShell.goBranch(3),
-        const SingleActivator(LogicalKeyboardKey.slash): () =>
-            context.push('/search'),
-        const SingleActivator(LogicalKeyboardKey.keyN): () =>
-            widget.navigationShell.goBranch(1),
-        // W35: r → feed'i yenile (sadece feed sekmesindeyken)
+        const SingleActivator(LogicalKeyboardKey.digit1): () {
+          if (!isTextFieldFocused()) widget.navigationShell.goBranch(0);
+        },
+        const SingleActivator(LogicalKeyboardKey.digit2): () {
+          if (!isTextFieldFocused()) widget.navigationShell.goBranch(1);
+        },
+        const SingleActivator(LogicalKeyboardKey.digit3): () {
+          if (!isTextFieldFocused()) widget.navigationShell.goBranch(2);
+        },
+        const SingleActivator(LogicalKeyboardKey.digit4): () {
+          if (!isTextFieldFocused()) widget.navigationShell.goBranch(3);
+        },
+        const SingleActivator(LogicalKeyboardKey.slash): () {
+          if (!isTextFieldFocused()) context.push('/search');
+        },
+        const SingleActivator(LogicalKeyboardKey.keyN): () {
+          if (!isTextFieldFocused()) widget.navigationShell.goBranch(1);
+        },
         const SingleActivator(LogicalKeyboardKey.keyR): () {
-          if (widget.navigationShell.currentIndex == 0) {
+          if (!isTextFieldFocused() && widget.navigationShell.currentIndex == 0) {
             ref.read(feedProvider.notifier).refresh();
             ref.read(feedFocusIndexProvider.notifier).state = null;
           }
         },
-        // W35: j/k → feed kartları arasında gezin, Enter → seçili kartı aç
-        const SingleActivator(LogicalKeyboardKey.keyJ): () => _moveFeedFocus(1),
-        const SingleActivator(LogicalKeyboardKey.keyK): () =>
-            _moveFeedFocus(-1),
-        const SingleActivator(LogicalKeyboardKey.enter): () =>
-            _openFocusedFeedPost(),
+        const SingleActivator(LogicalKeyboardKey.keyJ): () {
+          if (!isTextFieldFocused()) _moveFeedFocus(1);
+        },
+        const SingleActivator(LogicalKeyboardKey.keyK): () {
+          if (!isTextFieldFocused()) _moveFeedFocus(-1);
+        },
+        const SingleActivator(LogicalKeyboardKey.enter): () {
+          if (!isTextFieldFocused()) _openFocusedFeedPost();
+        },
       },
       child: shell,
     );

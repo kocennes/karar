@@ -28,7 +28,7 @@ class _BackupCodesScreenState extends State<BackupCodesScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        leadingWidth: 96,
+        leadingWidth: 130,
         leading: InkWell(
           onTap: () => context.go('/'),
           child: Padding(
