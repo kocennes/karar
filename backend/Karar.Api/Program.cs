@@ -260,6 +260,29 @@ if (args.Contains("migrate", StringComparer.OrdinalIgnoreCase) ||
 
 var app = builder.Build();
 
+// Global exception handler — logs full exception to console and returns JSON error body
+app.Use(async (ctx, next) =>
+{
+    try
+    {
+        await next();
+    }
+    catch (Exception ex)
+    {
+        var logger = ctx.RequestServices.GetRequiredService<ILogger<Program>>();
+        logger.LogError(ex, "Unhandled exception on {Method} {Path}", ctx.Request.Method, ctx.Request.Path);
+        if (!ctx.Response.HasStarted)
+        {
+            ctx.Response.StatusCode = 500;
+            ctx.Response.ContentType = "application/json";
+            await ctx.Response.WriteAsJsonAsync(new
+            {
+                error = new { code = "INTERNAL_ERROR", message = ex.Message, detail = ex.ToString() }
+            });
+        }
+    }
+});
+
 // Cloud Run arkasÄ±ndaki gerÃ§ek client IP'sini al
 app.UseForwardedHeaders(new ForwardedHeadersOptions
 {

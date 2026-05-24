@@ -44,6 +44,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool? _isUsernameAvailable;
   bool _isCheckingUsername = false;
 
+  final _confirmPasswordFocus = FocusNode();
+
   @override
   void initState() {
     super.initState();
@@ -59,6 +61,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _passwordCtrl.dispose();
     _confirmPasswordCtrl.dispose();
     _dobCtrl.dispose();
+    _confirmPasswordFocus.dispose();
     super.dispose();
   }
 
@@ -317,6 +320,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   const SizedBox(height: 20),
                   TextFormField(
                     controller: _passwordCtrl,
+                    onFieldSubmitted: (_) => _confirmPasswordFocus.requestFocus(),
                     decoration: InputDecoration(
                       labelText: 'Şifre',
                       prefixIcon: const Icon(Icons.lock_outline),
@@ -336,6 +340,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   const SizedBox(height: 20),
                   TextFormField(
                     controller: _confirmPasswordCtrl,
+                    focusNode: _confirmPasswordFocus,
                     decoration: InputDecoration(
                       labelText: 'Şifre Tekrar',
                       prefixIcon: const Icon(Icons.lock_reset_outlined),
