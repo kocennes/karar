@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -26,14 +28,30 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
   var _obscureConfirm = true;
   String? _error;
   String? _email;
+  int _resendCooldown = 0;
+
+  Timer? _cooldownTimer;
 
   @override
   void dispose() {
+    _cooldownTimer?.cancel();
     _emailCtrl.dispose();
     _otpCtrl.dispose();
     _newPasswordCtrl.dispose();
     _confirmCtrl.dispose();
     super.dispose();
+  }
+
+  void _startCooldown(int seconds) {
+    _cooldownTimer?.cancel();
+    setState(() => _resendCooldown = seconds);
+    _cooldownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) { t.cancel(); return; }
+      setState(() {
+        _resendCooldown--;
+        if (_resendCooldown <= 0) t.cancel();
+      });
+    });
   }
 
   Future<void> _sendCode() async {
@@ -51,6 +69,24 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
       if (mounted) setState(() { _email = email; _step = _Step.verify; });
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.friendlyMessage);
+    } catch (_) {
+      if (mounted) setState(() => _error = 'Kod gönderilemedi. Tekrar dene.');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _resendCode() async {
+    setState(() { _isLoading = true; _error = null; });
+    try {
+      await ref.read(authServiceProvider).forgotPassword(_email!);
+      if (mounted) setState(() => _error = null);
+    } on ApiException catch (e) {
+      if (mounted) {
+        final wait = e.retryAfterSeconds;
+        if (wait != null && wait > 0) _startCooldown(wait);
+        setState(() => _error = e.friendlyMessage);
+      }
     } catch (_) {
       if (mounted) setState(() => _error = 'Kod gönderilemedi. Tekrar dene.');
     } finally {
@@ -122,8 +158,10 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
                   onToggleConfirm: () => setState(() => _obscureConfirm = !_obscureConfirm),
                   isLoading: _isLoading,
                   error: _error,
+                  resendCooldown: _resendCooldown,
                   onSubmit: _resetPassword,
-                  onResend: () { setState(() { _step = _Step.email; _error = null; }); },
+                  onResend: _resendCode,
+                  onChangeEmail: () { setState(() { _step = _Step.email; _error = null; }); },
                 ),
               _Step.done => _DoneStep(onLogin: () => context.go('/auth/login')),
             },
@@ -218,8 +256,10 @@ class _VerifyStep extends StatelessWidget {
     required this.onToggleConfirm,
     required this.isLoading,
     required this.error,
+    required this.resendCooldown,
     required this.onSubmit,
     required this.onResend,
+    required this.onChangeEmail,
   });
 
   final String email;
@@ -232,8 +272,10 @@ class _VerifyStep extends StatelessWidget {
   final VoidCallback onToggleConfirm;
   final bool isLoading;
   final String? error;
+  final int resendCooldown;
   final VoidCallback onSubmit;
   final VoidCallback onResend;
+  final VoidCallback onChangeEmail;
 
   @override
   Widget build(BuildContext context) {
@@ -325,7 +367,13 @@ class _VerifyStep extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         TextButton(
-          onPressed: isLoading ? null : onResend,
+          onPressed: (isLoading || resendCooldown > 0) ? null : onResend,
+          child: resendCooldown > 0
+              ? Text('Kodu tekrar gönder ($resendCooldown sn)')
+              : const Text('Kodu tekrar gönder'),
+        ),
+        TextButton(
+          onPressed: isLoading ? null : onChangeEmail,
           child: const Text('E-postayı yanlış mı girdin?'),
         ),
       ],
