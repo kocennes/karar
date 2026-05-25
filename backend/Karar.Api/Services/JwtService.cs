@@ -46,6 +46,27 @@ public sealed class JwtService
         }
     }
 
+    public string GenerateAdminToken(string email)
+    {
+        var claims = new[]
+        {
+            new Claim(JwtRegisteredClaimNames.Sub, email),
+            new Claim(JwtRegisteredClaimNames.Email, email),
+            new Claim(ClaimTypes.Role, "admin"),
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+        };
+
+        var token = new JwtSecurityToken(
+            issuer: _issuer,
+            audience: _audience,
+            claims: claims,
+            expires: DateTime.UtcNow.AddHours(8),
+            signingCredentials: new SigningCredentials(_signingKey, _algorithm)
+        );
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+
     public string GenerateAccessToken(Guid userId, string username)
     {
         var claims = new[]

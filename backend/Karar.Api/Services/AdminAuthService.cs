@@ -1,27 +1,23 @@
+using System.IdentityModel.Tokens.Jwt;
 using System.Net;
+using System.Security.Claims;
 
 namespace Karar.Api.Services;
 
 public sealed class AdminAuthService
 {
-    private readonly string _staticToken;
-    private readonly string? _previousStaticToken;
     private readonly string _email;
     private readonly string _password;
     private readonly string? _passwordHash;
     private readonly HashSet<IPAddress> _ipAllowlist;
+    private readonly JwtService _jwt;
 
-    public AdminAuthService(IConfiguration configuration, IWebHostEnvironment env)
+    public AdminAuthService(IConfiguration configuration, IWebHostEnvironment env, JwtService jwt)
     {
+        _jwt = jwt;
+
         var isProduction = env.IsProduction();
 
-        var token = configuration["Admin:Token"];
-        if (isProduction && string.IsNullOrWhiteSpace(token))
-            throw new InvalidOperationException(
-                "Admin:Token Secret Manager'dan yuklenmeli.");
-
-        _staticToken = token ?? "dev-admin-token";
-        _previousStaticToken = configuration["Admin:PreviousToken"];
         _email = configuration["Admin:Email"] ?? "admin@karar.local";
         _password = configuration["Admin:Password"] ?? "dev-admin-password";
         _passwordHash = configuration["Admin:PasswordHash"];
@@ -35,13 +31,6 @@ public sealed class AdminAuthService
         _ipAllowlist = ParseIpAllowlist(allowlistRaw);
     }
 
-    public string? TryGetAdminEmail(HttpRequest request)
-    {
-        if (!IsIpAllowed(request.HttpContext)) return null;
-        var token = GetToken(request);
-        return IsValidToken(token) ? _email : null;
-    }
-
     public bool ValidateCredentials(string email, string password)
     {
         if (!string.Equals(email, _email, StringComparison.OrdinalIgnoreCase))
@@ -52,13 +41,31 @@ public sealed class AdminAuthService
             : password == _password;
     }
 
-    public string IssueToken() => _staticToken;
+    public string IssueToken() => _jwt.GenerateAdminToken(_email);
+
+    public string? TryGetAdminEmail(HttpRequest request)
+    {
+        if (!IsIpAllowed(request.HttpContext)) return null;
+        var token = GetToken(request);
+        return ValidateAdminToken(token);
+    }
 
     public bool IsIpAllowed(HttpContext context)
     {
         if (_ipAllowlist.Count == 0) return true;
         var remoteIp = context.Connection.RemoteIpAddress;
         return remoteIp is not null && _ipAllowlist.Contains(remoteIp.MapToIPv4());
+    }
+
+    private string? ValidateAdminToken(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return null;
+        var principal = _jwt.ValidateAccessToken(token);
+        if (principal is null) return null;
+        var role = principal.FindFirstValue(ClaimTypes.Role);
+        if (role != "admin") return null;
+        return principal.FindFirstValue(JwtRegisteredClaimNames.Email)
+            ?? principal.FindFirstValue(JwtRegisteredClaimNames.Sub);
     }
 
     private static string? GetToken(HttpRequest request)
@@ -73,13 +80,6 @@ public sealed class AdminAuthService
         return authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
             ? authorization["Bearer ".Length..].Trim()
             : null;
-    }
-
-    private bool IsValidToken(string? token)
-    {
-        if (string.IsNullOrWhiteSpace(token)) return false;
-        return token == _staticToken ||
-               (!string.IsNullOrWhiteSpace(_previousStaticToken) && token == _previousStaticToken);
     }
 
     private static HashSet<IPAddress> ParseIpAllowlist(string raw)
