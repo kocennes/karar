@@ -1617,6 +1617,139 @@ app.MapGet("/api/v1/posts/discover", async (
     return Results.Ok(new DiscoverResponse(rising, controversial, fresh, cityTrending, city));
 });
 
+// Cursor-based immersive discover feed (Reels-style vertical scroll).
+// Each page returns `limit` items with rankingReason, impressionToken and seenBefore.
+// Seen-dedupe: posts already in post_views for this device are excluded.
+// Category diversity: max 3 per category per page, max 2 consecutive from same category.
+// Cursor encodes (trendScore, id) for stable keyset pagination.
+app.MapGet("/api/v1/posts/discover/feed", async (
+    HttpRequest httpRequest,
+    Db db,
+    RequestDevice requestDevice,
+    JwtService jwtService,
+    RedisService redis,
+    string? cursor = null,
+    int limit = 10
+) =>
+{
+    limit = Math.Clamp(limit, 1, 20);
+
+    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    var deviceParam = deviceId ?? Guid.Empty;
+    var userId = GetOptionalUserId(httpRequest, jwtService);
+    var userParam = userId ?? Guid.Empty;
+
+    var hasCursor = cursor is not null;
+    var cursorDecoded = DecodeCursor(cursor);
+    var cursorScore = cursorDecoded?.TrendScore ?? 0.0;
+    var cursorId = cursorDecoded?.Id ?? Guid.Empty;
+
+    await using var connection = await db.OpenConnectionAsync();
+
+    await using var cmd = new NpgsqlCommand(
+        """
+        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+               p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
+               v.vote_type, p.trend_score, p.created_at,
+               (p.device_id = @deviceId OR p.user_id = @userId),
+               p.is_unlisted, p.is_anonymous, p.tags
+        FROM posts p
+        JOIN categories c ON c.id = p.category_id
+        LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
+        WHERE p.status = 'active'
+          AND p.is_unlisted = FALSE
+          AND p.distribution_stage >= 2
+          AND (
+              @deviceId = '00000000-0000-0000-0000-000000000000'::uuid
+              OR NOT EXISTS (
+                  SELECT 1 FROM post_views pv
+                  WHERE pv.post_id = p.id AND pv.device_id = @deviceId
+              )
+          )
+          AND (
+              @userId = '00000000-0000-0000-0000-000000000000'::uuid
+              OR NOT EXISTS (
+                  SELECT 1 FROM blocked_users bu
+                  WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id
+              )
+          )
+          AND (
+              NOT @hasCursor
+              OR p.trend_score < @cursorScore
+              OR (p.trend_score = @cursorScore AND p.id < @cursorId)
+          )
+        ORDER BY p.trend_score DESC, p.id DESC
+        LIMIT @fetchSize
+        """,
+        connection
+    );
+    cmd.Parameters.AddWithValue("deviceId", deviceParam);
+    cmd.Parameters.AddWithValue("userId", userParam);
+    cmd.Parameters.AddWithValue("hasCursor", hasCursor);
+    cmd.Parameters.AddWithValue("cursorScore", cursorScore);
+    cmd.Parameters.AddWithValue("cursorId", cursorId);
+    cmd.Parameters.AddWithValue("fetchSize", limit * 3);
+
+    var pool = await ReadPostsAsync(cmd);
+
+    // Assign ranking reason per post based on age and vote characteristics
+    string RankingReasonFor(PostDto p)
+    {
+        var age = DateTimeOffset.UtcNow - p.CreatedAt;
+        var total = p.VoteCountHakli + p.VoteCountHaksiz;
+        var balance = total > 0 ? (double)Math.Abs(p.VoteCountHakli - p.VoteCountHaksiz) / total : 1.0;
+        if (age < TimeSpan.FromHours(6) && total >= 15) return "rising";
+        if (total > 40 && balance < 0.2) return "controversial";
+        if (age < TimeSpan.FromHours(12) && total <= 10) return "fresh";
+        return "trending";
+    }
+
+    // Diversity pass: max 3 per category per page, max 2 consecutive from same category
+    var result = new List<PostDto>(limit);
+    var categoryCounts = new Dictionary<int, int>();
+    int? prevCategoryId = null;
+    int streak = 0;
+
+    foreach (var post in pool)
+    {
+        if (result.Count >= limit) break;
+
+        categoryCounts.TryGetValue(post.Category.Id, out var catCount);
+        if (catCount >= 3) continue;
+
+        if (prevCategoryId == post.Category.Id)
+        {
+            streak++;
+            if (streak > 2) continue;
+        }
+        else
+        {
+            prevCategoryId = post.Category.Id;
+            streak = 1;
+        }
+
+        categoryCounts[post.Category.Id] = catCount + 1;
+        result.Add(post with { RankingReason = RankingReasonFor(post) });
+    }
+
+    var nextCursor = result.Count == limit
+        ? EncodeCursor(result[^1].TrendScore, result[^1].Id)
+        : null;
+
+    var items = result
+        .Select(p => new DiscoverFeedItem(
+            p,
+            p.RankingReason ?? "trending",
+            Convert.ToBase64String(p.Id.ToByteArray()),
+            false))
+        .ToList();
+
+    if (deviceId is not null && result.Count > 0)
+        _ = redis.RecordImpressionsAsync(deviceId.Value, result.Select(p => p.Id));
+
+    return Results.Ok(new DiscoverFeedResponse(items, nextCursor));
+});
+
 // Returns top trending posts for the caller's city (detected via GeoIP).
 // Returns 204 NoContent when city cannot be determined.
 // Returns posts created in the last 24 hours, ordered by trend score.
@@ -8608,7 +8741,8 @@ app.MapPost("/api/v1/auth/forgot-password", async (
 
 app.MapPost("/api/v1/auth/reset-password", async (
     ResetPasswordRequest request,
-    Db db
+    Db db,
+    RedisService redis
 ) =>
 {
     if (ValidateRequest(request) is { } validationError) return validationError;
@@ -8674,6 +8808,7 @@ app.MapPost("/api/v1/auth/reset-password", async (
     await cleanupCmd.ExecuteNonQueryAsync();
 
     await transaction.CommitAsync();
+    await redis.GetDb().KeyDeleteAsync($"otp:pwreset:{email}");
     return Results.NoContent();
 }).RequireRateLimiting("auth-strict");
 
@@ -9508,7 +9643,8 @@ app.MapPost("/api/v1/auth/change-email/confirm", async (
     ConfirmChangeEmailRequest request,
     HttpRequest httpRequest,
     Db db,
-    JwtService jwtService
+    JwtService jwtService,
+    RedisService redis
 ) =>
 {
     if (ValidateRequest(request) is { } ve) return ve;
@@ -9564,6 +9700,7 @@ app.MapPost("/api/v1/auth/change-email/confirm", async (
     await deleteOtp.ExecuteNonQueryAsync();
 
     await tx.CommitAsync();
+    await redis.GetDb().KeyDeleteAsync($"otp:chgemail:{newEmail}");
     return Results.NoContent();
 }).RequireRateLimiting("auth-strict");
 
@@ -10154,6 +10291,27 @@ static IReadOnlyList<PostDto> LabelPosts(IReadOnlyList<PostDto> posts, string re
 {
     if (posts.Count == 0) return posts;
     return posts.Select(post => post with { RankingReason = reason, RankingLabel = label }).ToList();
+}
+
+static string EncodeCursor(double trendScore, Guid id) =>
+    Convert.ToBase64String(
+        System.Text.Encoding.UTF8.GetBytes(
+            $"{trendScore.ToString("R", System.Globalization.CultureInfo.InvariantCulture)}|{id}"));
+
+static (double TrendScore, Guid Id)? DecodeCursor(string? cursor)
+{
+    if (string.IsNullOrWhiteSpace(cursor)) return null;
+    try
+    {
+        var raw = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(cursor));
+        var parts = raw.Split('|');
+        if (parts.Length != 2) return null;
+        if (!double.TryParse(parts[0], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var score)) return null;
+        if (!Guid.TryParse(parts[1], out var id)) return null;
+        return (score, id);
+    }
+    catch { return null; }
 }
 
 static async Task<IReadOnlyList<PostDto>> ReadPostsAsync(NpgsqlCommand command)

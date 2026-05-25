@@ -29,6 +29,18 @@ public sealed record DiscoverResponse(
     string? City = null
 );
 
+public sealed record DiscoverFeedItem(
+    PostDto Post,
+    string RankingReason,
+    string ImpressionToken,
+    bool SeenBefore
+);
+
+public sealed record DiscoverFeedResponse(
+    IReadOnlyList<DiscoverFeedItem> Items,
+    string? NextCursor
+);
+
 public sealed record CommentsResponse(
     IReadOnlyList<CommentDto> Comments,
     Pagination Pagination,
