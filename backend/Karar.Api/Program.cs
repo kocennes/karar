@@ -119,6 +119,7 @@ if (hostedServicesEnabled)
     builder.Services.AddHostedService<NotificationDispatcher>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<CommentNotificationBatcher>());
     builder.Services.AddHostedService<VerdictReminderJob>();
+    builder.Services.AddHostedService<ViralNotificationJob>();
     builder.Services.AddHostedService<DataRetentionService>();
     builder.Services.AddHostedService<PoliticalNarrativeClusterJob>();
     builder.Services.AddHostedService<PostDistributionJob>();
