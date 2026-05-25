@@ -27,6 +27,46 @@ Karar'in temel akisi:
 5. Paylasim linkleri, Open Graph onizlemeleri ve deep link mantigi viral buyumeyi destekler.
 6. Moderasyon, raporlama, otomatik esik kontrolleri ve admin panel ile platform guvenligi yonetilir.
 
+## Urun Odagi ve North-Star
+
+Son product review sonrasi proje odagi daha net hale getirildi: Karar'in ana degeri, kullanicinin bir ikilemi okuyup toplulukla birlikte karar vermesidir.
+
+Ana urun dongusu:
+
+```text
+Oku -> Hakli/Haksiz karar ver -> Sonucu gor -> Yoruma/paylasima gir -> Geri don
+```
+
+North-star metric:
+
+```text
+Weekly Completed Judgment Loops
+```
+
+Bir completed judgment loop su zinciri tamamlar:
+
+1. Kullanici feed, Kesfet, detay veya paylasim landing yuzeyinde bir post gorur.
+2. Icerikte anlamli kalir veya detay ekranina girer.
+3. Hakli/Haksiz oyu verir.
+4. Verdict/sonuc ekranini gorur.
+
+Bu metrik, sadece DAU veya install sayisina bakmak yerine feed kalitesi, retention ve gercek etkilesimi beraber olcmek icin secildi.
+
+Scope discipline karari:
+
+- Core loop'u guclendirmeyen yeni fikirler hemen kodlanmaz, backlog'a alinir.
+- Feed/ranking, trust & safety, growth veya release blocker olmayan isler MVP kapsamini genisletmez.
+- Admin, DevOps ve notification isleri onemlidir; ancak ana urun dongusunu destekledigi olcude oncelik alir.
+
+Sprint onceligi genel olarak:
+
+| Alan | Pay |
+|---|---|
+| Core loop / Feed / Ranking | %50 |
+| Trust & Safety / Moderasyon | %25 |
+| Growth / Analytics | %15 |
+| Infra / DevOps / refactor | %10 |
+
 ## Teknoloji Stack
 
 ### Frontend
@@ -107,6 +147,35 @@ Same ASP.NET Core API
 
 Backend su an monolitik ilerliyor. Bu MVP icin dogru tercih: daha az operasyon yuku, daha hizli iterasyon, tek deployment. Notification, moderation, ranking ve analytics gibi alanlar servis sinirlari belli olacak sekilde yazildi; trafik buyudugunde parcalanabilir.
 
+## Feed, Ranking ve Kesfet Stratejisi
+
+Karar'in urun kalbi feed ve Kesfet akisi oldugu icin ranking modeli ayri bir strateji olarak ele alindi. Hedef sadece en cok tiklanan postu gostermek degil; guvenli, cesitli ve karar vermeye deger icerigi one cikarmak.
+
+Ranking hedef fonksiyonu:
+
+```text
+quality_score =
+  vote_probability
++ meaningful_dwell
++ comment_open_probability
++ share_or_save_intent
+- skip_risk
+- report_risk
+- repetition_fatigue
+- safety_risk
+```
+
+Mevcut/planlanan guardrail'ler:
+
+- Removed, hidden, under_review veya riskli icerik feed/Kesfet aday havuzuna giremez.
+- Same-author cap ve kategori cesitliligi korunur.
+- Seen dedupe ile ayni post tekrar tekrar gosterilmez.
+- `not_interested`, hizli skip ve report sinyalleri ranking cezasina baglanir.
+- `rankingReason` / `rankingLabel` kontrati ile ileride "Neden bunu goruyorum?" aciklamasi desteklenir.
+- ML ranker icin veri toplanana kadar rule-based model aciklanabilir ve test edilebilir kalir.
+
+Kesfet icin hedef deneyim Instagram/Reels benzeri tam ekran dikey akistir: her scroll'da farkli post, ayni ekranda okuma, Hakli/Haksiz oyu, yorum paneli, paylas/kaydet/ilgilenmiyorum aksiyonlari.
+
 ## Backend Kapsami
 
 Backend `backend/Karar.Api` altinda. Ana giris noktasi `Program.cs`.
@@ -125,6 +194,7 @@ Tamamlanan ana endpoint gruplari:
 - Comment create/update/delete
 - Nested comment, pin comment, comment reactions
 - Feed, discover, today, weekly featured, city trending
+- Discover feed events: impression, dwell, skip, vote, comment open/reply, save/share, not interested
 - Search ve user search
 - Save/unsave post
 - Category follow/mute
@@ -297,10 +367,23 @@ Tamamlanan veya altyapisi hazir olan guvenlik isleri:
 - SSRF protection handler
 - Device trust service
 - Device/subnet ban
-- Play Integrity hazirligi
+- App Check / Play Integrity / App Attest soft-enforce tasarimi
+- Play Integrity nonce ve verification hazirligi
 - Forbidden-file guard CI
 
 Production icin secret degerleri GitHub'a yazilmiyor. Ortam degiskenleri Render/Vercel/Firebase tarafinda tutuluyor.
+
+### Device Integrity Soft-Enforce
+
+MVP'de cihaz butunlugu sinyalleri olculur ama eksik signal tek basina kullaniciyi bloklamaz.
+
+Kapsam:
+
+- Vote endpoint: suspicious device oyu kabul edilir ama trend score'a dogrudan yansimaz; quarantine davranisi korunur.
+- Report ve create-post endpointleri: device trust degerlendirmesine baglandi, ancak soft-enforce modda hard block yapmaz.
+- Banned device davranisi korunur; banli cihazlar `RequestDevice` katmaninda reddedilir.
+- `IIntegrityProvider` interface'i ile Play Integrity, App Attest ve Firebase App Check provider sinirlari hazirlandi.
+- Provider entegrasyonu config flag'leriyle acilacak sekilde tasarlandi.
 
 ## Moderasyon ve Trust & Safety
 
@@ -377,6 +460,21 @@ Paylasim ve public web tarafinda yapilanlar:
 - Copy link fallback
 
 Bu sayede post linkleri sosyal platformlarda daha iyi onizleme alacak sekilde tasarlandi.
+
+Growth execution artik olculebilir loop'lar uzerinden takip edilecek:
+
+- Share -> Web Landing -> Judgment
+- Notification -> Return -> Judgment
+- Kesfet -> Session Depth -> Share
+
+Yeni/planlanan growth analytics eventleri:
+
+- `share_landing_opened`
+- `share_landing_vote_attempt`
+- `share_landing_completed_judgment`
+- `share_to_install`
+- `notification_to_completed_judgment`
+- `discover_to_completed_judgment`
 
 ## CI/CD ve Git Kurallari
 
@@ -522,11 +620,19 @@ Flutter/Web:
 - CI workflow and forbidden-file guard
 - Notification architecture planning
 - DevOps/security roadmap
+- Product strategy: scope discipline, north-star metric, ranking/feed strategy, growth execution
+- Discover/ranking analytics event kontrati
+- App Check / Play Integrity / App Attest soft-enforce device integrity tasarimi
 
 ## Bilinen Eksikler ve Yakin Roadmap
 
 Yakin vadede odaklanilacak basliklar:
 
+- Weekly Completed Judgment Loops metric dashboard
+- Verdict, discover, not-interested ve share landing analytics eventlerinin uctan uca dogrulanmasi
+- Feed/Kesfet `rankingReason` kontratini testlerle koruma
+- Not-interested ve hizli skip sinyallerini ranking cezasina baglama
+- Growth dashboard: share_to_completed_judgment, notification_to_completed_judgment, discover_to_completed_judgment
 - Production branch protection
 - GitHub secret scanning, Dependabot, CodeQL
 - Backend container build, SBOM ve vulnerability scan
@@ -560,9 +666,14 @@ Buyume fazinda:
 
 Senior code review toplantisinda ozellikle su konulari tartismak faydali olur:
 
+- North-star metric olarak Weekly Completed Judgment Loops dogru mu, hangi guardrail'ler eklenmeli?
+- Feed/ranking stratejisinde rule-based model MVP icin yeterli mi?
+- Kesfet vertical feed'de diversity, safety ve growth dengesi nasil kurulmali?
+- Growth execution icin share landing ve notification loop metrikleri yeterli mi?
 - Monolitik backend bu faz icin yeterli mi, hangi noktada servis ayrimi gerekir?
 - Redis kullanimlari dogru sinirda mi, queue/event stream ihtiyaci ne zaman dogar?
 - Vote manipulation ve brigade detection icin eklenmesi gereken DB/index/analytics katmani var mi?
+- App Check / Play Integrity / App Attest soft-enforce yaklasimi MVP icin dogru mu, hangi noktada hard-enforce'a gecilmeli?
 - Admin action audit modeli hukuki ve operasyonel acidan yeterli mi?
 - Notification rate limiting ve quiet hours stratejisi retention/churn dengesi icin yeterli mi?
 - Render + Neon + Upstash MVP icin yeterli mi, staging/prod ayrimi nasil olmali?
