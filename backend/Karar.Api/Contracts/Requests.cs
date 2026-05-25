@@ -149,6 +149,11 @@ public sealed record BulkUserActionRequest(
     string? Reason = null
 );
 
+public sealed record AdminAppealDecisionRequest(
+    [Required] string Decision,
+    [StringLength(500)] string? Note = null
+);
+
 public sealed record RegisterRequest(
     [Required, RegularExpression(@"^[a-zA-Z0-9_]{3,20}$",
         ErrorMessage = "Kullanıcı adı 3-20 karakter, yalnızca harf/rakam/alt çizgi.")] string Username,

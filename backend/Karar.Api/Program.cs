@@ -5364,6 +5364,139 @@ app.MapGet("/api/v1/admin/users/{id:guid}/data-export", async (
     return Results.Ok(new { User = exportUser, Posts = posts, Comments = comments, Votes = votes, ExportedAt = DateTimeOffset.UtcNow });
 });
 
+// ── ADMIN MODERATION APPEALS ─────────────────────────────────────────────
+
+app.MapGet("/api/v1/admin/appeals", async (
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth,
+    string status = "pending",
+    int page = 1,
+    int pageSize = 20
+) =>
+{
+    if (RequireAdmin(httpRequest, adminAuth) is { } unauthorized) return unauthorized;
+
+    page = Math.Max(1, page);
+    pageSize = Math.Clamp(pageSize, 1, 50);
+    var offset = (page - 1) * pageSize;
+
+    if (status is not ("pending" or "approved" or "rejected")) status = "pending";
+
+    await using var connection = await db.OpenConnectionAsync();
+
+    await using var countCmd = new NpgsqlCommand(
+        "SELECT COUNT(*) FROM moderation_appeals WHERE status = @status",
+        connection);
+    countCmd.Parameters.AddWithValue("status", status);
+    var total = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
+
+    await using var cmd = new NpgsqlCommand(
+        """
+        SELECT
+            a.id, a.user_id, u.username,
+            a.target_type, a.target_id,
+            a.message, a.status, a.created_at,
+            a.reviewed_at, a.reviewed_by, a.review_note,
+            CASE
+                WHEN a.target_type = 'post' THEN (SELECT title FROM posts WHERE id = a.target_id)
+                WHEN a.target_type = 'comment' THEN (SELECT LEFT(content, 100) FROM comments WHERE id = a.target_id)
+            END AS target_preview
+        FROM moderation_appeals a
+        JOIN users u ON u.id = a.user_id
+        WHERE a.status = @status
+        ORDER BY a.created_at ASC
+        LIMIT @limit OFFSET @offset
+        """,
+        connection);
+    cmd.Parameters.AddWithValue("status", status);
+    cmd.Parameters.AddWithValue("limit", pageSize);
+    cmd.Parameters.AddWithValue("offset", offset);
+
+    var appeals = new List<object>();
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        appeals.Add(new
+        {
+            id = reader.GetGuid(0),
+            userId = reader.GetGuid(1),
+            username = reader.GetString(2),
+            targetType = reader.GetString(3),
+            targetId = reader.GetGuid(4),
+            message = reader.GetString(5),
+            status = reader.GetString(6),
+            createdAt = reader.GetFieldValue<DateTimeOffset>(7),
+            reviewedAt = reader.IsDBNull(8) ? (DateTimeOffset?)null : reader.GetFieldValue<DateTimeOffset>(8),
+            reviewedBy = reader.IsDBNull(9) ? null : reader.GetString(9),
+            reviewNote = reader.IsDBNull(10) ? null : reader.GetString(10),
+            targetPreview = reader.IsDBNull(11) ? null : reader.GetString(11),
+        });
+    }
+
+    return Results.Ok(new { appeals, total, page, pageSize });
+});
+
+app.MapPost("/api/v1/admin/appeals/{id:guid}/decide", async (
+    Guid id,
+    AdminAppealDecisionRequest request,
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth
+) =>
+{
+    var adminEmail = adminAuth.TryGetAdminEmail(httpRequest);
+    if (adminEmail is null) return Unauthorized();
+
+    if (ValidateRequest(request) is { } ve) return ve;
+
+    if (request.Decision is not ("approved" or "rejected"))
+        return BadRequest("INVALID_DECISION", "Karar approved veya rejected olmalı.");
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var transaction = await connection.BeginTransactionAsync();
+
+    await using var updateCmd = new NpgsqlCommand(
+        """
+        UPDATE moderation_appeals
+        SET status = @decision, reviewed_at = NOW(), reviewed_by = @admin, review_note = @note
+        WHERE id = @id AND status = 'pending'
+        RETURNING target_type, target_id
+        """,
+        connection, transaction);
+    updateCmd.Parameters.AddWithValue("id", id);
+    updateCmd.Parameters.AddWithValue("decision", request.Decision);
+    updateCmd.Parameters.AddWithValue("admin", adminEmail);
+    updateCmd.Parameters.AddWithValue("note", (object?)request.Note ?? DBNull.Value);
+
+    await using var reader = await updateCmd.ExecuteReaderAsync();
+    if (!await reader.ReadAsync())
+    {
+        await transaction.RollbackAsync();
+        return NotFound("APPEAL_NOT_FOUND", "Başvuru bulunamadı veya zaten incelendi.");
+    }
+
+    var targetType = reader.GetString(0);
+    var targetId = reader.GetGuid(1);
+    await reader.CloseAsync();
+
+    if (request.Decision == "approved")
+    {
+        var table = targetType == "post" ? "posts" : "comments";
+        await new NpgsqlCommand(
+            $"UPDATE {table} SET status = 'active' WHERE id = @tid",
+            connection, transaction)
+        { Parameters = { new("tid", targetId) } }.ExecuteNonQueryAsync();
+    }
+
+    await LogAdminActionAsync(connection, transaction, adminEmail,
+        request.Decision == "approved" ? "appeal_approved" : "appeal_rejected",
+        targetType, targetId, request.Note);
+
+    await transaction.CommitAsync();
+    return Results.NoContent();
+});
+
 // ── ADMIN POST FEATURE ──────────────────────────────────────────────────
 
 app.MapPost("/api/v1/admin/posts/{id:guid}/feature", async (
