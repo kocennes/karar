@@ -8667,6 +8667,28 @@ app.MapGet("/api/v1/admin/analytics/moderation", async (
             count = Convert.ToInt32(dailyReader.GetInt64(1)),
         });
     }
+    await dailyReader.CloseAsync();
+
+    // Appeal overturn rate
+    await using var appealCmd = new NpgsqlCommand(
+        """
+        SELECT
+            COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+            COUNT(*) FILTER (WHERE status = 'approved') AS approved,
+            COUNT(*) FILTER (WHERE status = 'rejected') AS rejected
+        FROM moderation_appeals
+        WHERE created_at >= NOW() - @days * INTERVAL '1 day'
+        """,
+        connection);
+    appealCmd.Parameters.AddWithValue("days", days);
+    await using var appealReader = await appealCmd.ExecuteReaderAsync();
+    await appealReader.ReadAsync();
+    var appealsPending = Convert.ToInt32(appealReader.GetInt64(0));
+    var appealsApproved = Convert.ToInt32(appealReader.GetInt64(1));
+    var appealsRejected = Convert.ToInt32(appealReader.GetInt64(2));
+    await appealReader.CloseAsync();
+    var appealsTotal = appealsApproved + appealsRejected;
+    var appealOverturnRate = appealsTotal == 0 ? 0.0 : Math.Round(appealsApproved * 100.0 / appealsTotal, 1);
 
     return Results.Ok(new
     {
@@ -8680,6 +8702,10 @@ app.MapGet("/api/v1/admin/analytics/moderation", async (
         repeatedTargets,
         categories,
         daily,
+        appealsPending,
+        appealsApproved,
+        appealsRejected,
+        appealOverturnRate,
     });
 });
 
