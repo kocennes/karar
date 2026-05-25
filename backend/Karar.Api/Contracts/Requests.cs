@@ -137,6 +137,14 @@ public sealed record PostFeedbackRequest(
     [Required] string Type
 );
 
+public sealed record DiscoverEventRequest(
+    [Required] Guid PostId,
+    [Required] string EventType,
+    [Range(3, 600)] int? DwellSeconds = null,
+    [StringLength(500)] string? ImpressionToken = null,
+    string? Metadata = null
+);
+
 public sealed record AdminLoginRequest(
     [Required, EmailAddress] string Email,
     [Required] string Password,

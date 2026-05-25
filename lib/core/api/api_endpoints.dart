@@ -13,6 +13,8 @@ abstract final class ApiEndpoints {
   static const String categories = '/api/v1/categories';
   static const String posts = '/api/v1/posts';
   static const String postsDiscover = '/api/v1/posts/discover';
+  static const String postsDiscoverFeed = '/api/v1/posts/discover/feed';
+  static const String postsDiscoverEvents = '/api/v1/posts/discover/events';
   static const String postsToday = '/api/v1/posts/today';
   static const String postsWeeklyFeatured = '/api/v1/posts/weekly-featured';
   static const String trendTopics = '/api/v1/trends/topics';

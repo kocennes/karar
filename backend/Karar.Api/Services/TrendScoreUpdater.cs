@@ -85,7 +85,8 @@ public sealed class TrendScoreUpdater(
     {
         if (postIds.Count == 0) return [];
 
-        // Fingerprint-deduplicated vote counts per post, with geographic spread count
+        // Fingerprint-deduplicated vote counts per post, with geographic spread count,
+        // toxicity, reports and quality comment signals.
         await using var cmd = new NpgsqlCommand(
             """
             SELECT p.id,
@@ -95,7 +96,10 @@ public sealed class TrendScoreUpdater(
                    p.created_at,
                    COALESCE(pvd.avg_dwell_seconds, 0) AS avg_dwell_seconds,
                    COALESCE(pvd.total_exposures, 0)::int AS total_exposures,
-                   COUNT(DISTINCT v.voter_region) FILTER (WHERE v.voter_region IS NOT NULL)::int AS distinct_regions
+                   COUNT(DISTINCT v.voter_region) FILTER (WHERE v.voter_region IS NOT NULL)::int AS distinct_regions,
+                   p.perspective_toxicity,
+                   (SELECT COUNT(*)::int FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') AS pending_reports,
+                   (SELECT COUNT(*)::int FROM comments c WHERE c.post_id = p.id AND c.status = 'active' AND char_length(c.content) >= 100) AS quality_comments
             FROM posts p
             LEFT JOIN votes v ON v.post_id = p.id AND v.is_quarantined = FALSE
             LEFT JOIN devices d ON d.id = v.device_id AND NOT d.is_banned
@@ -107,7 +111,7 @@ public sealed class TrendScoreUpdater(
                 GROUP BY post_id
             ) pvd ON pvd.post_id = p.id
             WHERE p.id = ANY(@ids) AND p.status = 'active'
-            GROUP BY p.id, p.comment_count, p.created_at, pvd.avg_dwell_seconds, pvd.total_exposures
+            GROUP BY p.id, p.comment_count, p.created_at, pvd.avg_dwell_seconds, pvd.total_exposures, p.perspective_toxicity
             """,
             connection);
         cmd.Parameters.AddWithValue("ids", postIds.ToArray());
@@ -126,6 +130,9 @@ public sealed class TrendScoreUpdater(
             var averageDwellSeconds = reader.GetDouble(5);
             var totalExposures = reader.GetInt32(6);
             var distinctRegions = reader.GetInt32(7);
+            var toxicity = reader.IsDBNull(8) ? 0.0 : reader.GetDouble(8);
+            var pendingReports = reader.GetInt32(9);
+            var qualityComments = reader.GetInt32(10);
             var ageHours = (DateTimeOffset.UtcNow - createdAt).TotalHours;
 
             // Total unique voters — use for EWMA velocity computation
@@ -145,7 +152,10 @@ public sealed class TrendScoreUpdater(
                 comments,
                 ageHours,
                 averageDwellSeconds,
-                totalExposures
+                totalExposures,
+                pendingReports,
+                toxicity,
+                qualityComments
             );
 
             // Geographic spread guard: posts with < 3 distinct voter regions get a

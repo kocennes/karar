@@ -92,4 +92,128 @@ public sealed class TrendScoreCalculatorTests
 
         extremeDwell.Should().BeApproximately(longDwell, 0.000001);
     }
+
+    [Fact]
+    public void Score_DropsSignificantly_WhenReportRateIsHigh()
+    {
+        var noReports = TrendScoreCalculator.Compute(
+            hakliVotes: 50,
+            haksizVotes: 50,
+            comments: 10,
+            ageHours: 1,
+            exposures: 1000
+        );
+
+        var manyReports = TrendScoreCalculator.Compute(
+            hakliVotes: 50,
+            haksizVotes: 50,
+            comments: 10,
+            ageHours: 1,
+            exposures: 1000,
+            pendingReports: 50 // 5% report rate
+        );
+
+        manyReports.Should().BeLessThan(noReports * 0.6);
+    }
+
+    [Fact]
+    public void Score_DropsToNearZero_WhenToxicityIsVeryHigh()
+    {
+        var toxicScore = TrendScoreCalculator.Compute(
+            hakliVotes: 100,
+            haksizVotes: 100,
+            comments: 50,
+            ageHours: 1,
+            perspectiveToxicity: 0.8
+        );
+
+        toxicScore.Should().BeLessThan(1.0);
+    }
+
+    [Fact]
+    public void Score_RewardsBalancedDiscussions()
+    {
+        var biased = TrendScoreCalculator.Compute(
+            hakliVotes: 90,
+            haksizVotes: 10,
+            comments: 10,
+            ageHours: 1
+        );
+
+        var balanced = TrendScoreCalculator.Compute(
+            hakliVotes: 50,
+            haksizVotes: 50,
+            comments: 10,
+            ageHours: 1
+        );
+
+        balanced.Should().BeGreaterThan(biased);
+    }
+
+    [Fact]
+    public void Score_IncreasesWithUniqueActorsButLowExposureDoesNotExplode()
+    {
+        var smallSample = TrendScoreCalculator.Compute(
+            hakliVotes: 2,
+            haksizVotes: 1,
+            comments: 1,
+            ageHours: 1,
+            exposures: 3
+        );
+
+        var broaderSample = TrendScoreCalculator.Compute(
+            hakliVotes: 20,
+            haksizVotes: 10,
+            comments: 1,
+            ageHours: 1,
+            exposures: 300
+        );
+
+        broaderSample.Should().BeGreaterThan(smallSample);
+        smallSample.Should().BeLessThan(10);
+    }
+
+    [Fact]
+    public void Score_RewardsQualityComments()
+    {
+        var shallowDiscussion = TrendScoreCalculator.Compute(
+            hakliVotes: 40,
+            haksizVotes: 35,
+            comments: 10,
+            ageHours: 2,
+            qualityComments: 0
+        );
+
+        var qualityDiscussion = TrendScoreCalculator.Compute(
+            hakliVotes: 40,
+            haksizVotes: 35,
+            comments: 10,
+            ageHours: 2,
+            qualityComments: 6
+        );
+
+        qualityDiscussion.Should().BeGreaterThan(shallowDiscussion);
+    }
+
+    [Fact]
+    public void BalancedBonus_DoesNotOverrideSafetyPenalty()
+    {
+        var balancedSafe = TrendScoreCalculator.Compute(
+            hakliVotes: 50,
+            haksizVotes: 50,
+            comments: 10,
+            ageHours: 1,
+            perspectiveToxicity: 0.1
+        );
+
+        var balancedToxic = TrendScoreCalculator.Compute(
+            hakliVotes: 50,
+            haksizVotes: 50,
+            comments: 10,
+            ageHours: 1,
+            perspectiveToxicity: 0.6
+        );
+
+        balancedToxic.Should().BeLessThan(balancedSafe * 0.5);
+    }
 }

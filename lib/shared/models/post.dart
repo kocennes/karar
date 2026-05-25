@@ -92,6 +92,53 @@ class DiscoverData {
   final List<Post> todaysPosts;
 }
 
+class DiscoverFeedItem {
+  const DiscoverFeedItem({
+    required this.post,
+    required this.rankingReason,
+    required this.impressionToken,
+    this.seenBefore = false,
+  });
+
+  final Post post;
+  final String rankingReason;
+  final String impressionToken;
+  final bool seenBefore;
+
+  DiscoverFeedItem copyWith({Post? post}) => DiscoverFeedItem(
+        post: post ?? this.post,
+        rankingReason: rankingReason,
+        impressionToken: impressionToken,
+        seenBefore: seenBefore,
+      );
+}
+
+class DiscoverFeedState {
+  const DiscoverFeedState({
+    this.items = const [],
+    this.nextCursor,
+    this.isLoadingMore = false,
+  });
+
+  final List<DiscoverFeedItem> items;
+  final String? nextCursor;
+  final bool isLoadingMore;
+
+  bool get hasMore => nextCursor != null;
+
+  DiscoverFeedState copyWith({
+    List<DiscoverFeedItem>? items,
+    String? nextCursor,
+    bool clearCursor = false,
+    bool? isLoadingMore,
+  }) =>
+      DiscoverFeedState(
+        items: items ?? this.items,
+        nextCursor: clearCursor ? null : (nextCursor ?? this.nextCursor),
+        isLoadingMore: isLoadingMore ?? this.isLoadingMore,
+      );
+}
+
 class Category {
   const Category({required this.id, required this.name, required this.icon});
 

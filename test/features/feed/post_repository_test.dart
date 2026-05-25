@@ -4,17 +4,24 @@ import 'package:karar/core/api/api_client.dart';
 import 'package:karar/features/feed/post_repository.dart';
 import 'package:karar/shared/models/post.dart';
 
-Dio _mockDio(Map<String, dynamic> responseBody) {
+Dio _mockDio(
+  Map<String, dynamic> responseBody, {
+  int statusCode = 200,
+  void Function(RequestOptions options)? onRequest,
+}) {
   final dio = Dio(BaseOptions(baseUrl: 'http://localhost'));
   dio.interceptors.add(
     InterceptorsWrapper(
-      onRequest: (options, handler) => handler.resolve(
-        Response(
-          requestOptions: options,
-          statusCode: 200,
-          data: responseBody,
-        ),
-      ),
+      onRequest: (options, handler) {
+        onRequest?.call(options);
+        handler.resolve(
+          Response(
+            requestOptions: options,
+            statusCode: statusCode,
+            data: statusCode == 204 ? null : responseBody,
+          ),
+        );
+      },
     ),
   );
   return dio;
@@ -74,5 +81,87 @@ void main() {
     expect(categories.first.id, 1);
     expect(categories.first.name, 'Is Hayati');
     expect(categories.first.icon, '💼');
+  });
+
+  test('PostRepository parses discover feed response from API contract',
+      () async {
+    final discoverPostJson = {
+      'id': 'post-2',
+      'title': 'Komsum gece matkap kullandi, tepki verdim',
+      'content': 'Saat 01.00 gibi basladi ve uyarmak zorunda kaldim.',
+      'imageUrl': null,
+      'category': {'id': 2, 'name': 'Komsuluk', 'emoji': 'ev'},
+      'voteCountHakli': 30,
+      'voteCountHaksiz': 11,
+      'commentCount': 7,
+      'myVote': null,
+      'trendScore': 42.5,
+      'createdAt': '2026-05-15T10:00:00Z',
+      'isOwner': false,
+      'isAnonymous': true,
+    };
+    RequestOptions? request;
+    final repository = PostRepository(
+      apiClient: ApiClient(
+        dio: _mockDio(
+          {
+            'items': [
+              {
+                'post': discoverPostJson,
+                'rankingReason': 'controversial',
+                'impressionToken': 'token-1',
+                'seenBefore': false,
+              }
+            ],
+            'nextCursor': 'cursor-2',
+          },
+          onRequest: (options) => request = options,
+        ),
+      ),
+    );
+
+    final feed = await repository.fetchDiscoverFeed(
+      cursor: 'cursor-1',
+      limit: 5,
+    );
+
+    expect(request?.path, '/api/v1/posts/discover/feed');
+    expect(request?.queryParameters['cursor'], 'cursor-1');
+    expect(request?.queryParameters['limit'], '5');
+    expect(feed.items, hasLength(1));
+    expect(feed.items.single.post.id, 'post-2');
+    expect(feed.items.single.rankingReason, 'controversial');
+    expect(feed.items.single.impressionToken, 'token-1');
+    expect(feed.items.single.seenBefore, isFalse);
+    expect(feed.nextCursor, 'cursor-2');
+  });
+
+  test('PostRepository sends discover event payload to API contract', () async {
+    RequestOptions? request;
+    final repository = PostRepository(
+      apiClient: ApiClient(
+        dio: _mockDio(
+          {},
+          statusCode: 204,
+          onRequest: (options) => request = options,
+        ),
+      ),
+    );
+
+    await repository.sendDiscoverEvent(
+      postId: 'post-2',
+      eventType: 'dwell',
+      dwellSeconds: 7,
+      impressionToken: 'token-1',
+    );
+
+    expect(request?.path, '/api/v1/posts/discover/events');
+    expect(request?.method, 'POST');
+    expect(request?.data, {
+      'postId': 'post-2',
+      'eventType': 'dwell',
+      'dwellSeconds': 7,
+      'impressionToken': 'token-1',
+    });
   });
 }

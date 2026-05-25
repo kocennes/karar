@@ -1665,6 +1665,12 @@ app.MapGet("/api/v1/posts/discover/feed", async (
             WHERE p.status = 'active'
               AND p.is_unlisted = FALSE
               AND p.distribution_stage >= 2
+              AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
+              AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
+              AND (
+                  SELECT COUNT(*) FROM reports r
+                  WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending'
+              ) < 3
               AND (
                   @deviceId = '00000000-0000-0000-0000-000000000000'::uuid
                   OR NOT EXISTS (

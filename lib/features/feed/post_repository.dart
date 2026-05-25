@@ -56,6 +56,51 @@ class PostRepository {
     return _readPosts(json);
   }
 
+  Future<DiscoverFeedState> fetchDiscoverFeed({
+    String? cursor,
+    int limit = 10,
+  }) async {
+    final json = await _apiClient.getJson<Map<String, Object?>>(
+      ApiEndpoints.postsDiscoverFeed,
+      query: {
+        if (cursor != null) 'cursor': cursor,
+        'limit': '$limit',
+      },
+    );
+    final itemsRaw = json['items'] as List<Object?>? ?? [];
+    return DiscoverFeedState(
+      items: itemsRaw.cast<Map<String, Object?>>().map((item) {
+        final postJson = item['post'] as Map<String, Object?>;
+        return DiscoverFeedItem(
+          post: _postFromJson(postJson),
+          rankingReason: item['rankingReason'] as String? ?? 'trending',
+          impressionToken: item['impressionToken'] as String? ?? '',
+          seenBefore: item['seenBefore'] as bool? ?? false,
+        );
+      }).toList(),
+      nextCursor: json['nextCursor'] as String?,
+    );
+  }
+
+  Future<void> sendDiscoverEvent({
+    required String postId,
+    required String eventType,
+    int? dwellSeconds,
+    String? impressionToken,
+  }) async {
+    try {
+      await _apiClient.postJson<void>(
+        ApiEndpoints.postsDiscoverEvents,
+        body: {
+          'postId': postId,
+          'eventType': eventType,
+          if (dwellSeconds != null) 'dwellSeconds': dwellSeconds,
+          if (impressionToken != null) 'impressionToken': impressionToken,
+        },
+      );
+    } catch (_) {}
+  }
+
   Future<DiscoverData> fetchDiscover() async {
     final json = await _apiClient.getJson<Map<String, Object?>>(
       ApiEndpoints.postsDiscover,
