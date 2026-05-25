@@ -51,7 +51,7 @@ public sealed class RedisService : IDisposable
                 return null;
             }
             await IncrementMetricAsync("redis:hits");
-            return JsonSerializer.Deserialize<T>(value!);
+            return JsonSerializer.Deserialize<T>((string)value!);
         }
         catch (Exception ex)
         {
@@ -220,7 +220,7 @@ public sealed class RedisService : IDisposable
             var result = new HashSet<Guid>(members.Length);
             foreach (var m in members)
             {
-                if (Guid.TryParse(m, out var id)) result.Add(id);
+                if (Guid.TryParse((string?)m, out var id)) result.Add(id);
             }
             return result;
         }
@@ -236,7 +236,7 @@ public sealed class RedisService : IDisposable
         try
         {
             var members = await _db.SortedSetPopAsync("posts:dirty", count);
-            return members.Select(m => Guid.Parse(m.Element!)).ToList();
+            return members.Select(m => Guid.Parse((string)m.Element!)).ToList();
         }
         catch (Exception ex)
         {
@@ -326,7 +326,7 @@ public sealed class RedisService : IDisposable
             var result = new HashSet<Guid>();
             foreach (var entry in entries)
             {
-                if ((long)entry.Value >= maxImpressions && Guid.TryParse(entry.Name, out var id))
+                if ((long)entry.Value >= maxImpressions && Guid.TryParse((string?)entry.Name, out var id))
                     result.Add(id);
             }
             return result;
@@ -362,7 +362,7 @@ public sealed class RedisService : IDisposable
             var result = new List<Guid>(entries.Length);
             foreach (var e in entries)
             {
-                if (Guid.TryParse(e, out var id)) result.Add(id);
+                if (Guid.TryParse((string?)e, out var id)) result.Add(id);
             }
             return result;
         }
@@ -397,7 +397,7 @@ public sealed class RedisService : IDisposable
             var entries = await _db.SortedSetRangeByScoreWithScoresAsync(
                 key, RisingMinUpvotes, double.PositiveInfinity, Exclude.None, Order.Descending, 0, 1);
             if (entries.Length == 0) return null;
-            return Guid.TryParse(entries[0].Element, out var id) ? id : null;
+            return Guid.TryParse((string?)entries[0].Element, out var id) ? id : null;
         }
         catch
         {

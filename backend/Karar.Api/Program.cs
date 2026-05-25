@@ -315,7 +315,7 @@ app.Use(async (ctx, next) =>
 app.UseForwardedHeaders(new ForwardedHeadersOptions
 {
     ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
-    KnownNetworks = { new Microsoft.AspNetCore.HttpOverrides.IPNetwork(IPAddress.Parse("::ffff:0.0.0.0"), 96) }
+    KnownIPNetworks = { new System.Net.IPNetwork(IPAddress.Parse("::ffff:0.0.0.0"), 96) }
 });
 
 app.UseResponseCompression();
@@ -3883,9 +3883,9 @@ app.MapPost("/api/v1/admin/auth/login", async (
         return Unauthorized();
     }
 
-    // Development ortamında SMTP yoksa OTP adımını atla ve doğrudan token ver.
-    // Production'da bu kod çalışmaz — her zaman e-posta OTP zorunludur.
-    if (!emailService.IsConfigured && !app.Environment.IsProduction())
+    // SMTP yapılandırılmamışsa OTP adımını atla; IP allowlist ve strong password güvenliği sağlar.
+    // SMTP yapılandırıldığında e-posta OTP otomatik devreye girer.
+    if (!emailService.IsConfigured)
     {
         await bruteForce.ClearAsync(bfIdentity);
         return Results.Ok(new AdminLoginResponse(

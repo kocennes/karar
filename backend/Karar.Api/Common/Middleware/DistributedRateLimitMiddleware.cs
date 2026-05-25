@@ -3,32 +3,21 @@ using Microsoft.AspNetCore.RateLimiting;
 
 namespace Karar.Api.Common.Middleware;
 
-public sealed class DistributedRateLimitMiddleware
+public sealed class DistributedRateLimitMiddleware(RequestDelegate next, RedisService redis)
 {
-    private readonly RequestDelegate _next;
-    private readonly RedisService _redis;
-    private readonly RequestDevice _requestDevice;
-
-    public DistributedRateLimitMiddleware(RequestDelegate next, RedisService redis, RequestDevice requestDevice)
-    {
-        _next = next;
-        _redis = redis;
-        _requestDevice = requestDevice;
-    }
-
-    public async Task InvokeAsync(HttpContext context)
+    public async Task InvokeAsync(HttpContext context, RequestDevice requestDevice)
     {
         var endpoint = context.GetEndpoint();
         if (endpoint is null)
         {
-            await _next(context);
+            await next(context);
             return;
         }
 
         var metadata = endpoint.Metadata.GetMetadata<EnableRateLimitingAttribute>();
         if (metadata is null)
         {
-            await _next(context);
+            await next(context);
             return;
         }
 
@@ -37,7 +26,7 @@ public sealed class DistributedRateLimitMiddleware
 
         if (limit > 0)
         {
-            var deviceId = await _requestDevice.TryGetDeviceIdAsync(context.Request);
+            var deviceId = await requestDevice.TryGetDeviceIdAsync(context.Request);
             var clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
             // Composite key: IP + DeviceId (if available) to prevent spoofing bypass
@@ -45,7 +34,7 @@ public sealed class DistributedRateLimitMiddleware
                 ? $"{clientIp}:{deviceId}"
                 : clientIp;
 
-            var isAllowed = await _redis.IsAllowedAsync(policyName, identity, limit, window);
+            var isAllowed = await redis.IsAllowedAsync(policyName, identity, limit, window);
 
             if (!isAllowed)
             {
@@ -65,7 +54,7 @@ public sealed class DistributedRateLimitMiddleware
             }
         }
 
-        await _next(context);
+        await next(context);
     }
 
     private (int limit, TimeSpan window) GetPolicyConfig(string policyName)
