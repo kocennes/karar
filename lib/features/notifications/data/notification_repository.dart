@@ -39,6 +39,24 @@ class NotificationRepository {
     await _apiClient.putJson<void>('/api/v1/notifications/read-all');
   }
 
+  Future<void> markRead(String id) async {
+    await _apiClient.putJson<void>('/api/v1/notifications/$id/read');
+  }
+
+  Future<void> dismiss(String id) async {
+    await _apiClient.postJson<void>(
+      '/api/v1/notifications/$id/dismiss',
+      body: {},
+    );
+  }
+
+  Future<void> clearRead() async {
+    await _apiClient.postJson<void>(
+      '/api/v1/notifications/clear-read',
+      body: {},
+    );
+  }
+
   NotificationItem _fromJson(Map<String, Object?> json) {
     return NotificationItem(
       id: json['id'] as String,

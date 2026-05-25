@@ -210,4 +210,11 @@ public class AuthEndpointTests : IClassFixture<CustomWebApplicationFactory>
         var body = await response.Content.ReadAsStringAsync();
         Assert.Contains("nonce", body);
     }
+
+    [Fact]
+    public async Task NotificationPreferences_WithoutToken_Returns401()
+    {
+        var response = await _client.GetAsync("/api/v1/users/me/notification-preferences");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
 }

@@ -20,6 +20,8 @@ class NotificationsState {
   final bool isLoading;
   final String? error;
 
+  bool get hasReadItems => items.any((i) => i.isRead);
+
   NotificationsState copyWith({
     List<NotificationItem>? items,
     int? unreadCount,
@@ -92,12 +94,76 @@ class NotificationsNotifier extends Notifier<NotificationsState> {
 
   Future<void> markAllRead() async {
     try {
-      await _repo.markAllRead();
+      if (AppRuntime.useRemoteApi) await _repo.markAllRead();
       state = state.copyWith(
         items: [for (final item in state.items) item.copyWith(isRead: true)],
         unreadCount: 0,
       );
     } catch (_) {}
+  }
+
+  Future<void> markRead(String id) async {
+    final item = state.items.where((i) => i.id == id).firstOrNull;
+    if (item == null || item.isRead) return;
+
+    // Optimistic update
+    state = state.copyWith(
+      items: [
+        for (final i in state.items)
+          if (i.id == id) i.copyWith(isRead: true) else i,
+      ],
+      unreadCount: (state.unreadCount - 1).clamp(0, state.unreadCount),
+    );
+
+    try {
+      if (AppRuntime.useRemoteApi) await _repo.markRead(id);
+    } catch (_) {
+      // Rollback
+      state = state.copyWith(
+        items: [
+          for (final i in state.items)
+            if (i.id == id) i.copyWith(isRead: false) else i,
+        ],
+        unreadCount: state.unreadCount + 1,
+      );
+    }
+  }
+
+  Future<void> dismiss(String id) async {
+    final item = state.items.where((i) => i.id == id).firstOrNull;
+    if (item == null) return;
+
+    // Optimistic update
+    final wasUnread = !item.isRead;
+    state = state.copyWith(
+      items: [for (final i in state.items) if (i.id != id) i],
+      unreadCount: wasUnread
+          ? (state.unreadCount - 1).clamp(0, state.unreadCount)
+          : state.unreadCount,
+    );
+
+    try {
+      if (AppRuntime.useRemoteApi) await _repo.dismiss(id);
+    } catch (_) {
+      // Rollback — reload from server
+      load();
+    }
+  }
+
+  Future<void> clearRead() async {
+    final clearedCount = state.items.where((i) => i.isRead).length;
+    if (clearedCount == 0) return;
+
+    // Optimistic update
+    state = state.copyWith(
+      items: [for (final i in state.items) if (!i.isRead) i],
+    );
+
+    try {
+      if (AppRuntime.useRemoteApi) await _repo.clearRead();
+    } catch (_) {
+      load();
+    }
   }
 }
 

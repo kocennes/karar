@@ -38,6 +38,13 @@ class NotificationsScreen extends ConsumerWidget {
                   ref.read(notificationsProvider.notifier).markAllRead(),
               child: const Text('Tümünü okundu say'),
             ),
+          if (state.hasReadItems)
+            IconButton(
+              icon: const Icon(Icons.cleaning_services_outlined),
+              tooltip: 'Okunmuşları temizle',
+              onPressed: () =>
+                  ref.read(notificationsProvider.notifier).clearRead(),
+            ),
         ],
       ),
       body: CenteredContent(
@@ -402,45 +409,72 @@ class _DigestItem extends StatelessWidget {
   }
 }
 
-class _NotificationTile extends StatelessWidget {
+class _NotificationTile extends ConsumerWidget {
   const _NotificationTile({required this.item});
   final NotificationItem item;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+    final notifier = ref.read(notificationsProvider.notifier);
 
-    return ListTile(
-      tileColor: item.isRead
-          ? null
-          : colorScheme.primaryContainer.withValues(alpha: 0.15),
-      leading: Icon(
-        _iconForType(item.type),
-        color: item.isRead ? colorScheme.onSurfaceVariant : colorScheme.primary,
+    return Dismissible(
+      key: ValueKey(item.id),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        color: colorScheme.errorContainer,
+        child: Icon(Icons.delete_outline, color: colorScheme.onErrorContainer),
       ),
-      title: Text(
-        item.title,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: textTheme.bodyMedium?.copyWith(
-          fontWeight: item.isRead ? FontWeight.normal : FontWeight.w700,
+      onDismissed: (_) => notifier.dismiss(item.id),
+      child: ListTile(
+        tileColor: item.isRead
+            ? null
+            : colorScheme.primaryContainer.withValues(alpha: 0.15),
+        leading: Icon(
+          _iconForType(item.type),
+          color:
+              item.isRead ? colorScheme.onSurfaceVariant : colorScheme.primary,
         ),
+        title: Text(
+          item.title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: textTheme.bodyMedium?.copyWith(
+            fontWeight: item.isRead ? FontWeight.normal : FontWeight.w700,
+          ),
+        ),
+        subtitle: Text(item.body, maxLines: 2, overflow: TextOverflow.ellipsis),
+        trailing: !item.isRead
+            ? Icon(Icons.circle, size: 8, color: colorScheme.primary)
+            : null,
+        onTap: () {
+          if (!item.isRead) notifier.markRead(item.id);
+          _navigate(context, item);
+        },
       ),
-      subtitle: Text(item.body, maxLines: 2, overflow: TextOverflow.ellipsis),
-      onTap: item.postId != null
-          ? () => context.push('/posts/${item.postId}')
-          : null,
     );
+  }
+
+  void _navigate(BuildContext context, NotificationItem item) {
+    if (item.postId != null) {
+      context.push('/posts/${item.postId}');
+    }
   }
 
   IconData _iconForType(String type) => switch (type) {
         'verdict_milestone' => Icons.emoji_events_outlined,
         'verdict_reminder' => Icons.how_to_vote_outlined,
         'comment_on_post' => Icons.chat_bubble_outline,
-        'reply_to_comment' => Icons.reply_outlined,
-        'post_removed' => Icons.block_flipped,
-        'post_approved' => Icons.check_circle_outline,
+        'reply_on_comment' => Icons.reply_outlined,
+        'mention' => Icons.alternate_email_outlined,
+        'moderation_result' => Icons.gavel_outlined,
+        'system_announcement' => Icons.campaign_outlined,
+        'trend_alert' => Icons.trending_up_outlined,
+        'viral_post_owner' => Icons.local_fire_department_outlined,
+        'weekly_digest' => Icons.summarize_outlined,
         _ => Icons.notifications_none_outlined,
       };
 }
