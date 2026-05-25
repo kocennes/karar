@@ -208,7 +208,11 @@ public sealed class NotificationDispatcher(
                     Android = new AndroidConfig
                     {
                         Priority = Priority.High,
-                        Notification = new AndroidNotification { Sound = "default" },
+                        Notification = new AndroidNotification
+                        {
+                            Sound = "default",
+                            ChannelId = GetAndroidChannelId(type),
+                        },
                     },
                     Apns = new ApnsConfig
                     {
@@ -382,6 +386,16 @@ public sealed class NotificationDispatcher(
         retryCmd.Parameters.AddWithValue("delaySeconds", (int)retryDelay.TotalSeconds);
         await retryCmd.ExecuteNonQueryAsync(ct);
     }
+
+    public static string GetAndroidChannelId(string type) => type switch
+    {
+        "comment_on_post" => "comments",
+        "reply_on_comment" or "mention" => "mentions",
+        "verdict_milestone" or "viral_post_owner" => "milestones",
+        "trend_alert" or "follow_new_post" => "viral",
+        "weekly_digest" => "digest",
+        _ => "system",
+    };
 
     private static string TokenSuffix(string token) =>
         token.Length <= 6 ? token : token[^6..];

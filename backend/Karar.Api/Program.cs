@@ -3771,6 +3771,76 @@ app.MapPost("/api/v1/notifications/clear-read", async (
     return Results.NoContent();
 });
 
+app.MapPost("/api/v1/notifications/mute", async (
+    MuteNotificationsRequest request,
+    HttpRequest httpRequest,
+    Db db,
+    JwtService jwtService
+) =>
+{
+    var principal = GetJwtPrincipal(httpRequest, jwtService);
+    if (principal is null) return Unauthorized();
+    var userId = GetUserId(principal);
+
+    var muteUntil = request.Duration switch
+    {
+        "1h" => DateTimeOffset.UtcNow.AddHours(1),
+        "today" => DateTimeOffset.UtcNow.Date.AddDays(1).AddTicks(-1),
+        "7d" => DateTimeOffset.UtcNow.AddDays(7),
+        "indefinite" => DateTimeOffset.MaxValue,
+        _ => (DateTimeOffset?)null,
+    };
+
+    if (muteUntil is null)
+    {
+        return Results.BadRequest(new { error = "INVALID_DURATION", message = "Gecerli degerler: 1h, today, 7d, indefinite" });
+    }
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var command = new NpgsqlCommand(
+        """
+        UPDATE users
+        SET notification_preferences = jsonb_set(
+            COALESCE(notification_preferences, '{}'),
+            '{mutedUntil}',
+            to_jsonb(@muteUntil::text)
+        ),
+        updated_at = NOW()
+        WHERE id = @userId AND deleted_at IS NULL
+        """,
+        connection
+    );
+    command.Parameters.AddWithValue("userId", userId);
+    command.Parameters.AddWithValue("muteUntil", muteUntil.Value.ToString("O"));
+    await command.ExecuteNonQueryAsync();
+    return Results.NoContent();
+});
+
+app.MapDelete("/api/v1/notifications/mute", async (
+    HttpRequest httpRequest,
+    Db db,
+    JwtService jwtService
+) =>
+{
+    var principal = GetJwtPrincipal(httpRequest, jwtService);
+    if (principal is null) return Unauthorized();
+    var userId = GetUserId(principal);
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var command = new NpgsqlCommand(
+        """
+        UPDATE users
+        SET notification_preferences = notification_preferences - 'mutedUntil',
+            updated_at = NOW()
+        WHERE id = @userId AND deleted_at IS NULL
+        """,
+        connection
+    );
+    command.Parameters.AddWithValue("userId", userId);
+    await command.ExecuteNonQueryAsync();
+    return Results.NoContent();
+});
+
 app.MapPost("/api/v1/admin/auth/login", async (
     AdminLoginRequest request,
     HttpContext httpContext,

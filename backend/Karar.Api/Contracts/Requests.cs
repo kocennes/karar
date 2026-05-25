@@ -72,6 +72,10 @@ public sealed record NotificationPreferencesRequest(
     DateTimeOffset? MutedUntil = null
 );
 
+public sealed record MuteNotificationsRequest(
+    [Required] string Duration
+);
+
 public sealed record TwoFactorCodeRequest(
     [Required, StringLength(6, MinimumLength = 6)] string Code
 );
