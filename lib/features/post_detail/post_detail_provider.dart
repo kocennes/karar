@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vibration/vibration.dart';
 
@@ -701,6 +702,7 @@ class PostDetailNotifier extends FamilyNotifier<PostDetailState, String> {
   }
 
   Future<void> _triggerHaptic() async {
+    if (kIsWeb) return;
     if (await Vibration.hasVibrator()) {
       Vibration.vibrate(duration: 50, amplitude: 128);
     }
