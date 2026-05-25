@@ -122,6 +122,11 @@ public sealed class NotificationDispatcher(
                 if (!decision.Allowed)
                 {
                     deferred.Add((notification.Id, decision.SuggestedRetryDelay));
+                    await LogEventAsync(connection, notification.Id, notification.DeviceId, "suppressed",
+                        decision.SuggestedRetryDelay.HasValue
+                            ? $"{{\"reason\":\"preference_blocked\",\"retry_in_seconds\":{(int)decision.SuggestedRetryDelay.Value.TotalSeconds}}}"
+                            : "{\"reason\":\"preference_blocked\"}",
+                        ct);
                     continue;
                 }
 
@@ -159,6 +164,8 @@ public sealed class NotificationDispatcher(
 
         foreach (var notification in batch)
         {
+            await LogEventAsync(connection, notification.Id, notification.DeviceId, "send_attempt", ct: ct);
+
             var badgeCount = await GetUnreadCountAsync(connection, notification.DeviceId, ct);
             var result = await SendPushAsync(
                 connection,
@@ -349,7 +356,7 @@ public sealed class NotificationDispatcher(
         }
     }
 
-    private static async Task UpdateDeliveryStateAsync(
+    private async Task UpdateDeliveryStateAsync(
         NpgsqlConnection connection,
         PendingNotification notification,
         PushSendResult result,
@@ -371,6 +378,8 @@ public sealed class NotificationDispatcher(
             cmd.Parameters.AddWithValue("id", notification.Id);
             cmd.Parameters.AddWithValue("providerMessageId", result.ProviderMessageId!);
             await cmd.ExecuteNonQueryAsync(ct);
+            await LogEventAsync(connection, notification.Id, notification.DeviceId, "sent",
+                $"{{\"provider_message_id\":\"{result.ProviderMessageId}\"}}", ct);
             return;
         }
 
@@ -390,6 +399,8 @@ public sealed class NotificationDispatcher(
             cmd.Parameters.AddWithValue("id", notification.Id);
             cmd.Parameters.AddWithValue("lastError", result.LastError);
             await cmd.ExecuteNonQueryAsync(ct);
+            await LogEventAsync(connection, notification.Id, notification.DeviceId, "failed",
+                $"{{\"error\":\"{result.LastError}\"}}", ct);
             return;
         }
 
@@ -409,6 +420,36 @@ public sealed class NotificationDispatcher(
         retryCmd.Parameters.AddWithValue("lastError", result.LastError);
         retryCmd.Parameters.AddWithValue("delaySeconds", (int)retryDelay.TotalSeconds);
         await retryCmd.ExecuteNonQueryAsync(ct);
+        await LogEventAsync(connection, notification.Id, notification.DeviceId, "retrying",
+            $"{{\"error\":\"{result.LastError}\",\"delay_seconds\":{(int)retryDelay.TotalSeconds}}}", ct);
+    }
+
+    private async Task LogEventAsync(
+        NpgsqlConnection connection,
+        Guid notificationId,
+        Guid deviceId,
+        string eventType,
+        string? metadataJson = null,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            await using var cmd = new NpgsqlCommand(
+                """
+                INSERT INTO notification_events (notification_id, device_id, event_type, metadata)
+                VALUES (@notificationId, @deviceId, @eventType, @metadata::jsonb)
+                """,
+                connection);
+            cmd.Parameters.AddWithValue("notificationId", notificationId);
+            cmd.Parameters.AddWithValue("deviceId", deviceId);
+            cmd.Parameters.AddWithValue("eventType", eventType);
+            cmd.Parameters.AddWithValue("metadata", metadataJson ?? "{}");
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to log notification event {EventType} for {NotificationId}", eventType, notificationId);
+        }
     }
 
     public static string GetAndroidChannelId(string type) => type switch

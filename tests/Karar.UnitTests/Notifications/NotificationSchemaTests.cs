@@ -74,6 +74,34 @@ public sealed class NotificationSchemaTests
         normalizedSql.Should().Contain("where dedupe_key is not null");
     }
 
+    private static readonly string[] ExpectedEventTypes =
+    [
+        "intent", "eligible", "suppressed",
+        "send_attempt", "sent", "failed", "retrying",
+        "opened", "dismissed", "read"
+    ];
+
+    [Fact]
+    public void NotificationEventsMigration_HasCorrectEventTypesAndIndexes()
+    {
+        var migrationPath = FindRepoFile("backend/migrations/V40__notification_events.sql");
+        var migrationSql = File.ReadAllText(migrationPath);
+        var normalizedSql = Regex.Replace(migrationSql, @"\s+", " ").ToLowerInvariant();
+
+        normalizedSql.Should().Contain("create table notification_events");
+        normalizedSql.Should().Contain("notification_events_type_check");
+
+        foreach (var eventType in ExpectedEventTypes)
+        {
+            normalizedSql.Should().Contain($"'{eventType}'",
+                because: $"event type '{eventType}' must be in the CHECK constraint");
+        }
+
+        normalizedSql.Should().Contain("idx_notification_events_notification");
+        normalizedSql.Should().Contain("idx_notification_events_device");
+        normalizedSql.Should().Contain("idx_notification_events_type_time");
+    }
+
     private static string FindRepoFile(string relativePath)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
