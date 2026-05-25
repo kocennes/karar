@@ -15,6 +15,8 @@ public sealed class ResourceBudgetTests
 
         searchBlock.Should().Contain("limit = Math.Clamp(limit, 1, 50);");
         searchBlock.Should().Contain("command.CommandTimeout = 5;");
+        searchBlock.Should().Contain("EnforceMinimumResponseTimeAsync(responseTimer");
+        programText.Should().Contain("TimeSpan.FromMilliseconds(200)");
     }
 
     [Fact]

@@ -63,7 +63,13 @@ public sealed record NotificationPreferencesRequest(
     bool? NotifyOnPostStatus,
     bool? EmailWeeklySummary,
     string? QuietHoursStart,
-    string? QuietHoursEnd
+    string? QuietHoursEnd,
+    bool? PushEnabled = null,
+    bool? SoundEnabled = null,
+    bool? NotifyOnMention = null,
+    bool? NotifyOnTrend = null,
+    bool? NotifyOnDigest = null,
+    DateTimeOffset? MutedUntil = null
 );
 
 public sealed record TwoFactorCodeRequest(

@@ -4,20 +4,31 @@ using Npgsql;
 namespace Karar.Api.Services;
 
 /// <summary>
-/// DB outbox pattern: every 30 s, picks up unsent notifications, looks up the
-/// device's FCM token(s), sends the push, then stamps sent_at.
-/// Falls back silently when Firebase is not initialised (dev environment).
+/// DB outbox pattern: every 30 s, picks up due notifications, sends FCM push,
+/// then stamps sent_at only after the provider accepts the message.
 /// </summary>
 public sealed class NotificationDispatcher(
     IConfiguration configuration,
     ILogger<NotificationDispatcher> logger,
-    NotificationRateLimiter rateLimiter)
+    NotificationRateLimiter rateLimiter,
+    NotificationPreferenceRouter preferenceRouter)
     : BackgroundService
 {
     private readonly string _connectionString = Karar.Api.Data.Db.ConvertToKeyValue(
         configuration.GetConnectionString("Postgres")
         ?? throw new InvalidOperationException("ConnectionStrings:Postgres is missing."));
+
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan ReservationTtl = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan RateLimitDelay = TimeSpan.FromMinutes(15);
+    private const int MaxAttempts = 5;
+    private bool _firebaseMissingLogged;
+
+    public static TimeSpan CalculateRetryDelay(int attemptCount)
+    {
+        var exponent = Math.Clamp(attemptCount - 1, 0, 6);
+        return TimeSpan.FromMinutes(Math.Pow(2, exponent));
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -40,25 +51,35 @@ public sealed class NotificationDispatcher(
 
     private async Task ProcessPendingNotificationsAsync(CancellationToken ct)
     {
-        if (FirebaseAdmin.FirebaseApp.DefaultInstance is null) return;
+        if (FirebaseAdmin.FirebaseApp.DefaultInstance is null)
+        {
+            if (!_firebaseMissingLogged)
+            {
+                logger.LogWarning("NotificationDispatcher skipped because Firebase Admin is not initialized");
+                _firebaseMissingLogged = true;
+            }
+
+            return;
+        }
 
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(ct);
 
-        // Fetch up to 50 unsent notifications, lock them to avoid duplicate sends.
         await using var fetchCmd = new NpgsqlCommand(
             """
-            SELECT n.id, n.device_id, n.type, n.title, n.body, n.post_id, d.created_at
+            SELECT n.id, n.device_id, n.type, n.title, n.body, n.post_id, d.created_at, n.attempt_count
             FROM notifications n
             JOIN devices d ON d.id = n.device_id
             WHERE n.sent_at IS NULL
-            ORDER BY n.created_at ASC
+              AND n.failed_at IS NULL
+              AND (n.next_attempt_at IS NULL OR n.next_attempt_at <= NOW())
+            ORDER BY COALESCE(n.next_attempt_at, n.created_at) ASC, n.created_at ASC
             LIMIT 50
             FOR UPDATE SKIP LOCKED
             """,
             connection);
 
-        var batch = new List<(Guid Id, Guid DeviceId, string Type, string Title, string Body, Guid? PostId, DateTimeOffset DeviceCreatedAt)>();
+        var batch = new List<PendingNotification>();
 
         await using (var tx = await connection.BeginTransactionAsync(ct))
         {
@@ -67,15 +88,15 @@ public sealed class NotificationDispatcher(
             {
                 while (await reader.ReadAsync(ct))
                 {
-                    batch.Add((
+                    batch.Add(new PendingNotification(
                         reader.GetGuid(0),
                         reader.GetGuid(1),
                         reader.GetString(2),
                         reader.GetString(3),
                         reader.GetString(4),
                         reader.IsDBNull(5) ? null : reader.GetGuid(5),
-                        reader.GetFieldValue<DateTimeOffset>(6)
-                    ));
+                        reader.GetFieldValue<DateTimeOffset>(6),
+                        reader.GetInt32(7)));
                 }
             }
 
@@ -86,11 +107,27 @@ public sealed class NotificationDispatcher(
             }
 
             var sendable = new List<Guid>();
+            var rateLimited = new List<Guid>();
             foreach (var notification in batch)
             {
+                var priority = NotificationRateLimiter.GetPriority(notification.Type);
+
+                var prefAllowed = await preferenceRouter.CanPushAsync(
+                    notification.DeviceId,
+                    notification.Type,
+                    priority,
+                    connection,
+                    ct);
+
+                if (!prefAllowed)
+                {
+                    rateLimited.Add(notification.Id);
+                    continue;
+                }
+
                 var canSend = await rateLimiter.CanSendAsync(
                     notification.DeviceId,
-                    NotificationRateLimiter.GetPriority(notification.Type),
+                    priority,
                     notification.DeviceCreatedAt,
                     ct);
 
@@ -98,33 +135,44 @@ public sealed class NotificationDispatcher(
                 {
                     sendable.Add(notification.Id);
                 }
+                else
+                {
+                    rateLimited.Add(notification.Id);
+                }
+            }
+
+            if (rateLimited.Count > 0)
+            {
+                await DeferRateLimitedNotificationsAsync(connection, tx, rateLimited, ct);
             }
 
             if (sendable.Count == 0)
             {
-                await tx.RollbackAsync(ct);
+                await tx.CommitAsync(ct);
                 return;
             }
 
             batch = batch.Where(n => sendable.Contains(n.Id)).ToList();
-
-            // Mark sendable notifications as sent immediately so other dispatcher instances skip them.
-            await using var markCmd = new NpgsqlCommand(
-                "UPDATE notifications SET sent_at = NOW() WHERE id = ANY(@ids)",
-                connection, tx);
-            markCmd.Parameters.AddWithValue("ids", sendable.ToArray());
-            await markCmd.ExecuteNonQueryAsync(ct);
+            await ReserveNotificationsAsync(connection, tx, sendable, ct);
             await tx.CommitAsync(ct);
         }
 
-        // Send FCM outside the transaction.
-        foreach (var notif in batch)
+        foreach (var notification in batch)
         {
-            await SendPushAsync(connection, notif.DeviceId, notif.Title, notif.Body, notif.Type, notif.PostId, ct);
+            var result = await SendPushAsync(
+                connection,
+                notification.DeviceId,
+                notification.Title,
+                notification.Body,
+                notification.Type,
+                notification.PostId,
+                ct);
+
+            await UpdateDeliveryStateAsync(connection, notification, result, ct);
         }
     }
 
-    private async Task SendPushAsync(
+    private async Task<PushSendResult> SendPushAsync(
         NpgsqlConnection connection,
         Guid deviceId,
         string title,
@@ -134,9 +182,14 @@ public sealed class NotificationDispatcher(
         CancellationToken ct)
     {
         var tokens = await GetFcmTokensAsync(connection, deviceId, ct);
-        if (tokens.Count == 0) return;
+        if (tokens.Count == 0)
+        {
+            return PushSendResult.PermanentFailure("no_fcm_token");
+        }
 
         var staleTokens = new List<string>();
+        var failures = new List<string>();
+        string? providerMessageId = null;
 
         foreach (var token in tokens)
         {
@@ -163,7 +216,7 @@ public sealed class NotificationDispatcher(
                     },
                 };
 
-                await FirebaseMessaging.DefaultInstance.SendAsync(message, ct);
+                providerMessageId ??= await FirebaseMessaging.DefaultInstance.SendAsync(message, ct);
             }
             catch (FirebaseMessagingException ex) when
                 (ex.MessagingErrorCode == MessagingErrorCode.Unregistered)
@@ -172,12 +225,28 @@ public sealed class NotificationDispatcher(
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "FCM send failed for token …{Suffix}", token[^6..]);
+                failures.Add(ex.GetType().Name);
+                logger.LogWarning(ex, "FCM send failed for token ...{Suffix}", TokenSuffix(token));
             }
         }
 
         if (staleTokens.Count > 0)
+        {
             await DeleteStaleTokensAsync(connection, staleTokens, ct);
+        }
+
+        if (providerMessageId is not null)
+        {
+            return PushSendResult.Success(providerMessageId);
+        }
+
+        if (failures.Count == 0 && staleTokens.Count > 0)
+        {
+            return PushSendResult.PermanentFailure("all_tokens_unregistered");
+        }
+
+        return PushSendResult.TransientFailure(
+            failures.Count == 0 ? "fcm_send_failed" : string.Join(",", failures.Distinct()));
     }
 
     private static async Task<List<string>> GetFcmTokensAsync(
@@ -191,7 +260,10 @@ public sealed class NotificationDispatcher(
         var tokens = new List<string>();
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
+        {
             tokens.Add(reader.GetString(0));
+        }
+
         return tokens;
     }
 
@@ -203,5 +275,146 @@ public sealed class NotificationDispatcher(
             connection);
         cmd.Parameters.AddWithValue("tokens", tokens.ToArray());
         await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task ReserveNotificationsAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction tx,
+        List<Guid> notificationIds,
+        CancellationToken ct)
+    {
+        await using var cmd = new NpgsqlCommand(
+            """
+            UPDATE notifications
+            SET next_attempt_at = NOW() + (@reservationSeconds * INTERVAL '1 second'),
+                last_error = NULL
+            WHERE id = ANY(@ids)
+              AND sent_at IS NULL
+              AND failed_at IS NULL
+            """,
+            connection,
+            tx);
+        cmd.Parameters.AddWithValue("reservationSeconds", (int)ReservationTtl.TotalSeconds);
+        cmd.Parameters.AddWithValue("ids", notificationIds.ToArray());
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task DeferRateLimitedNotificationsAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction tx,
+        List<Guid> notificationIds,
+        CancellationToken ct)
+    {
+        await using var cmd = new NpgsqlCommand(
+            """
+            UPDATE notifications
+            SET next_attempt_at = NOW() + (@delaySeconds * INTERVAL '1 second'),
+                last_error = 'rate_limited'
+            WHERE id = ANY(@ids)
+              AND sent_at IS NULL
+              AND failed_at IS NULL
+            """,
+            connection,
+            tx);
+        cmd.Parameters.AddWithValue("delaySeconds", (int)RateLimitDelay.TotalSeconds);
+        cmd.Parameters.AddWithValue("ids", notificationIds.ToArray());
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task UpdateDeliveryStateAsync(
+        NpgsqlConnection connection,
+        PendingNotification notification,
+        PushSendResult result,
+        CancellationToken ct)
+    {
+        if (result.Status == PushSendStatus.Success)
+        {
+            await using var cmd = new NpgsqlCommand(
+                """
+                UPDATE notifications
+                SET sent_at = NOW(),
+                    provider_message_id = @providerMessageId,
+                    next_attempt_at = NULL,
+                    last_error = NULL,
+                    failed_at = NULL
+                WHERE id = @id
+                """,
+                connection);
+            cmd.Parameters.AddWithValue("id", notification.Id);
+            cmd.Parameters.AddWithValue("providerMessageId", result.ProviderMessageId!);
+            await cmd.ExecuteNonQueryAsync(ct);
+            return;
+        }
+
+        if (result.Status == PushSendStatus.PermanentFailure || notification.AttemptCount + 1 >= MaxAttempts)
+        {
+            await using var cmd = new NpgsqlCommand(
+                """
+                UPDATE notifications
+                SET attempt_count = attempt_count + 1,
+                    last_error = @lastError,
+                    failed_at = NOW(),
+                    next_attempt_at = NULL
+                WHERE id = @id
+                  AND sent_at IS NULL
+                """,
+                connection);
+            cmd.Parameters.AddWithValue("id", notification.Id);
+            cmd.Parameters.AddWithValue("lastError", result.LastError);
+            await cmd.ExecuteNonQueryAsync(ct);
+            return;
+        }
+
+        var retryDelay = CalculateRetryDelay(notification.AttemptCount + 1);
+        await using var retryCmd = new NpgsqlCommand(
+            """
+            UPDATE notifications
+            SET attempt_count = attempt_count + 1,
+                last_error = @lastError,
+                next_attempt_at = NOW() + (@delaySeconds * INTERVAL '1 second')
+            WHERE id = @id
+              AND sent_at IS NULL
+              AND failed_at IS NULL
+            """,
+            connection);
+        retryCmd.Parameters.AddWithValue("id", notification.Id);
+        retryCmd.Parameters.AddWithValue("lastError", result.LastError);
+        retryCmd.Parameters.AddWithValue("delaySeconds", (int)retryDelay.TotalSeconds);
+        await retryCmd.ExecuteNonQueryAsync(ct);
+    }
+
+    private static string TokenSuffix(string token) =>
+        token.Length <= 6 ? token : token[^6..];
+
+    private sealed record PendingNotification(
+        Guid Id,
+        Guid DeviceId,
+        string Type,
+        string Title,
+        string Body,
+        Guid? PostId,
+        DateTimeOffset DeviceCreatedAt,
+        int AttemptCount);
+
+    private enum PushSendStatus
+    {
+        Success,
+        TransientFailure,
+        PermanentFailure
+    }
+
+    private sealed record PushSendResult(
+        PushSendStatus Status,
+        string? ProviderMessageId,
+        string LastError)
+    {
+        public static PushSendResult Success(string providerMessageId) =>
+            new(PushSendStatus.Success, providerMessageId, string.Empty);
+
+        public static PushSendResult TransientFailure(string error) =>
+            new(PushSendStatus.TransientFailure, null, error);
+
+        public static PushSendResult PermanentFailure(string error) =>
+            new(PushSendStatus.PermanentFailure, null, error);
     }
 }

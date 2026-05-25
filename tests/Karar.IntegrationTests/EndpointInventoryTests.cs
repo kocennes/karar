@@ -5,6 +5,7 @@ using Xunit.Abstractions;
 
 namespace Karar.IntegrationTests;
 
+[Collection("ApiTests")]
 public class EndpointInventoryTests : IClassFixture<CustomWebApplicationFactory>
 {
     private readonly CustomWebApplicationFactory _factory;

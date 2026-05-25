@@ -9,7 +9,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 {
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        builder.UseEnvironment("Development");
+        builder.UseEnvironment("Testing");
 
         // Scoped servis doğrulamasını test ortamında devre dışı bırak.
         // RequestDevice scoped kayıtlıdır ve root provider'dan çözülmez;
@@ -35,6 +35,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
                 ["Jwt:Audience"] = "karar-mobile",
                 ["Firebase:ServiceAccountJson"] = "",
                 ["Notifications:RamadanMode"] = "false",
+                ["Testing:DisableHostedServices"] = "true",
                 ["Web:BaseUrl"] = "http://localhost",
             });
         });

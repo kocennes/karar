@@ -95,26 +95,35 @@ builder.Services.AddHttpClient("play-integrity", c =>
 })
 .AddStandardResilienceHandler();
 builder.Services.AddSingleton<PlayIntegrityService>();
-builder.Services.AddHostedService<ImageModerationWorker>();
+var hostedServicesEnabled = !builder.Environment.IsEnvironment("Testing")
+    && !builder.Configuration.GetValue("Testing:DisableHostedServices", false);
+if (hostedServicesEnabled)
+{
+    builder.Services.AddHostedService<ImageModerationWorker>();
+}
 builder.Services.AddSingleton<ReportThresholdService>();
 builder.Services.AddSingleton<ReporterReputationService>();
 builder.Services.AddSingleton<RedisService>();
 builder.Services.AddSingleton<NotificationRateLimiter>();
+builder.Services.AddSingleton<NotificationPreferenceRouter>();
 builder.Services.AddSingleton<BruteForceService>();
 builder.Services.AddSingleton<AdminAuthService>();
 builder.Services.AddSingleton<JwtService>();
 builder.Services.AddSingleton<EmailService>();
 builder.Services.AddSingleton<FirebaseAuthService>();
 builder.Services.AddSingleton<SseConnectionManager>();
-builder.Services.AddHostedService<TrendScoreUpdater>();
-builder.Services.AddHostedService<NotificationDispatcher>();
 builder.Services.AddSingleton<CommentNotificationBatcher>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<CommentNotificationBatcher>());
-builder.Services.AddHostedService<VerdictReminderJob>();
-builder.Services.AddHostedService<DataRetentionService>();
-builder.Services.AddHostedService<PoliticalNarrativeClusterJob>();
-builder.Services.AddHostedService<PostDistributionJob>();
-builder.Services.AddHostedService<AuditLogExportJob>();
+if (hostedServicesEnabled)
+{
+    builder.Services.AddHostedService<TrendScoreUpdater>();
+    builder.Services.AddHostedService<NotificationDispatcher>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<CommentNotificationBatcher>());
+    builder.Services.AddHostedService<VerdictReminderJob>();
+    builder.Services.AddHostedService<DataRetentionService>();
+    builder.Services.AddHostedService<PoliticalNarrativeClusterJob>();
+    builder.Services.AddHostedService<PostDistributionJob>();
+    builder.Services.AddHostedService<AuditLogExportJob>();
+}
 builder.Services.AddSingleton<CategoryThrottleService>();
 builder.Services.AddSingleton<AffinityService>();
 builder.Services.AddSingleton<GeoService>();
@@ -217,7 +226,7 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("flutter-app", policy =>
     {
-        if (builder.Environment.IsDevelopment())
+        if (builder.Environment.IsDevelopment() || builder.Environment.IsEnvironment("Testing"))
         {
             policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
         }
@@ -2501,11 +2510,13 @@ app.MapGet("/api/v1/search", async (
     string? tag = null
 ) =>
 {
+    var responseTimer = System.Diagnostics.Stopwatch.StartNew();
     page = Math.Max(1, page);
     limit = Math.Clamp(limit, 1, 50);
     q = q.Trim();
     if (q.Length < 3)
     {
+        await EnforceMinimumResponseTimeAsync(responseTimer, httpRequest.HttpContext.RequestAborted);
         return BadRequest("QUERY_TOO_SHORT", "Arama en az 3 karakter olmalÄ±.");
     }
 
@@ -2570,6 +2581,7 @@ app.MapGet("/api/v1/search", async (
     if (normalizedTag is not null) command.Parameters.AddWithValue("tag", normalizedTag);
 
     var (posts, total) = await ReadPostsWithTotalAsync(command);
+    await EnforceMinimumResponseTimeAsync(responseTimer, httpRequest.HttpContext.RequestAborted);
     return Results.Ok(new FeedResponse(posts, new Pagination(page, limit, total, offset + posts.Count < total)));
 });
 
@@ -2579,10 +2591,12 @@ app.MapGet("/api/v1/search/users", async (
     int limit = 20
 ) =>
 {
+    var responseTimer = System.Diagnostics.Stopwatch.StartNew();
     q = q.Trim();
     limit = Math.Clamp(limit, 1, 20);
     if (q.Length < 3)
     {
+        await EnforceMinimumResponseTimeAsync(responseTimer);
         return BadRequest("QUERY_TOO_SHORT", "Arama en az 3 karakter olmalı.");
     }
 
@@ -2620,6 +2634,7 @@ app.MapGet("/api/v1/search/users", async (
         });
     }
 
+    await EnforceMinimumResponseTimeAsync(responseTimer);
     return Results.Ok(new { users });
 });
 
@@ -3588,14 +3603,14 @@ app.MapGet("/api/v1/notifications", async (
 
     await using var connection = await db.OpenConnectionAsync();
     await using var countCommand = new NpgsqlCommand(
-        "SELECT COUNT(*) FROM notifications WHERE device_id = @deviceId",
+        "SELECT COUNT(*) FROM notifications WHERE device_id = @deviceId AND dismissed_at IS NULL",
         connection
     );
     countCommand.Parameters.AddWithValue("deviceId", deviceId.Value);
     var total = Convert.ToInt32(await countCommand.ExecuteScalarAsync());
 
     await using var unreadCommand = new NpgsqlCommand(
-        "SELECT COUNT(*) FROM notifications WHERE device_id = @deviceId AND is_read = FALSE",
+        "SELECT COUNT(*) FROM notifications WHERE device_id = @deviceId AND is_read = FALSE AND dismissed_at IS NULL",
         connection
     );
     unreadCommand.Parameters.AddWithValue("deviceId", deviceId.Value);
@@ -3605,7 +3620,7 @@ app.MapGet("/api/v1/notifications", async (
         """
         SELECT id, type, title, body, post_id, is_read, created_at
         FROM notifications
-        WHERE device_id = @deviceId
+        WHERE device_id = @deviceId AND dismissed_at IS NULL
         ORDER BY created_at DESC
         LIMIT @limit OFFSET @offset
         """,
@@ -3653,14 +3668,106 @@ app.MapPut("/api/v1/notifications/read-all", async (
     await using var command = new NpgsqlCommand(
         """
         UPDATE notifications
-        SET is_read = TRUE
-        WHERE device_id = @deviceId AND is_read = FALSE
+        SET is_read = TRUE, read_at = NOW()
+        WHERE device_id = @deviceId AND is_read = FALSE AND dismissed_at IS NULL
         """,
         connection
     );
     command.Parameters.AddWithValue("deviceId", deviceId.Value);
     await command.ExecuteNonQueryAsync();
 
+    return Results.NoContent();
+});
+
+app.MapGet("/api/v1/notifications/unread-count", async (
+    HttpRequest httpRequest,
+    Db db,
+    RequestDevice requestDevice
+) =>
+{
+    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    if (deviceId is null) return Unauthorized();
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var command = new NpgsqlCommand(
+        "SELECT COUNT(*) FROM notifications WHERE device_id = @deviceId AND is_read = FALSE AND dismissed_at IS NULL",
+        connection
+    );
+    command.Parameters.AddWithValue("deviceId", deviceId.Value);
+    var count = Convert.ToInt32(await command.ExecuteScalarAsync());
+    return Results.Ok(new { unreadCount = count });
+});
+
+app.MapPut("/api/v1/notifications/{id:guid}/read", async (
+    Guid id,
+    HttpRequest httpRequest,
+    Db db,
+    RequestDevice requestDevice
+) =>
+{
+    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    if (deviceId is null) return Unauthorized();
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var command = new NpgsqlCommand(
+        """
+        UPDATE notifications
+        SET is_read = TRUE, read_at = NOW()
+        WHERE id = @id AND device_id = @deviceId AND is_read = FALSE AND dismissed_at IS NULL
+        """,
+        connection
+    );
+    command.Parameters.AddWithValue("id", id);
+    command.Parameters.AddWithValue("deviceId", deviceId.Value);
+    await command.ExecuteNonQueryAsync();
+    return Results.NoContent();
+});
+
+app.MapPost("/api/v1/notifications/{id:guid}/dismiss", async (
+    Guid id,
+    HttpRequest httpRequest,
+    Db db,
+    RequestDevice requestDevice
+) =>
+{
+    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    if (deviceId is null) return Unauthorized();
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var command = new NpgsqlCommand(
+        """
+        UPDATE notifications
+        SET dismissed_at = NOW()
+        WHERE id = @id AND device_id = @deviceId AND dismissed_at IS NULL
+        """,
+        connection
+    );
+    command.Parameters.AddWithValue("id", id);
+    command.Parameters.AddWithValue("deviceId", deviceId.Value);
+    await command.ExecuteNonQueryAsync();
+    return Results.NoContent();
+});
+
+app.MapPost("/api/v1/notifications/clear-read", async (
+    HttpRequest httpRequest,
+    Db db,
+    RequestDevice requestDevice
+) =>
+{
+    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    if (deviceId is null) return Unauthorized();
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var command = new NpgsqlCommand(
+        """
+        UPDATE notifications
+        SET dismissed_at = NOW()
+        WHERE device_id = @deviceId AND is_read = TRUE AND dismissed_at IS NULL
+        """,
+        connection
+    );
+    command.Parameters.AddWithValue("deviceId", deviceId.Value);
+    await command.ExecuteNonQueryAsync();
     return Results.NoContent();
 });
 
@@ -6950,6 +7057,43 @@ app.MapPut("/api/v1/users/me/notification-preferences", async (
     return affected == 0 ? NotFound("USER_NOT_FOUND", "KullanÃ„Â±cÃ„Â± bulunamadÃ„Â±.") : Results.NoContent();
 });
 
+app.MapGet("/api/v1/users/me/notification-preferences", async (
+    HttpRequest httpRequest,
+    Db db,
+    JwtService jwtService
+) =>
+{
+    var principal = GetJwtPrincipal(httpRequest, jwtService);
+    if (principal is null) return Unauthorized();
+    var userId = GetUserId(principal);
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var command = new NpgsqlCommand(
+        "SELECT notification_preferences FROM users WHERE id = @id AND deleted_at IS NULL",
+        connection
+    );
+    command.Parameters.AddWithValue("id", userId);
+
+    var preferencesJson = await command.ExecuteScalarAsync() as string;
+    if (preferencesJson is null)
+    {
+        return NotFound("USER_NOT_FOUND", "KullanÃ„Â±cÃ„Â± bulunamadÃ„Â±.");
+    }
+
+    NotificationPreferencesRequest preferences;
+    try
+    {
+        preferences = JsonSerializer.Deserialize<NotificationPreferencesRequest>(preferencesJson)
+            ?? new NotificationPreferencesRequest(null, null, null, null, null, null, null);
+    }
+    catch (JsonException)
+    {
+        preferences = new NotificationPreferencesRequest(null, null, null, null, null, null, null);
+    }
+
+    return Results.Ok(preferences);
+});
+
 app.MapGet("/api/v1/users/me/data-export", async (
     HttpRequest httpRequest,
     Db db,
@@ -9918,6 +10062,15 @@ static async Task<string?> GetExistingVoteAsync(
 static Task AddVoteTimingJitterAsync(CancellationToken cancellationToken = default)
 {
     return Task.Delay(Random.Shared.Next(5, 51), cancellationToken);
+}
+
+static Task EnforceMinimumResponseTimeAsync(
+    System.Diagnostics.Stopwatch stopwatch,
+    CancellationToken cancellationToken = default
+)
+{
+    var remaining = TimeSpan.FromMilliseconds(200) - stopwatch.Elapsed;
+    return remaining <= TimeSpan.Zero ? Task.CompletedTask : Task.Delay(remaining, cancellationToken);
 }
 
 static async Task<(string? OldVote, int OldTotal, int Hakli, int Haksiz, int CategoryId, DateTimeOffset CreatedAt)> GetVoteContextAsync(

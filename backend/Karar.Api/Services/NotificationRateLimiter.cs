@@ -81,8 +81,8 @@ public sealed class NotificationRateLimiter(
 
     public static NotificationPriority GetPriority(string type) => type switch
     {
-        "moderation_result" => NotificationPriority.Critical,
-        "verdict_milestone" => NotificationPriority.High,
+        "moderation_result" or "system_announcement" => NotificationPriority.Critical,
+        "reply_on_comment" or "mention" or "verdict_milestone" or "viral_post_owner" => NotificationPriority.High,
         _ => NotificationPriority.Normal,
     };
 
