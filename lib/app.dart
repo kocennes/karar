@@ -175,12 +175,22 @@ class _KararAppState extends ConsumerState<KararApp>
   }
 
   void _onMessageOpened(RemoteMessage message) {
-    final postId = message.data['postId'] ?? message.data['referenceId'];
-    if (postId != null) {
-      _router.go('/posts/$postId');
-    } else {
-      _router.go('/notifications');
-    }
+    final type = message.data['type'] as String?;
+    final deepLink = message.data['deepLink'] as String?;
+
+    ref.read(analyticsServiceProvider).logPushNotificationOpened(
+      type: type ?? 'unknown',
+    );
+
+    final destination = deepLink?.isNotEmpty == true
+        ? deepLink!
+        : _deepLinkFromLegacy(message.data);
+    _router.go(destination);
+  }
+
+  String _deepLinkFromLegacy(Map<String, dynamic> data) {
+    final postId = data['postId'] as String? ?? data['referenceId'] as String?;
+    return postId != null ? '/posts/$postId' : '/notifications';
   }
 
   @override

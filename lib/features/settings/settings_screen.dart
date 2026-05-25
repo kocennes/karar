@@ -52,14 +52,40 @@ class SettingsScreen extends ConsumerWidget {
             // ── Bildirimler ──────────────────────────────────────────────────────
             const _SectionHeader('Bildirimler'),
             _SettingsTile(
+              icon: Icons.notifications_outlined,
+              title: 'Push bildirimleri',
+              subtitle: 'Tüm push bildirimlerini aç/kapat',
+              trailing: Switch(
+                value: prefs.pushEnabled,
+                onChanged: (v) => ref
+                    .read(userPreferencesProvider.notifier)
+                    .update((s) => s.copyWith(pushEnabled: v)),
+              ),
+            ),
+            _SettingsTile(
+              icon: Icons.volume_up_outlined,
+              title: 'Bildirim sesi',
+              subtitle: 'Bildirim alındığında ses çal',
+              trailing: Switch(
+                value: prefs.soundEnabled,
+                onChanged: prefs.pushEnabled
+                    ? (v) => ref
+                        .read(userPreferencesProvider.notifier)
+                        .update((s) => s.copyWith(soundEnabled: v))
+                    : null,
+              ),
+            ),
+            _SettingsTile(
               icon: Icons.emoji_events_outlined,
               title: 'Topluluk kararı',
               subtitle: 'Postun oy milestonelerine ulaşınca',
               trailing: Switch(
                 value: prefs.verdictMilestone,
-                onChanged: (v) => ref
-                    .read(userPreferencesProvider.notifier)
-                    .update((s) => s.copyWith(verdictMilestone: v)),
+                onChanged: prefs.pushEnabled
+                    ? (v) => ref
+                        .read(userPreferencesProvider.notifier)
+                        .update((s) => s.copyWith(verdictMilestone: v))
+                    : null,
               ),
             ),
             _SettingsTile(
@@ -68,9 +94,11 @@ class SettingsScreen extends ConsumerWidget {
               subtitle: 'Postuna yeni yorum gelince',
               trailing: Switch(
                 value: prefs.newComment,
-                onChanged: (v) => ref
-                    .read(userPreferencesProvider.notifier)
-                    .update((s) => s.copyWith(newComment: v)),
+                onChanged: prefs.pushEnabled
+                    ? (v) => ref
+                        .read(userPreferencesProvider.notifier)
+                        .update((s) => s.copyWith(newComment: v))
+                    : null,
               ),
             ),
             _SettingsTile(
@@ -79,9 +107,24 @@ class SettingsScreen extends ConsumerWidget {
               subtitle: 'Yorumuna yanıt gelince',
               trailing: Switch(
                 value: prefs.commentReply,
-                onChanged: (v) => ref
-                    .read(userPreferencesProvider.notifier)
-                    .update((s) => s.copyWith(commentReply: v)),
+                onChanged: prefs.pushEnabled
+                    ? (v) => ref
+                        .read(userPreferencesProvider.notifier)
+                        .update((s) => s.copyWith(commentReply: v))
+                    : null,
+              ),
+            ),
+            _SettingsTile(
+              icon: Icons.alternate_email_outlined,
+              title: 'Bahsedilme',
+              subtitle: 'Yorumunda @etiketlenince',
+              trailing: Switch(
+                value: prefs.notifyOnMention,
+                onChanged: prefs.pushEnabled
+                    ? (v) => ref
+                        .read(userPreferencesProvider.notifier)
+                        .update((s) => s.copyWith(notifyOnMention: v))
+                    : null,
               ),
             ),
             _SettingsTile(
@@ -90,9 +133,37 @@ class SettingsScreen extends ConsumerWidget {
               subtitle: 'Post onaylandı/kaldırıldı',
               trailing: Switch(
                 value: prefs.postModeration,
-                onChanged: (v) => ref
-                    .read(userPreferencesProvider.notifier)
-                    .update((s) => s.copyWith(postModeration: v)),
+                onChanged: prefs.pushEnabled
+                    ? (v) => ref
+                        .read(userPreferencesProvider.notifier)
+                        .update((s) => s.copyWith(postModeration: v))
+                    : null,
+              ),
+            ),
+            _SettingsTile(
+              icon: Icons.trending_up_outlined,
+              title: 'Viral uyarısı',
+              subtitle: 'Postun öne çıkınca',
+              trailing: Switch(
+                value: prefs.notifyOnTrend,
+                onChanged: prefs.pushEnabled
+                    ? (v) => ref
+                        .read(userPreferencesProvider.notifier)
+                        .update((s) => s.copyWith(notifyOnTrend: v))
+                    : null,
+              ),
+            ),
+            _SettingsTile(
+              icon: Icons.summarize_outlined,
+              title: 'Haftalık özet',
+              subtitle: 'Kaçırdığın içerikler her hafta',
+              trailing: Switch(
+                value: prefs.notifyOnDigest,
+                onChanged: prefs.pushEnabled
+                    ? (v) => ref
+                        .read(userPreferencesProvider.notifier)
+                        .update((s) => s.copyWith(notifyOnDigest: v))
+                    : null,
               ),
             ),
             _SettingsTile(

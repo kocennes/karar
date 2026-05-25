@@ -328,6 +328,12 @@ class AuthService {
         },
       );
 
+  Future<Map<String, dynamic>> getNotificationPreferences() async {
+    return _apiClient.getJson<Map<String, dynamic>>(
+      '${ApiEndpoints.userMe}/notification-preferences',
+    );
+  }
+
   Future<void> updatePreferences(Map<String, dynamic> prefs) async {
     await _apiClient.putJson<void>(
       '${ApiEndpoints.userMe}/notification-preferences',

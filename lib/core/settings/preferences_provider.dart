@@ -8,7 +8,12 @@ class UserPreferences {
     this.verdictMilestone = true,
     this.newComment = true,
     this.commentReply = true,
+    this.notifyOnMention = true,
     this.postModeration = true,
+    this.notifyOnTrend = false,
+    this.notifyOnDigest = false,
+    this.pushEnabled = true,
+    this.soundEnabled = true,
     this.emailNewsletter = false,
     this.silentHoursEnabled = false,
     this.silentStart = '22:00',
@@ -21,7 +26,12 @@ class UserPreferences {
   final bool verdictMilestone;
   final bool newComment;
   final bool commentReply;
+  final bool notifyOnMention;
   final bool postModeration;
+  final bool notifyOnTrend;
+  final bool notifyOnDigest;
+  final bool pushEnabled;
+  final bool soundEnabled;
   final bool emailNewsletter;
   final bool silentHoursEnabled;
   final String silentStart;
@@ -30,11 +40,39 @@ class UserPreferences {
   final bool showKarmaToOthers;
   final bool analyticsEnabled;
 
+  factory UserPreferences.fromJson(Map<String, dynamic> json) {
+    String? qs = json['quietHoursStart'] as String?;
+    String? qe = json['quietHoursEnd'] as String?;
+    return UserPreferences(
+      verdictMilestone: json['notifyOnVerdict'] as bool? ?? true,
+      newComment: json['notifyOnComment'] as bool? ?? true,
+      commentReply: json['notifyOnReply'] as bool? ?? true,
+      notifyOnMention: json['notifyOnMention'] as bool? ?? true,
+      postModeration: json['notifyOnPostStatus'] as bool? ?? true,
+      notifyOnTrend: json['notifyOnTrend'] as bool? ?? false,
+      notifyOnDigest: json['notifyOnDigest'] as bool? ?? false,
+      pushEnabled: json['pushEnabled'] as bool? ?? true,
+      soundEnabled: json['soundEnabled'] as bool? ?? true,
+      emailNewsletter: json['emailWeeklySummary'] as bool? ?? false,
+      silentHoursEnabled: qs != null && qe != null,
+      silentStart: qs ?? '22:00',
+      silentEnd: qe ?? '08:00',
+      showVotesOnProfile: json['showVotesOnProfile'] as bool? ?? true,
+      showKarmaToOthers: json['showKarmaToOthers'] as bool? ?? true,
+      analyticsEnabled: true,
+    );
+  }
+
   UserPreferences copyWith({
     bool? verdictMilestone,
     bool? newComment,
     bool? commentReply,
+    bool? notifyOnMention,
     bool? postModeration,
+    bool? notifyOnTrend,
+    bool? notifyOnDigest,
+    bool? pushEnabled,
+    bool? soundEnabled,
     bool? emailNewsletter,
     bool? silentHoursEnabled,
     String? silentStart,
@@ -47,7 +85,12 @@ class UserPreferences {
       verdictMilestone: verdictMilestone ?? this.verdictMilestone,
       newComment: newComment ?? this.newComment,
       commentReply: commentReply ?? this.commentReply,
+      notifyOnMention: notifyOnMention ?? this.notifyOnMention,
       postModeration: postModeration ?? this.postModeration,
+      notifyOnTrend: notifyOnTrend ?? this.notifyOnTrend,
+      notifyOnDigest: notifyOnDigest ?? this.notifyOnDigest,
+      pushEnabled: pushEnabled ?? this.pushEnabled,
+      soundEnabled: soundEnabled ?? this.soundEnabled,
       emailNewsletter: emailNewsletter ?? this.emailNewsletter,
       silentHoursEnabled: silentHoursEnabled ?? this.silentHoursEnabled,
       silentStart: silentStart ?? this.silentStart,
@@ -62,11 +105,15 @@ class UserPreferences {
         'notifyOnVerdict': verdictMilestone,
         'notifyOnComment': newComment,
         'notifyOnReply': commentReply,
-        'notifyOnModeration': postModeration,
-        'emailNewsletter': emailNewsletter,
-        'silentHoursEnabled': silentHoursEnabled,
-        'silentStart': silentStart,
-        'silentEnd': silentEnd,
+        'notifyOnMention': notifyOnMention,
+        'notifyOnPostStatus': postModeration,
+        'notifyOnTrend': notifyOnTrend,
+        'notifyOnDigest': notifyOnDigest,
+        'pushEnabled': pushEnabled,
+        'soundEnabled': soundEnabled,
+        'emailWeeklySummary': emailNewsletter,
+        'quietHoursStart': silentHoursEnabled ? silentStart : null,
+        'quietHoursEnd': silentHoursEnabled ? silentEnd : null,
         'showVotesOnProfile': showVotesOnProfile,
         'showKarmaToOthers': showKarmaToOthers,
       };
@@ -75,7 +122,7 @@ class UserPreferences {
 class UserPreferencesNotifier extends Notifier<UserPreferences> {
   @override
   UserPreferences build() {
-    _load();
+    Future.microtask(_load);
     return const UserPreferences();
   }
 
@@ -83,11 +130,31 @@ class UserPreferencesNotifier extends Notifier<UserPreferences> {
 
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
+
+    // If user is logged in, load from backend (authoritative)
+    if (AppRuntime.useRemoteApi && ref.read(currentUserProvider) != null) {
+      try {
+        final json = await ref.read(authServiceProvider).getNotificationPreferences();
+        final fromServer = UserPreferences.fromJson(json);
+        state = fromServer.copyWith(
+          analyticsEnabled: prefs.getBool('${_kPrefix}analytics') ?? true,
+        );
+        return;
+      } catch (_) {
+        // Fall through to local cache
+      }
+    }
+
     state = UserPreferences(
       verdictMilestone: prefs.getBool('${_kPrefix}verdict') ?? true,
       newComment: prefs.getBool('${_kPrefix}comment') ?? true,
       commentReply: prefs.getBool('${_kPrefix}reply') ?? true,
+      notifyOnMention: prefs.getBool('${_kPrefix}mention') ?? true,
       postModeration: prefs.getBool('${_kPrefix}mod') ?? true,
+      notifyOnTrend: prefs.getBool('${_kPrefix}trend') ?? false,
+      notifyOnDigest: prefs.getBool('${_kPrefix}digest') ?? false,
+      pushEnabled: prefs.getBool('${_kPrefix}push') ?? true,
+      soundEnabled: prefs.getBool('${_kPrefix}sound') ?? true,
       emailNewsletter: prefs.getBool('${_kPrefix}email') ?? false,
       silentHoursEnabled: prefs.getBool('${_kPrefix}silent_on') ?? false,
       silentStart: prefs.getString('${_kPrefix}silent_start') ?? '22:00',
@@ -102,12 +169,17 @@ class UserPreferencesNotifier extends Notifier<UserPreferences> {
     final newState = updateFn(state);
     final previousAnalytics = state.analyticsEnabled;
     state = newState;
-    
+
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('${_kPrefix}verdict', state.verdictMilestone);
     await prefs.setBool('${_kPrefix}comment', state.newComment);
     await prefs.setBool('${_kPrefix}reply', state.commentReply);
+    await prefs.setBool('${_kPrefix}mention', state.notifyOnMention);
     await prefs.setBool('${_kPrefix}mod', state.postModeration);
+    await prefs.setBool('${_kPrefix}trend', state.notifyOnTrend);
+    await prefs.setBool('${_kPrefix}digest', state.notifyOnDigest);
+    await prefs.setBool('${_kPrefix}push', state.pushEnabled);
+    await prefs.setBool('${_kPrefix}sound', state.soundEnabled);
     await prefs.setBool('${_kPrefix}email', state.emailNewsletter);
     await prefs.setBool('${_kPrefix}silent_on', state.silentHoursEnabled);
     await prefs.setString('${_kPrefix}silent_start', state.silentStart);

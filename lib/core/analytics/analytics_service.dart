@@ -205,6 +205,13 @@ class AnalyticsService {
     );
   }
 
+  Future<void> logPushNotificationOpened({required String type}) async {
+    await _a?.logEvent(
+      name: 'push_notification_opened',
+      parameters: {'type': type},
+    );
+  }
+
   Future<void> setAnalyticsEnabled(bool enabled) async {
     await _a?.setAnalyticsCollectionEnabled(enabled);
   }
