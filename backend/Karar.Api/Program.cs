@@ -1648,37 +1648,51 @@ app.MapGet("/api/v1/posts/discover/feed", async (
 
     await using var cmd = new NpgsqlCommand(
         """
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
-               p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
-               v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
-               p.is_unlisted, p.is_anonymous, p.tags
-        FROM posts p
-        JOIN categories c ON c.id = p.category_id
-        LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
-        WHERE p.status = 'active'
-          AND p.is_unlisted = FALSE
-          AND p.distribution_stage >= 2
-          AND (
-              @deviceId = '00000000-0000-0000-0000-000000000000'::uuid
-              OR NOT EXISTS (
-                  SELECT 1 FROM post_views pv
-                  WHERE pv.post_id = p.id AND pv.device_id = @deviceId
+        WITH candidate AS (
+            SELECT p.id, p.title, p.content, p.image_url,
+                   c.id AS c_id, c.name AS c_name, c.emoji,
+                   p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
+                   v.vote_type, p.trend_score, p.created_at,
+                   (p.device_id = @deviceId OR p.user_id = @userId) AS is_owner,
+                   p.is_unlisted, p.is_anonymous, p.tags,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY COALESCE(p.user_id::text, p.device_id::text)
+                       ORDER BY p.trend_score DESC, p.id DESC
+                   ) AS author_rank
+            FROM posts p
+            JOIN categories c ON c.id = p.category_id
+            LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
+            WHERE p.status = 'active'
+              AND p.is_unlisted = FALSE
+              AND p.distribution_stage >= 2
+              AND (
+                  @deviceId = '00000000-0000-0000-0000-000000000000'::uuid
+                  OR NOT EXISTS (
+                      SELECT 1 FROM post_views pv
+                      WHERE pv.post_id = p.id AND pv.device_id = @deviceId
+                  )
               )
-          )
-          AND (
-              @userId = '00000000-0000-0000-0000-000000000000'::uuid
-              OR NOT EXISTS (
-                  SELECT 1 FROM blocked_users bu
-                  WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id
+              AND (
+                  @userId = '00000000-0000-0000-0000-000000000000'::uuid
+                  OR NOT EXISTS (
+                      SELECT 1 FROM blocked_users bu
+                      WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id
+                  )
               )
-          )
-          AND (
-              NOT @hasCursor
-              OR p.trend_score < @cursorScore
-              OR (p.trend_score = @cursorScore AND p.id < @cursorId)
-          )
-        ORDER BY p.trend_score DESC, p.id DESC
+              AND (
+                  NOT @hasCursor
+                  OR p.trend_score < @cursorScore
+                  OR (p.trend_score = @cursorScore AND p.id < @cursorId)
+              )
+        )
+        SELECT id, title, content, image_url,
+               c_id, c_name, emoji,
+               vote_count_hakli, vote_count_haksiz, comment_count,
+               vote_type, trend_score, created_at,
+               is_owner, is_unlisted, is_anonymous, tags
+        FROM candidate
+        WHERE author_rank <= 2
+        ORDER BY trend_score DESC, id DESC
         LIMIT @fetchSize
         """,
         connection
@@ -2478,6 +2492,33 @@ app.MapPost("/api/v1/posts/{id:guid}/view", async (
     var interactedCount = request?.WasInteracted == true ? 1 : 0;
 
     await using var connection = await db.OpenConnectionAsync();
+    await UpsertPostViewCountersAsync(connection, id, deviceId.Value, dwellSeconds, dwellCount, interactedCount);
+
+    return Results.NoContent();
+});
+
+static async Task UpsertPostViewAsync(
+    NpgsqlConnection connection,
+    Guid postId,
+    Guid deviceId,
+    PostViewRequest? request)
+{
+    var dwellSeconds = request?.DwellSeconds is int seconds && seconds >= 3
+        ? Math.Clamp(seconds, 3, 600)
+        : 0;
+    var dwellCount = dwellSeconds > 0 ? 1 : 0;
+    var interactedCount = request?.WasInteracted == true ? 1 : 0;
+    await UpsertPostViewCountersAsync(connection, postId, deviceId, dwellSeconds, dwellCount, interactedCount);
+}
+
+static async Task UpsertPostViewCountersAsync(
+    NpgsqlConnection connection,
+    Guid postId,
+    Guid deviceId,
+    int dwellSeconds,
+    int dwellCount,
+    int interactedCount)
+{
     await using var command = new NpgsqlCommand(
         """
         INSERT INTO post_views (
@@ -2500,15 +2541,14 @@ app.MapPost("/api/v1/posts/{id:guid}/view", async (
         """,
         connection
     );
-    command.Parameters.AddWithValue("postId", id);
-    command.Parameters.AddWithValue("deviceId", deviceId.Value);
+    command.Parameters.AddWithValue("postId", postId);
+    command.Parameters.AddWithValue("deviceId", deviceId);
     command.Parameters.AddWithValue("dwellSeconds", dwellSeconds);
     command.Parameters.AddWithValue("dwellCount", dwellCount);
     command.Parameters.AddWithValue("interactedCount", interactedCount);
 
     try { await command.ExecuteNonQueryAsync(); } catch { /* ignore: post may not exist */ }
-    return Results.NoContent();
-});
+}
 
 app.MapPut("/api/v1/posts/{id:guid}", async (
     Guid id,
@@ -2649,6 +2689,117 @@ app.MapPost("/api/v1/posts/{id:guid}/feedback", async (
     if (request.Type == "not_interested" || request.Type == "seen_too_much")
     {
         await redis.MarkNotInterestedAsync(deviceId.Value, id);
+    }
+
+    return Results.NoContent();
+});
+
+app.MapPost("/api/v1/posts/discover/events", async (
+    DiscoverEventRequest request,
+    HttpRequest httpRequest,
+    Db db,
+    RequestDevice requestDevice,
+    JwtService jwtService,
+    RedisService redis
+) =>
+{
+    if (ValidateRequest(request) is { } validationError)
+    {
+        return validationError;
+    }
+
+    if (request.EventType is not (
+        "impression" or
+        "dwell" or
+        "skip" or
+        "vote" or
+        "comment_open" or
+        "comment_reply" or
+        "comment_like" or
+        "comment_dislike" or
+        "save" or
+        "share" or
+        "not_interested"))
+    {
+        return BadRequest("INVALID_DISCOVER_EVENT", "Geçersiz Keşfet event tipi.");
+    }
+
+    if (request.EventType == "dwell" && request.DwellSeconds is null)
+    {
+        return BadRequest("DWELL_SECONDS_REQUIRED", "Dwell event için süre gerekli.");
+    }
+
+    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    var userId = GetOptionalUserId(httpRequest, jwtService);
+    if (deviceId is null && userId is null)
+    {
+        return Unauthorized();
+    }
+
+    var metadata = string.IsNullOrWhiteSpace(request.Metadata) ? "{}" : request.Metadata;
+    try
+    {
+        using var _ = JsonDocument.Parse(metadata);
+    }
+    catch (JsonException)
+    {
+        return BadRequest("INVALID_METADATA", "Metadata geçerli JSON olmalı.");
+    }
+
+    var dwellSeconds = request.DwellSeconds is int seconds
+        ? Math.Clamp(seconds, 3, 600)
+        : (int?)null;
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var command = new NpgsqlCommand(
+        """
+        INSERT INTO discover_events (
+            post_id,
+            device_id,
+            user_id,
+            event_type,
+            dwell_seconds,
+            impression_token,
+            metadata
+        )
+        SELECT @postId, @deviceId, @userId, @eventType, @dwellSeconds, @impressionToken, @metadata::jsonb
+        WHERE EXISTS (
+            SELECT 1
+            FROM posts
+            WHERE id = @postId
+              AND status = 'active'
+              AND is_unlisted = FALSE
+        )
+        """,
+        connection
+    );
+    command.Parameters.AddWithValue("postId", request.PostId);
+    command.Parameters.Add("deviceId", NpgsqlDbType.Uuid).Value = (object?)deviceId ?? DBNull.Value;
+    command.Parameters.Add("userId", NpgsqlDbType.Uuid).Value = (object?)userId ?? DBNull.Value;
+    command.Parameters.AddWithValue("eventType", request.EventType);
+    command.Parameters.Add("dwellSeconds", NpgsqlDbType.Integer).Value = (object?)dwellSeconds ?? DBNull.Value;
+    command.Parameters.Add("impressionToken", NpgsqlDbType.Text).Value = (object?)request.ImpressionToken ?? DBNull.Value;
+    command.Parameters.Add("metadata", NpgsqlDbType.Jsonb).Value = metadata;
+
+    var inserted = await command.ExecuteNonQueryAsync();
+    if (inserted == 0)
+    {
+        return NotFound("POST_NOT_FOUND", "Keşfet eventi için aktif gönderi bulunamadı.");
+    }
+
+    if (deviceId is not null && request.EventType is "impression" or "dwell")
+    {
+        var postViewRequest = new PostViewRequest(
+            DwellSeconds: request.EventType == "dwell" ? dwellSeconds : null,
+            WasInteracted: request.EventType == "dwell" && dwellSeconds >= 15);
+
+        await UpsertPostViewAsync(connection, request.PostId, deviceId.Value, postViewRequest);
+        _ = redis.RecordImpressionsAsync(deviceId.Value, [request.PostId]);
+    }
+
+    if (deviceId is not null && request.EventType == "not_interested")
+    {
+        await redis.MarkNotInterestedAsync(deviceId.Value, request.PostId);
     }
 
     return Results.NoContent();
