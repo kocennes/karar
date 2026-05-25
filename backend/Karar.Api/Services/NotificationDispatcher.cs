@@ -159,6 +159,7 @@ public sealed class NotificationDispatcher(
 
         foreach (var notification in batch)
         {
+            var badgeCount = await GetUnreadCountAsync(connection, notification.DeviceId, ct);
             var result = await SendPushAsync(
                 connection,
                 notification.DeviceId,
@@ -166,10 +167,20 @@ public sealed class NotificationDispatcher(
                 notification.Body,
                 notification.Type,
                 notification.PostId,
+                badgeCount,
                 ct);
 
             await UpdateDeliveryStateAsync(connection, notification, result, ct);
         }
+    }
+
+    private static async Task<int> GetUnreadCountAsync(NpgsqlConnection connection, Guid deviceId, CancellationToken ct)
+    {
+        await using var cmd = new NpgsqlCommand(
+            "SELECT COUNT(*) FROM notifications WHERE device_id = @deviceId AND is_read = FALSE AND dismissed_at IS NULL",
+            connection);
+        cmd.Parameters.AddWithValue("deviceId", deviceId);
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct));
     }
 
     private async Task<PushSendResult> SendPushAsync(
@@ -179,6 +190,7 @@ public sealed class NotificationDispatcher(
         string body,
         string type,
         Guid? postId,
+        int badgeCount,
         CancellationToken ct)
     {
         var tokens = await GetFcmTokensAsync(connection, deviceId, ct);
@@ -195,6 +207,7 @@ public sealed class NotificationDispatcher(
         {
             try
             {
+                var deepLink = BuildDeepLink(type, postId);
                 var message = new Message
                 {
                     Token = token,
@@ -203,6 +216,7 @@ public sealed class NotificationDispatcher(
                     {
                         ["type"] = type,
                         ["referenceId"] = postId?.ToString() ?? string.Empty,
+                        ["deepLink"] = deepLink,
                         ["click_action"] = "FLUTTER_NOTIFICATION_CLICK",
                     },
                     Android = new AndroidConfig
@@ -216,7 +230,13 @@ public sealed class NotificationDispatcher(
                     },
                     Apns = new ApnsConfig
                     {
-                        Aps = new Aps { Sound = "default", Badge = 1 },
+                        Aps = new Aps
+                        {
+                            Sound = "default",
+                            Badge = badgeCount,
+                            MutableContent = true,
+                            Category = GetApnsCategory(type),
+                        },
                     },
                 };
 
@@ -395,6 +415,28 @@ public sealed class NotificationDispatcher(
         "trend_alert" or "follow_new_post" => "viral",
         "weekly_digest" => "digest",
         _ => "system",
+    };
+
+    public static string GetApnsCategory(string type) => type switch
+    {
+        "comment_on_post" => "COMMENT",
+        "reply_on_comment" => "REPLY",
+        "mention" => "MENTION",
+        "verdict_milestone" or "viral_post_owner" => "MILESTONE",
+        "moderation_result" => "MODERATION",
+        "system_announcement" => "SYSTEM",
+        _ => "GENERAL",
+    };
+
+    public static string BuildDeepLink(string type, Guid? postId) => type switch
+    {
+        "comment_on_post" or "reply_on_comment" or "mention"
+            or "verdict_milestone" or "viral_post_owner"
+            when postId.HasValue => $"/posts/{postId}",
+        "weekly_digest" => "/notifications",
+        "moderation_result" => "/profile",
+        "system_announcement" => "/notifications",
+        _ => "/notifications",
     };
 
     private static string TokenSuffix(string token) =>
