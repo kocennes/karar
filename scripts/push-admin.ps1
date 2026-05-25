@@ -16,7 +16,7 @@ param(
 )
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Continue'
 
 # ── Sabitler ────────────────────────────────────────────────────────────────
 $RepoRoot    = Split-Path $PSScriptRoot -Parent
@@ -65,7 +65,8 @@ try {
         git checkout -b $Branch
         $isEmptyRepo = $true
     } else {
-        git clone --depth 1 --branch $Branch $RemoteUrl .
+        git clone --depth 1 --branch $Branch $RemoteUrl . 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "git clone başarısız oldu." }
     }
 
     # Eski kaynak dosyaları sil (node_modules ve .next hariç)
