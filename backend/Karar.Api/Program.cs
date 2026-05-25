@@ -3883,6 +3883,17 @@ app.MapPost("/api/v1/admin/auth/login", async (
         return Unauthorized();
     }
 
+    // Development ortamında SMTP yoksa OTP adımını atla ve doğrudan token ver.
+    // Production'da bu kod çalışmaz — her zaman e-posta OTP zorunludur.
+    if (!emailService.IsConfigured && !app.Environment.IsProduction())
+    {
+        await bruteForce.ClearAsync(bfIdentity);
+        return Results.Ok(new AdminLoginResponse(
+            adminAuth.IssueToken(),
+            DateTimeOffset.UtcNow.AddHours(4)
+        ));
+    }
+
     var otpKey = $"admin:login:otp:{request.Email.ToLowerInvariant()}";
     if (string.IsNullOrWhiteSpace(request.TotpCode))
     {

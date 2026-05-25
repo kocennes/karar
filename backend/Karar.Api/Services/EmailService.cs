@@ -31,6 +31,8 @@ public sealed class EmailService
         }
     }
 
+    public bool IsConfigured => _configured;
+
     public Task SendOtpAsync(string toEmail, string otp) =>
         SendAsync(toEmail, "Karar — E-posta Doğrulama Kodunuz", $"""
                 Karar'a Hoş Geldiniz!
@@ -83,7 +85,13 @@ public sealed class EmailService
 
     private async Task SendAsync(string toEmail, string subject, string body)
     {
-        if (!_configured) return;
+        if (!_configured)
+        {
+            _logger.LogWarning(
+                "[DEV] SMTP yapılandırılmamış — e-posta console'a yazıldı | To={To} | Subject={Subject} | Body={Body}",
+                toEmail, subject, body);
+            return;
+        }
         var message = new MimeMessage();
         message.From.Add(new MailboxAddress(_fromName, _fromAddress));
         message.To.Add(MailboxAddress.Parse(toEmail));
