@@ -9257,7 +9257,119 @@ app.MapGet("/api/v1/admin/analytics/retention", async (
     });
 });
 
-// â"€â"€ 2FA Yedek KodlarÄ± â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── NOTIFICATION ANALYTICS ──────────────────────────────────────────────────
+
+app.MapGet("/api/v1/admin/analytics/notifications", async (
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth,
+    int days = 7
+) =>
+{
+    if (RequireAdmin(httpRequest, adminAuth) is { } unauthorized)
+        return unauthorized;
+
+    days = Math.Clamp(days, 1, 90);
+    await using var connection = await db.OpenConnectionAsync();
+
+    await using var funnelCmd = new NpgsqlCommand(
+        """
+        SELECT event_type, COUNT(*) AS cnt
+        FROM notification_events
+        WHERE occurred_at >= NOW() - (@days * INTERVAL '1 day')
+        GROUP BY event_type
+        """,
+        connection);
+    funnelCmd.Parameters.AddWithValue("days", days);
+
+    var funnel = new Dictionary<string, long>();
+    await using var funnelReader = await funnelCmd.ExecuteReaderAsync();
+    while (await funnelReader.ReadAsync())
+        funnel[funnelReader.GetString(0)] = Convert.ToInt64(funnelReader.GetValue(1));
+    await funnelReader.CloseAsync();
+
+    await using var suppressCmd = new NpgsqlCommand(
+        """
+        SELECT COALESCE(metadata->>'reason', 'unknown') AS reason, COUNT(*) AS cnt
+        FROM notification_events
+        WHERE event_type = 'suppressed'
+          AND occurred_at >= NOW() - (@days * INTERVAL '1 day')
+        GROUP BY reason
+        ORDER BY cnt DESC
+        """,
+        connection);
+    suppressCmd.Parameters.AddWithValue("days", days);
+
+    var suppressionReasons = new List<object>();
+    await using var suppressReader = await suppressCmd.ExecuteReaderAsync();
+    while (await suppressReader.ReadAsync())
+        suppressionReasons.Add(new { reason = suppressReader.GetString(0), count = Convert.ToInt64(suppressReader.GetValue(1)) });
+    await suppressReader.CloseAsync();
+
+    await using var tokensCmd = new NpgsqlCommand("SELECT COUNT(*) FROM fcm_tokens", connection);
+    var activeTokens = Convert.ToInt64(await tokensCmd.ExecuteScalarAsync());
+
+    await using var newTokensCmd = new NpgsqlCommand(
+        "SELECT COUNT(*) FROM fcm_tokens WHERE created_at >= NOW() - (@days * INTERVAL '1 day')",
+        connection);
+    newTokensCmd.Parameters.AddWithValue("days", days);
+    var newTokens = Convert.ToInt64(await newTokensCmd.ExecuteScalarAsync());
+
+    await using var viralCmd = new NpgsqlCommand(
+        """
+        SELECT
+            COUNT(ne.id) FILTER (WHERE ne.event_type = 'sent')   AS viral_sent,
+            COUNT(ne.id) FILTER (WHERE ne.event_type = 'opened') AS viral_opened
+        FROM notification_events ne
+        JOIN notifications n ON n.id = ne.notification_id
+        WHERE n.type IN ('viral_post_owner', 'trend_alert')
+          AND ne.occurred_at >= NOW() - (@days * INTERVAL '1 day')
+        """,
+        connection);
+    viralCmd.Parameters.AddWithValue("days", days);
+
+    await using var viralReader = await viralCmd.ExecuteReaderAsync();
+    long viralSent = 0, viralOpened = 0;
+    if (await viralReader.ReadAsync())
+    {
+        viralSent = viralReader.IsDBNull(0) ? 0 : Convert.ToInt64(viralReader.GetValue(0));
+        viralOpened = viralReader.IsDBNull(1) ? 0 : Convert.ToInt64(viralReader.GetValue(1));
+    }
+    await viralReader.CloseAsync();
+
+    long Get(string key) => funnel.TryGetValue(key, out var v) ? v : 0;
+    var sent = Get("sent");
+    var sendAttempt = Get("send_attempt");
+    var opened = Get("opened");
+
+    return Results.Ok(new
+    {
+        days,
+        funnel = new
+        {
+            intent    = Get("intent"),
+            eligible  = Get("eligible"),
+            suppressed = Get("suppressed"),
+            sendAttempt,
+            sent,
+            failed    = Get("failed"),
+            retrying  = Get("retrying"),
+            opened,
+            dismissed = Get("dismissed"),
+            read      = Get("read"),
+        },
+        suppressionReasons,
+        activeTokens,
+        newTokensPeriod = newTokens,
+        viralSent,
+        viralOpened,
+        deliveryRate         = sendAttempt == 0 ? 0.0 : Math.Round(sent * 100.0 / sendAttempt, 1),
+        openRate             = sent == 0 ? 0.0 : Math.Round(opened * 100.0 / sent, 1),
+        viralConversionRate  = viralSent == 0 ? 0.0 : Math.Round(viralOpened * 100.0 / viralSent, 1),
+    });
+});
+
+// ── 2FA Yedek Kodları ────────────────────────────────────────────────────────
 
 app.MapPost("/api/v1/auth/2fa/backup-codes", async (
     HttpRequest httpRequest,

@@ -79,6 +79,21 @@ public class HealthCheckTests : IClassFixture<CustomWebApplicationFactory>
     }
 
     [Fact]
+    public async Task HealthVersion_ReturnsDeployMetadata_WithoutDatabase()
+    {
+        var response = await _client.GetAsync("/health/version");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var body = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>();
+        Assert.NotNull(body);
+        Assert.Equal("karar-api", body["service"]);
+        Assert.False(string.IsNullOrWhiteSpace(body["environment"]));
+        Assert.False(string.IsNullOrWhiteSpace(body["version"]));
+        Assert.False(string.IsNullOrWhiteSpace(body["commitSha"]));
+        Assert.False(string.IsNullOrWhiteSpace(body["deployedAt"]));
+    }
+
+    [Fact]
     public async Task UnknownRoute_Returns404()
     {
         var response = await _client.GetAsync("/api/v1/nonexistent-endpoint-xyz");
