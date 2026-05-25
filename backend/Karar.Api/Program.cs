@@ -5147,6 +5147,94 @@ app.MapPost("/api/v1/admin/users/{id:guid}/delete", async (
     return Results.NoContent();
 });
 
+// ── ADMIN USERS BULK ACTION ──────────────────────────────────────────────
+
+app.MapPost("/api/v1/admin/users/bulk", async (
+    BulkUserActionRequest request,
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth
+) =>
+{
+    var adminEmail = adminAuth.TryGetAdminEmail(httpRequest);
+    if (adminEmail is null) return Unauthorized();
+
+    if (ValidateRequest(request) is { } ve) return ve;
+
+    if (request.Action is not ("ban" or "warn" or "unban"))
+        return BadRequest("INVALID_ACTION", "Aksiyon geçersiz.");
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var transaction = await connection.BeginTransactionAsync();
+
+    var successCount = 0;
+    foreach (var userId in request.UserIds)
+    {
+        if (request.Action == "ban")
+        {
+            await using var cmd = new NpgsqlCommand(
+                "UPDATE users SET status = 'banned' WHERE id = @id AND status != 'banned'",
+                connection, transaction);
+            cmd.Parameters.AddWithValue("id", userId);
+            var affected = await cmd.ExecuteNonQueryAsync();
+            if (affected > 0)
+            {
+                await new NpgsqlCommand(
+                    "INSERT INTO ban_history (user_id, type, reason, admin_email) VALUES (@uid, 'ban', @reason, @admin)",
+                    connection, transaction)
+                {
+                    Parameters = {
+                        new("uid", userId),
+                        new("reason", (object?)request.Reason ?? DBNull.Value),
+                        new("admin", adminEmail)
+                    }
+                }.ExecuteNonQueryAsync();
+                await LogAdminActionAsync(connection, transaction, adminEmail, "user_banned", "user", userId, request.Reason);
+                successCount++;
+            }
+        }
+        else if (request.Action == "warn")
+        {
+            await using var cmd = new NpgsqlCommand(
+                "UPDATE users SET status = 'warned' WHERE id = @id AND status = 'active'",
+                connection, transaction);
+            cmd.Parameters.AddWithValue("id", userId);
+            var affected = await cmd.ExecuteNonQueryAsync();
+            if (affected > 0)
+            {
+                await new NpgsqlCommand(
+                    "INSERT INTO ban_history (user_id, type, reason, admin_email) VALUES (@uid, 'warn', @reason, @admin)",
+                    connection, transaction)
+                {
+                    Parameters = {
+                        new("uid", userId),
+                        new("reason", (object?)request.Reason ?? DBNull.Value),
+                        new("admin", adminEmail)
+                    }
+                }.ExecuteNonQueryAsync();
+                await LogAdminActionAsync(connection, transaction, adminEmail, "user_warned", "user", userId, request.Reason);
+                successCount++;
+            }
+        }
+        else if (request.Action == "unban")
+        {
+            await using var cmd = new NpgsqlCommand(
+                "UPDATE users SET status = 'active' WHERE id = @id AND status = 'banned'",
+                connection, transaction);
+            cmd.Parameters.AddWithValue("id", userId);
+            var affected = await cmd.ExecuteNonQueryAsync();
+            if (affected > 0)
+            {
+                await LogAdminActionAsync(connection, transaction, adminEmail, "user_unbanned", "user", userId, request.Reason);
+                successCount++;
+            }
+        }
+    }
+
+    await transaction.CommitAsync();
+    return Results.Ok(new { successCount });
+});
+
 // ── ADMIN MODERATION NOTIFY ──────────────────────────────────────────────
 
 app.MapPost("/api/v1/admin/moderation/{targetType}/{targetId:guid}/notify", async (

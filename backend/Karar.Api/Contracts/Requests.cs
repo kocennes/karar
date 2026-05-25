@@ -143,6 +143,12 @@ public sealed record ModerationBatchItem(
     [Required] string Type
 );
 
+public sealed record BulkUserActionRequest(
+    [Required] string Action,
+    [Required, MinLength(1)] List<Guid> UserIds,
+    string? Reason = null
+);
+
 public sealed record RegisterRequest(
     [Required, RegularExpression(@"^[a-zA-Z0-9_]{3,20}$",
         ErrorMessage = "Kullanıcı adı 3-20 karakter, yalnızca harf/rakam/alt çizgi.")] string Username,
