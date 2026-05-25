@@ -8550,6 +8550,57 @@ app.MapGet("/api/v1/admin/analytics/moderation", async (
     });
 });
 
+// ── MODERATOR PERFORMANCE ANALYTICS ─────────────────────────────────────
+
+app.MapGet("/api/v1/admin/analytics/moderators", async (
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth,
+    int days = 30
+) =>
+{
+    if (RequireAdmin(httpRequest, adminAuth) is { } unauthorized) return unauthorized;
+
+    days = Math.Clamp(days, 1, 90);
+    await using var connection = await db.OpenConnectionAsync();
+
+    await using var cmd = new NpgsqlCommand(
+        """
+        SELECT
+            admin_email,
+            COUNT(*) AS total_actions,
+            COUNT(*) FILTER (WHERE action IN ('post_approved', 'comment_approved')) AS approvals,
+            COUNT(*) FILTER (WHERE action IN ('post_rejected', 'post_deleted', 'comment_rejected', 'comment_deleted')) AS removals,
+            COUNT(*) FILTER (WHERE action IN ('user_banned', 'user_warned')) AS user_sanctions,
+            MIN(created_at) AS first_action,
+            MAX(created_at) AS last_action
+        FROM admin_actions
+        WHERE created_at >= NOW() - @days * INTERVAL '1 day'
+        GROUP BY admin_email
+        ORDER BY total_actions DESC
+        """,
+        connection);
+    cmd.Parameters.AddWithValue("days", days);
+
+    var moderators = new List<object>();
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        moderators.Add(new
+        {
+            adminEmail = reader.GetString(0),
+            totalActions = Convert.ToInt32(reader.GetInt64(1)),
+            approvals = Convert.ToInt32(reader.GetInt64(2)),
+            removals = Convert.ToInt32(reader.GetInt64(3)),
+            userSanctions = Convert.ToInt32(reader.GetInt64(4)),
+            firstAction = reader.IsDBNull(5) ? (DateTimeOffset?)null : reader.GetFieldValue<DateTimeOffset>(5),
+            lastAction = reader.IsDBNull(6) ? (DateTimeOffset?)null : reader.GetFieldValue<DateTimeOffset>(6),
+        });
+    }
+
+    return Results.Ok(new { moderators, days });
+});
+
 // ── RETENTION ANALYTICS ────────────────────────────────────────────────────
 
 app.MapGet("/api/v1/admin/analytics/retention", async (
