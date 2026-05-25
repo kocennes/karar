@@ -107,21 +107,21 @@ public sealed class NotificationDispatcher(
             }
 
             var sendable = new List<Guid>();
-            var rateLimited = new List<Guid>();
+            var deferred = new List<(Guid Id, TimeSpan? Delay)>();
             foreach (var notification in batch)
             {
                 var priority = NotificationRateLimiter.GetPriority(notification.Type);
 
-                var prefAllowed = await preferenceRouter.CanPushAsync(
+                var decision = await preferenceRouter.CanPushAsync(
                     notification.DeviceId,
                     notification.Type,
                     priority,
                     connection,
                     ct);
 
-                if (!prefAllowed)
+                if (!decision.Allowed)
                 {
-                    rateLimited.Add(notification.Id);
+                    deferred.Add((notification.Id, decision.SuggestedRetryDelay));
                     continue;
                 }
 
@@ -137,13 +137,13 @@ public sealed class NotificationDispatcher(
                 }
                 else
                 {
-                    rateLimited.Add(notification.Id);
+                    deferred.Add((notification.Id, null));
                 }
             }
 
-            if (rateLimited.Count > 0)
+            if (deferred.Count > 0)
             {
-                await DeferRateLimitedNotificationsAsync(connection, tx, rateLimited, ct);
+                await DeferNotificationsAsync(connection, tx, deferred, ct);
             }
 
             if (sendable.Count == 0)
@@ -323,26 +323,30 @@ public sealed class NotificationDispatcher(
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    private static async Task DeferRateLimitedNotificationsAsync(
+    private static async Task DeferNotificationsAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction tx,
-        List<Guid> notificationIds,
+        List<(Guid Id, TimeSpan? Delay)> deferred,
         CancellationToken ct)
     {
-        await using var cmd = new NpgsqlCommand(
-            """
-            UPDATE notifications
-            SET next_attempt_at = NOW() + (@delaySeconds * INTERVAL '1 second'),
-                last_error = 'rate_limited'
-            WHERE id = ANY(@ids)
-              AND sent_at IS NULL
-              AND failed_at IS NULL
-            """,
-            connection,
-            tx);
-        cmd.Parameters.AddWithValue("delaySeconds", (int)RateLimitDelay.TotalSeconds);
-        cmd.Parameters.AddWithValue("ids", notificationIds.ToArray());
-        await cmd.ExecuteNonQueryAsync(ct);
+        // Group by delay bucket to minimize round-trips
+        foreach (var group in deferred.GroupBy(d => (int)(d.Delay ?? RateLimitDelay).TotalSeconds))
+        {
+            await using var cmd = new NpgsqlCommand(
+                """
+                UPDATE notifications
+                SET next_attempt_at = NOW() + (@delaySeconds * INTERVAL '1 second'),
+                    last_error = 'rate_limited'
+                WHERE id = ANY(@ids)
+                  AND sent_at IS NULL
+                  AND failed_at IS NULL
+                """,
+                connection,
+                tx);
+            cmd.Parameters.AddWithValue("delaySeconds", group.Key);
+            cmd.Parameters.AddWithValue("ids", group.Select(d => d.Id).ToArray());
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
     }
 
     private static async Task UpdateDeliveryStateAsync(
