@@ -10,6 +10,8 @@ class NotificationService {
 
   final DeviceService deviceService;
 
+  void Function(RemoteMessage)? onForegroundMessage;
+
   static const _kInteractionsKey = 'notif_interactions';
   static const _kDecidedKey = 'notif_permission_decided';
   static const _kThreshold = 3;
@@ -33,10 +35,20 @@ class NotificationService {
     // Always listen for token refresh so we re-register if token rotates.
     fcm.onTokenRefresh.listen(_registerToken);
 
+    // Show notification banner while app is in foreground on iOS.
+    if (!kIsWeb) {
+      await fcm.setForegroundNotificationPresentationOptions(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+    }
+
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       if (kDebugMode) {
         debugPrint('Foreground push: ${message.notification?.title}');
       }
+      onForegroundMessage?.call(message);
     });
   }
 

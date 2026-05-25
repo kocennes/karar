@@ -45,6 +45,9 @@ class _KararAppState extends ConsumerState<KararApp>
       _sub = FirebaseMessaging.onMessageOpenedApp.listen(_onMessageOpened);
       _checkInitialMessage();
       _checkPreviousCrash();
+      widget.services.notificationService.onForegroundMessage = (_) {
+        ref.invalidate(notificationsProvider);
+      };
     } catch (_) {}
 
     widget.services.authService.setOnLogout((reason) {
