@@ -25,7 +25,6 @@ public class AccessControlTests : IClassFixture<CustomWebApplicationFactory>
     [InlineData("PUT",    "/api/v1/users/me")]
     [InlineData("DELETE", "/api/v1/users/me")]
     [InlineData("GET",    "/api/v1/users/me/sessions")]
-    [InlineData("DELETE", "/api/v1/users/me/sessions")]
     [InlineData("GET",    "/api/v1/users/me/notification-preferences")]
     [InlineData("PUT",    "/api/v1/users/me/notification-preferences")]
     [InlineData("GET",    "/api/v1/users/me/posts")]
@@ -66,12 +65,10 @@ public class AccessControlTests : IClassFixture<CustomWebApplicationFactory>
     [InlineData("GET", "/api/v1/admin/comments")]
     [InlineData("GET", "/api/v1/admin/reports")]
     [InlineData("GET", "/api/v1/admin/devices")]
-    [InlineData("GET", "/api/v1/admin/categories")]
-    [InlineData("GET", "/api/v1/admin/audit-log")]
-    [InlineData("GET", "/api/v1/admin/sessions")]
+    [InlineData("GET", "/api/v1/admin/devices/suspicious")]
+    [InlineData("GET", "/api/v1/admin/actions")]
     [InlineData("GET", "/api/v1/admin/appeals")]
     [InlineData("GET", "/api/v1/admin/automod/rules")]
-    [InlineData("GET", "/api/v1/admin/brigade/alerts")]
     [InlineData("GET", "/api/v1/admin/analytics/overview")]
     [InlineData("GET", "/api/v1/admin/analytics/velocity")]
     [InlineData("GET", "/api/v1/admin/analytics/trends")]
@@ -81,6 +78,7 @@ public class AccessControlTests : IClassFixture<CustomWebApplicationFactory>
     [InlineData("GET", "/api/v1/admin/analytics/retention")]
     [InlineData("GET", "/api/v1/admin/analytics/notifications")]
     [InlineData("GET", "/api/v1/admin/analytics/cache")]
+    [InlineData("GET", "/api/v1/admin/categories/health")]
     public async Task AdminEndpoint_WithoutAnyToken_Returns401(string method, string path)
     {
         var request = BuildRequest(method, path);
@@ -101,9 +99,9 @@ public class AccessControlTests : IClassFixture<CustomWebApplicationFactory>
     [InlineData("GET", "/api/v1/admin/analytics/notifications")]
     [InlineData("GET", "/api/v1/admin/analytics/velocity")]
     [InlineData("GET", "/api/v1/admin/devices")]
-    [InlineData("GET", "/api/v1/admin/sessions")]
     [InlineData("GET", "/api/v1/admin/appeals")]
-    [InlineData("GET", "/api/v1/admin/audit-log")]
+    [InlineData("GET", "/api/v1/admin/actions")]
+    [InlineData("GET", "/api/v1/admin/automod/rules")]
     public async Task AdminEndpoint_WithUserJwt_Returns401(string method, string path)
     {
         var userToken = JwtTestHelper.CreateUserToken(
