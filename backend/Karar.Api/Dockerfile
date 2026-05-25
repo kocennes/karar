@@ -22,8 +22,8 @@ COPY --from=build /app/publish ./
 COPY migrations ./migrations
 
 # Güvenlik için root olmayan kullanıcı
-RUN addgroup --gid 1001 appgroup \
-    && adduser --uid 1001 --gid 1001 --disabled-password appuser
+RUN groupadd --gid 1001 appgroup \
+    && useradd --uid 1001 --gid 1001 --no-create-home --shell /bin/false appuser
 USER appuser
 
 # Health check için endpoint'i Program.cs içinde tanımladık mı kontrol etmeliyiz
