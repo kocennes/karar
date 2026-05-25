@@ -154,6 +154,18 @@ public sealed record AdminAppealDecisionRequest(
     [StringLength(500)] string? Note = null
 );
 
+public sealed record CreateAutomodRuleRequest(
+    [Required, StringLength(100)] string Name,
+    [Required] string RuleType,
+    [Required] string Action,
+    [StringLength(500)] string? Pattern = null,
+    string? Config = null
+);
+
+public sealed record ToggleAutomodRuleRequest(
+    bool IsActive
+);
+
 public sealed record RegisterRequest(
     [Required, RegularExpression(@"^[a-zA-Z0-9_]{3,20}$",
         ErrorMessage = "Kullanıcı adı 3-20 karakter, yalnızca harf/rakam/alt çizgi.")] string Username,

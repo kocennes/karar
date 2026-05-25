@@ -5497,6 +5497,119 @@ app.MapPost("/api/v1/admin/appeals/{id:guid}/decide", async (
     return Results.NoContent();
 });
 
+// ── ADMIN AUTOMOD RULES ───────────────────────────────────────────────────
+
+app.MapGet("/api/v1/admin/automod/rules", async (
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth
+) =>
+{
+    if (RequireAdmin(httpRequest, adminAuth) is { } unauthorized) return unauthorized;
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var cmd = new NpgsqlCommand(
+        "SELECT id, name, rule_type, pattern, config, action, is_active, created_by, created_at FROM automod_rules ORDER BY created_at DESC",
+        connection);
+
+    var rules = new List<object>();
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        rules.Add(new
+        {
+            id = reader.GetGuid(0),
+            name = reader.GetString(1),
+            ruleType = reader.GetString(2),
+            pattern = reader.IsDBNull(3) ? null : reader.GetString(3),
+            config = reader.IsDBNull(4) ? null : reader.GetString(4),
+            action = reader.GetString(5),
+            isActive = reader.GetBoolean(6),
+            createdBy = reader.GetString(7),
+            createdAt = reader.GetFieldValue<DateTimeOffset>(8),
+        });
+    }
+
+    return Results.Ok(new { rules });
+});
+
+app.MapPost("/api/v1/admin/automod/rules", async (
+    CreateAutomodRuleRequest request,
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth
+) =>
+{
+    var adminEmail = adminAuth.TryGetAdminEmail(httpRequest);
+    if (adminEmail is null) return Unauthorized();
+
+    if (ValidateRequest(request) is { } ve) return ve;
+
+    if (request.RuleType is not ("keyword" or "regex" or "behavior"))
+        return BadRequest("INVALID_RULE_TYPE", "Kural tipi keyword, regex veya behavior olmalı.");
+
+    if (request.Action is not ("hide" or "queue" or "suspend" or "flag"))
+        return BadRequest("INVALID_ACTION", "Aksiyon geçersiz.");
+
+    if (request.RuleType is "keyword" or "regex" && string.IsNullOrEmpty(request.Pattern))
+        return BadRequest("PATTERN_REQUIRED", "Keyword/regex kuralları için pattern zorunlu.");
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var cmd = new NpgsqlCommand(
+        """
+        INSERT INTO automod_rules (name, rule_type, pattern, config, action, is_active, created_by)
+        VALUES (@name, @ruleType, @pattern, @config::jsonb, @action, TRUE, @admin)
+        RETURNING id
+        """,
+        connection);
+    cmd.Parameters.AddWithValue("name", request.Name);
+    cmd.Parameters.AddWithValue("ruleType", request.RuleType);
+    cmd.Parameters.AddWithValue("pattern", (object?)request.Pattern ?? DBNull.Value);
+    cmd.Parameters.AddWithValue("config", (object?)request.Config ?? DBNull.Value);
+    cmd.Parameters.AddWithValue("action", request.Action);
+    cmd.Parameters.AddWithValue("admin", adminEmail);
+
+    var id = (Guid)(await cmd.ExecuteScalarAsync())!;
+    return Results.Created($"/api/v1/admin/automod/rules/{id}", new { id });
+});
+
+app.MapPatch("/api/v1/admin/automod/rules/{id:guid}", async (
+    Guid id,
+    ToggleAutomodRuleRequest request,
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth
+) =>
+{
+    var adminEmail = adminAuth.TryGetAdminEmail(httpRequest);
+    if (adminEmail is null) return Unauthorized();
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var cmd = new NpgsqlCommand(
+        "UPDATE automod_rules SET is_active = @active, updated_at = NOW() WHERE id = @id",
+        connection);
+    cmd.Parameters.AddWithValue("active", request.IsActive);
+    cmd.Parameters.AddWithValue("id", id);
+    var rows = await cmd.ExecuteNonQueryAsync();
+    return rows == 0 ? NotFound("RULE_NOT_FOUND", "Kural bulunamadı.") : Results.NoContent();
+});
+
+app.MapDelete("/api/v1/admin/automod/rules/{id:guid}", async (
+    Guid id,
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth
+) =>
+{
+    if (RequireAdmin(httpRequest, adminAuth) is { } unauthorized) return unauthorized;
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var cmd = new NpgsqlCommand("DELETE FROM automod_rules WHERE id = @id", connection);
+    cmd.Parameters.AddWithValue("id", id);
+    await cmd.ExecuteNonQueryAsync();
+    return Results.NoContent();
+});
+
 // ── ADMIN POST FEATURE ──────────────────────────────────────────────────
 
 app.MapPost("/api/v1/admin/posts/{id:guid}/feature", async (
