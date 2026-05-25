@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  forbidden-files:
+    name: Forbidden File Guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fail if sensitive files are present
+        run: |
+          FORBIDDEN=(
+            "docs/"
+            "TODO.md"
+            "TASK.md"
+            "CLAUDE.md"
+            "AGENTS.md"
+            "GEMINI.md"
+            ".claude/"
+            "admin-panel/"
+            ".firebase/"
+            "yapılanlar"
+          )
+          FOUND=0
+          for pattern in "${FORBIDDEN[@]}"; do
+            if git ls-files --error-unmatch "$pattern" 2>/dev/null || \
+               git ls-files | grep -q "^${pattern}"; then
+              echo "❌ Forbidden path in repo: $pattern"
+              FOUND=1
+            fi
+          done
+          # Check for .env files
+          if git ls-files | grep -qE '\.env(\.|$)'; then
+            echo "❌ .env file detected in repo"
+            git ls-files | grep -E '\.env(\.|$)'
+            FOUND=1
+          fi
+          if [ $FOUND -eq 1 ]; then
+            echo "Push rejected: sensitive files must not be committed."
+            exit 1
+          fi
+          echo "✅ No forbidden files found."
+
+  flutter-test:
+    name: Flutter Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.x'
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos
+
+      - name: Test
+        run: flutter test --no-pub
+
+  dotnet-test:
+    name: .NET Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore tests/Karar.UnitTests/Karar.UnitTests.csproj
+
+      - name: Test
+        run: >
+          dotnet test tests/Karar.UnitTests/Karar.UnitTests.csproj
+          --no-restore
+          --verbosity minimal

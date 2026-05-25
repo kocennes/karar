@@ -319,23 +319,6 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
                     ),
                     const SizedBox(height: 12),
 
-                    // Poll input
-                    _PollInput(
-                      options: state.pollOptions,
-                      onAdd: (text) => ref
-                          .read(createPostProvider.notifier)
-                          .addPollOption(text),
-                      onUpdate: (index, text) => ref
-                          .read(createPostProvider.notifier)
-                          .updatePollOption(index, text),
-                      onRemove: (index) => ref
-                          .read(createPostProvider.notifier)
-                          .removePollOption(index),
-                      onClear: () =>
-                          ref.read(createPostProvider.notifier).clearPoll(),
-                    ),
-                    const SizedBox(height: 12),
-
                     // Anonymous toggle
                     if (ref.watch(currentUserProvider) != null)
                       SwitchListTile.adaptive(

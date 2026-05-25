@@ -8,16 +8,14 @@ import 'package:karar/features/post_detail/vote_bar.dart';
 import 'package:karar/shared/data/sample_posts.dart';
 
 void main() {
+  // ── 1.15x metin ölçeği (sistem erişilebilirlik ayarı "Büyük") ──────────
+
   testWidgets('PostCard fits mobile width with large app text', (tester) async {
     await tester.pumpWidget(
-      _LargeTextHarness(
-        child: PostCard(
-          post: samplePosts.first,
-          onTap: () {},
-        ),
+      _Harness(
+        child: PostCard(post: samplePosts.first, onTap: () {}),
       ),
     );
-
     expect(tester.takeException(), isNull);
     expect(find.byType(PostCard), findsOneWidget);
   });
@@ -28,9 +26,8 @@ void main() {
       voteCountHakli: 142,
       voteCountHaksiz: 38,
     );
-
     await tester.pumpWidget(
-      _LargeTextHarness(
+      _Harness(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -41,7 +38,6 @@ void main() {
         ),
       ),
     );
-
     expect(tester.takeException(), isNull);
     expect(find.byType(VoteBar), findsNWidgets(2));
   });
@@ -49,7 +45,7 @@ void main() {
   testWidgets('CommentList actions fit mobile width with large app text',
       (tester) async {
     await tester.pumpWidget(
-      _LargeTextHarness(
+      _Harness(
         child: CommentList(
           comments: [
             samplePosts.first.comments.first,
@@ -66,16 +62,104 @@ void main() {
         ),
       ),
     );
-
     expect(tester.takeException(), isNull);
     expect(find.byType(CommentList), findsOneWidget);
   });
+
+  // ── 1.3x metin ölçeği (sistem "En Büyük" / erişilebilirlik modu) ───────
+
+  testWidgets('PostCard fits mobile width with extra-large text (1.3x)',
+      (tester) async {
+    await tester.pumpWidget(
+      _Harness(
+        scale: 1.3,
+        child: PostCard(post: samplePosts.first, onTap: () {}),
+      ),
+    );
+    expect(tester.takeException(), isNull);
+    expect(find.byType(PostCard), findsOneWidget);
+  });
+
+  testWidgets('VoteBar has no overflow at 1.3x text scale', (tester) async {
+    final post = samplePosts.first.copyWith(
+      voteCountHakli: 1234,
+      voteCountHaksiz: 567,
+    );
+    await tester.pumpWidget(
+      _Harness(
+        scale: 1.3,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            VoteBar(post: post, isCompact: true),
+            const SizedBox(height: 8),
+            VoteBar(post: post),
+          ],
+        ),
+      ),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('CommentList has no overflow at 1.3x text scale', (tester) async {
+    await tester.pumpWidget(
+      _Harness(
+        scale: 1.3,
+        child: CommentList(
+          comments: samplePosts.first.comments,
+          postId: samplePosts.first.id,
+          onUpvote: (_) {},
+          onDownvote: (_) {},
+          onDelete: (_) {},
+          onReply: (_) {},
+          onPin: (_) {},
+          onUnpin: () {},
+          isPostOwner: true,
+        ),
+      ),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  // ── Dar ekran (320px) + büyük metin ────────────────────────────────────
+
+  testWidgets('PostCard fits narrow screen (320px) with large text',
+      (tester) async {
+    await tester.pumpWidget(
+      _Harness(
+        width: 320,
+        child: PostCard(post: samplePosts.first, onTap: () {}),
+      ),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('VoteBar fits narrow screen (320px) with large text',
+      (tester) async {
+    final post = samplePosts.first.copyWith(
+      voteCountHakli: 99,
+      voteCountHaksiz: 1,
+    );
+    await tester.pumpWidget(
+      _Harness(
+        width: 320,
+        child: VoteBar(post: post, isCompact: true),
+      ),
+    );
+    expect(tester.takeException(), isNull);
+  });
 }
 
-class _LargeTextHarness extends StatelessWidget {
-  const _LargeTextHarness({required this.child});
+class _Harness extends StatelessWidget {
+  const _Harness({
+    required this.child,
+    this.scale = 1.15,
+    this.width = 360,
+  });
 
   final Widget child;
+  final double scale;
+  final double width;
 
   @override
   Widget build(BuildContext context) {
@@ -83,13 +167,13 @@ class _LargeTextHarness extends StatelessWidget {
       child: MaterialApp(
         theme: AppTheme.light(),
         home: MediaQuery(
-          data: const MediaQueryData(
-            size: Size(360, 800),
-            textScaler: TextScaler.linear(1.15),
+          data: MediaQueryData(
+            size: Size(width, 800),
+            textScaler: TextScaler.linear(scale),
           ),
           child: Scaffold(
             body: Center(
-              child: SizedBox(width: 360, child: child),
+              child: SizedBox(width: width, child: child),
             ),
           ),
         ),

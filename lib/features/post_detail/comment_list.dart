@@ -329,7 +329,6 @@ class _CommentTile extends ConsumerWidget {
                   style: TextButton.styleFrom(
                     minimumSize: const Size(48, 48),
                     padding: const EdgeInsets.symmetric(horizontal: 8),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
                   child: const Text('Yanıtla', style: TextStyle(fontSize: 12)),
                 ),
@@ -339,7 +338,6 @@ class _CommentTile extends ConsumerWidget {
                   style: TextButton.styleFrom(
                     minimumSize: const Size(48, 48),
                     padding: const EdgeInsets.symmetric(horizontal: 8),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
                   child: const Text('Düzenle', style: TextStyle(fontSize: 12)),
                 ),

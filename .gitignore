@@ -61,11 +61,13 @@ app.*.map.json
 yapılanlar
 docs/
 TODO.md
+TASK.md
 CLAUDE.md
 AGENTS.md
 GEMINI.md
 .claude/
 admin-panel/
+.firebase/
 cloudbuild-admin.yaml
 cloudbuild-mobile.yaml
 cloudbuild.yaml
