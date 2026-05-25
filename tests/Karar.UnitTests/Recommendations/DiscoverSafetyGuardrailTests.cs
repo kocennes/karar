@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Karar.UnitTests;
 
 namespace Karar.UnitTests.Recommendations;
 
@@ -7,7 +8,7 @@ public sealed class DiscoverSafetyGuardrailTests
     [Fact]
     public void DiscoverFeedEndpoint_ContainsSafetyGuardrails()
     {
-        var programText = File.ReadAllText(FindRepoFile("backend/Karar.Api/Program.cs"));
+        var programText = TestRepoPaths.ReadText("backend", "Karar.Api", "Program.cs");
 
         var endpointBlock = SliceEndpointBlock(
             programText,
@@ -39,21 +40,4 @@ public sealed class DiscoverSafetyGuardrailTests
         return text[start..end];
     }
 
-    private static string FindRepoFile(string relativePath)
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-
-        while (directory is not null)
-        {
-            var candidate = Path.Combine(directory.FullName, relativePath);
-            if (File.Exists(candidate))
-            {
-                return candidate;
-            }
-
-            directory = directory.Parent;
-        }
-
-        throw new FileNotFoundException($"Could not find repository file: {relativePath}");
-    }
 }

@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Karar.UnitTests;
 
 namespace Karar.UnitTests.Security;
 
@@ -34,8 +35,7 @@ public sealed class VoteEndpointSecurityTests
 
     private static string ReadProgram()
     {
-        var root = FindRepoRoot();
-        return File.ReadAllText(Path.Combine(root, "backend", "Karar.Api", "Program.cs"));
+        return TestRepoPaths.ReadText("backend", "Karar.Api", "Program.cs");
     }
 
     private static string SliceBlock(string text, string startMarker, string endMarker)
@@ -49,21 +49,4 @@ public sealed class VoteEndpointSecurityTests
         return text[start..end];
     }
 
-    private static string FindRepoRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-
-        while (directory is not null)
-        {
-            if (File.Exists(Path.Combine(directory.FullName, "TODO.md"))
-                && Directory.Exists(Path.Combine(directory.FullName, "backend")))
-            {
-                return directory.FullName;
-            }
-
-            directory = directory.Parent;
-        }
-
-        throw new InvalidOperationException("Repository root could not be found.");
-    }
 }

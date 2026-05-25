@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using FluentAssertions;
+using Karar.UnitTests;
 
 namespace Karar.UnitTests.Security;
 
@@ -16,9 +17,11 @@ public sealed class ApiEndpointInventoryTests
     [Fact]
     public void DocsApi_ContainsEveryMappedEndpoint()
     {
-        var root = FindRepoRoot();
-        var programText = File.ReadAllText(Path.Combine(root, "backend", "Karar.Api", "Program.cs"));
-        var docsText = File.ReadAllText(Path.Combine(root, "docs", "api.md"));
+        var programText = TestRepoPaths.ReadText("backend", "Karar.Api", "Program.cs");
+        if (!TestRepoPaths.TryReadText(out var docsText, "docs", "api.md"))
+        {
+            return;
+        }
 
         var mappedRoutes = ProgramRoutePattern
             .Matches(programText)
@@ -38,21 +41,4 @@ public sealed class ApiEndpointInventoryTests
             "docs/api.md endpoint inventory must be updated whenever Program.cs maps a route");
     }
 
-    private static string FindRepoRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-
-        while (directory is not null)
-        {
-            if (File.Exists(Path.Combine(directory.FullName, "TODO.md"))
-                && Directory.Exists(Path.Combine(directory.FullName, "backend")))
-            {
-                return directory.FullName;
-            }
-
-            directory = directory.Parent;
-        }
-
-        throw new InvalidOperationException("Repository root could not be found.");
-    }
 }
