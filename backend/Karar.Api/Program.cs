@@ -8508,6 +8508,50 @@ app.MapGet("/api/v1/admin/analytics/overview", async (
     ));
 });
 
+app.MapGet("/api/v1/admin/analytics/velocity", async (
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth
+) =>
+{
+    if (RequireAdmin(httpRequest, adminAuth) is { } unauthorized) return unauthorized;
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var cmd = new NpgsqlCommand(
+        """
+        SELECT
+            (SELECT COUNT(*) FROM posts WHERE created_at >= NOW() - INTERVAL '1 hour') AS posts_last_hour,
+            (SELECT COUNT(*) FROM votes WHERE created_at >= NOW() - INTERVAL '1 hour') AS votes_last_hour,
+            (SELECT COALESCE(COUNT(*), 0) / NULLIF(EXTRACT(EPOCH FROM (NOW() - MIN(created_at))) / 3600.0, 0)
+             FROM posts WHERE created_at >= NOW() - INTERVAL '7 days') AS avg_posts_per_hour_7d,
+            (SELECT COALESCE(COUNT(*), 0) / NULLIF(EXTRACT(EPOCH FROM (NOW() - MIN(created_at))) / 3600.0, 0)
+             FROM votes WHERE created_at >= NOW() - INTERVAL '7 days') AS avg_votes_per_hour_7d
+        """,
+        connection);
+
+    await using var reader = await cmd.ExecuteReaderAsync();
+    await reader.ReadAsync();
+
+    var postsLastHour = Convert.ToInt32(reader.GetInt64(0));
+    var votesLastHour = Convert.ToInt32(reader.GetInt64(1));
+    var avgPostsPerHour = reader.IsDBNull(2) ? 1.0 : Convert.ToDouble(reader.GetValue(2));
+    var avgVotesPerHour = reader.IsDBNull(3) ? 1.0 : Convert.ToDouble(reader.GetValue(3));
+
+    var postSpike = avgPostsPerHour > 0 && postsLastHour > avgPostsPerHour * 3;
+    var voteSpike = avgVotesPerHour > 0 && votesLastHour > avgVotesPerHour * 3;
+
+    return Results.Ok(new
+    {
+        postsLastHour,
+        votesLastHour,
+        avgPostsPerHour = Math.Round(avgPostsPerHour, 1),
+        avgVotesPerHour = Math.Round(avgVotesPerHour, 1),
+        postSpike,
+        voteSpike,
+        hasAnomaly = postSpike || voteSpike,
+    });
+});
+
 app.MapGet("/api/v1/admin/analytics/trends", async (
     HttpRequest httpRequest,
     Db db,
