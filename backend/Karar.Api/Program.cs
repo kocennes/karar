@@ -256,7 +256,11 @@ var postgresCs = Karar.Api.Data.Db.ConvertToKeyValue(
 var redisCs = builder.Configuration.GetConnectionString("Redis");
 var healthChecks = builder.Services.AddHealthChecks()
     .AddNpgSql(postgresCs, name: "postgres", tags: ["ready", "db"])
-    .AddCheck("self", () => HealthCheckResult.Healthy(), tags: ["live"]);
+    .AddCheck("self", () => HealthCheckResult.Healthy(), tags: ["live"])
+    .AddCheck("firebase", () => FirebaseAdmin.FirebaseApp.DefaultInstance is not null
+        ? HealthCheckResult.Healthy("Firebase Admin initialized")
+        : HealthCheckResult.Degraded("Firebase Admin not initialized — push notifications unavailable"),
+        tags: ["ready", "push"]);
 if (!string.IsNullOrEmpty(redisCs))
 {
     var redisPassword = builder.Configuration["Redis:Password"];
