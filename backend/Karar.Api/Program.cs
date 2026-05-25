@@ -22,6 +22,7 @@ using Npgsql;
 using NpgsqlTypes;
 using Serilog;
 using Serilog.Formatting.Compact;
+using StackExchange.Redis;
 
 // Bootstrap logger: paket yüklenmeden önce çöken hataları yakalar.
 Log.Logger = new LoggerConfiguration()
@@ -398,6 +399,27 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
         [HealthStatus.Degraded]  = 200,
         [HealthStatus.Unhealthy] = 503
     }
+});
+
+app.MapGet("/health/version", (IConfiguration configuration, IHostEnvironment environment) =>
+{
+    var commitSha =
+        configuration["Build:CommitSha"] ??
+        Environment.GetEnvironmentVariable("GIT_COMMIT_SHA") ??
+        Environment.GetEnvironmentVariable("RENDER_GIT_COMMIT") ??
+        Environment.GetEnvironmentVariable("VERCEL_GIT_COMMIT_SHA") ??
+        Environment.GetEnvironmentVariable("SOURCE_VERSION") ??
+        Environment.GetEnvironmentVariable("COMMIT_SHA") ??
+        "unknown";
+
+    return Results.Ok(new
+    {
+        service = "karar-api",
+        environment = environment.EnvironmentName,
+        version = typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown",
+        commitSha,
+        deployedAt = configuration["Build:DeployedAt"] ?? Environment.GetEnvironmentVariable("DEPLOYED_AT") ?? "unknown"
+    });
 });
 
 app.MapGet("/robots.txt", (IConfiguration configuration) =>
@@ -3894,22 +3916,22 @@ app.MapPost("/api/v1/admin/auth/login", async (
         ));
     }
 
-    var otpKey = $"admin:login:otp:{request.Email.ToLowerInvariant()}";
+    var otpKey = $"otp:admin:{request.Email.ToLowerInvariant()}";
     if (string.IsNullOrWhiteSpace(request.TotpCode))
     {
-        if (!await redis.IsAllowedAsync("admin-login-email-otp", request.Email.ToLowerInvariant(), 3, TimeSpan.FromMinutes(15)))
-        {
-            return TooManyRequests("OTP_RATE_LIMIT", "Cok fazla kod istediniz. Biraz sonra tekrar deneyin.", 900);
-        }
+        var (otp, tooSoon, waitSecs) = await GetOrCreateCachedOtpAsync(
+            redis.GetDb(), otpKey,
+            validFor: TimeSpan.FromMinutes(10),
+            resendAfter: TimeSpan.FromMinutes(3));
 
-        var otp = PasswordService.GenerateOtp();
-        await redis.GetDb().StringSetAsync(otpKey, PasswordService.HashOtp(otp), TimeSpan.FromMinutes(10));
-        await emailService.SendAdminLoginOtpAsync(request.Email, otp);
+        if (tooSoon)
+            return TooManyRequests("OTP_TOO_SOON", $"Yeni kod icin {waitSecs} saniye bekleyin.", waitSecs);
+
+        await emailService.SendAdminLoginOtpAsync(request.Email, otp!);
         return Results.Ok(new { requiresEmailOtp = true });
     }
 
-    var storedOtpHash = await redis.GetDb().StringGetAsync(otpKey);
-    if (!storedOtpHash.HasValue || storedOtpHash.ToString() != PasswordService.HashOtp(request.TotpCode))
+    if (!await ValidateCachedOtpAsync(redis.GetDb(), otpKey, request.TotpCode))
     {
         await bruteForce.RecordFailedAttemptAsync(bfIdentity);
         return Unauthorized();
@@ -6116,7 +6138,8 @@ app.MapPost("/api/v1/auth/register", async (
     RequestDevice requestDevice,
     JwtService jwtService,
     EmailService emailService,
-    ComplianceLogService complianceLog
+    ComplianceLogService complianceLog,
+    RedisService redis
 ) =>
 {
     if (ValidateRequest(request) is { } validationError)
@@ -6190,6 +6213,11 @@ app.MapPost("/api/v1/auth/register", async (
     await insertOtp.ExecuteNonQueryAsync();
 
     await transaction.CommitAsync();
+
+    // Redis companion key — resend-otp için aynı kod politikası
+    var verifyOtpKey = $"otp:verify:{request.Email.ToLowerInvariant()}";
+    var nowTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+    await redis.GetDb().StringSetAsync(verifyOtpKey, $"{nowTs}|{otpHash}|{otp}", TimeSpan.FromMinutes(10));
 
     // OTP e-postasÄ±nÄ± arka planda gÃ¶nder
     _ = emailService.SendOtpAsync(request.Email, otp);
@@ -6331,7 +6359,8 @@ app.MapPost("/api/v1/auth/verify-email", async (
 app.MapPost("/api/v1/auth/resend-otp", async (
     ResendOtpRequest request,
     Db db,
-    EmailService emailService
+    EmailService emailService,
+    RedisService redis
 ) =>
 {
     if (ValidateRequest(request) is { } validationError)
@@ -6342,48 +6371,42 @@ app.MapPost("/api/v1/auth/resend-otp", async (
     var email = request.Email.ToLowerInvariant();
     await using var connection = await db.OpenConnectionAsync();
 
-    // KullanÄ±cÄ± kayÄ±tlÄ± ve doÄŸrulanmamÄ±ÅŸ mÄ±?
+    // Güvenlik: kullanıcı var/yok bilgisi verme — her durumda success dön
     await using var checkCmd = new NpgsqlCommand(
         "SELECT 1 FROM users WHERE email = @email AND email_verified = FALSE",
         connection
     );
     checkCmd.Parameters.AddWithValue("email", email);
     if (await checkCmd.ExecuteScalarAsync() is null)
-    {
-        // GÃ¼venlik: var/yok bilgisi verme
-        return Results.Ok(new MessageResponse("Kod yeniden gÃ¶nderildi."));
-    }
+        return Results.Ok(new MessageResponse("Kod yeniden gönderildi."));
 
-    // Rate limit: son 60 saniyede OTP var mÄ±?
-    await using var rateCmd = new NpgsqlCommand(
-        "SELECT 1 FROM email_otps WHERE email = @email AND created_at > NOW() - INTERVAL '60 seconds'",
-        connection
-    );
-    rateCmd.Parameters.AddWithValue("email", email);
-    if (await rateCmd.ExecuteScalarAsync() is not null)
-    {
-        return BadRequest("OTP_RATE_LIMIT", "LÃ¼tfen 60 saniye bekleyip tekrar deneyin.");
-    }
+    // Redis companion key: 3 dk cooldown, aynı pencerede aynı kod
+    var otpCacheKey = $"otp:verify:{email}";
+    var (otp, tooSoon, waitSecs) = await GetOrCreateCachedOtpAsync(
+        redis.GetDb(), otpCacheKey,
+        validFor: TimeSpan.FromMinutes(10),
+        resendAfter: TimeSpan.FromMinutes(3));
 
-    // Eski OTP'leri temizle, yeni gÃ¶nder
-    await using var deleteCmd = new NpgsqlCommand(
-        "DELETE FROM email_otps WHERE email = @email",
-        connection
-    );
+    if (tooSoon)
+        return TooManyRequests("OTP_TOO_SOON", $"Yeni kod için {waitSecs} saniye bekleyin.", waitSecs);
+
+    // Aynı penceredeyse DB'ye dokunma; yeni kod üretildiyse DB'yi de güncelle
+    if (otp is null) // savunma — GetOrCreateCachedOtp her zaman otp döndürür (tooSoon=false ise)
+        return Results.Ok(new MessageResponse("Kod yeniden gönderildi."));
+
+    // DB'yi her durumda güncelle (aynı kod → aynı hash, yeni kod → yeni hash)
+    await using var deleteCmd = new NpgsqlCommand("DELETE FROM email_otps WHERE email = @email", connection);
     deleteCmd.Parameters.AddWithValue("email", email);
     await deleteCmd.ExecuteNonQueryAsync();
 
-    var otp = PasswordService.GenerateOtp();
     await using var insertCmd = new NpgsqlCommand(
-        "INSERT INTO email_otps (email, otp_hash) VALUES (@email, @hash)",
-        connection
-    );
+        "INSERT INTO email_otps (email, otp_hash) VALUES (@email, @hash)", connection);
     insertCmd.Parameters.AddWithValue("email", email);
-    insertCmd.Parameters.AddWithValue("hash", PasswordService.HashOtp(otp));
+    insertCmd.Parameters.AddWithValue("hash", PasswordService.HashOtp(otp!));
     await insertCmd.ExecuteNonQueryAsync();
 
-    _ = emailService.SendOtpAsync(email, otp);
-    return Results.Ok(new MessageResponse("Kod yeniden gÃ¶nderildi."));
+    _ = emailService.SendOtpAsync(email, otp!);
+    return Results.Ok(new MessageResponse("Kod gönderildi."));
 }).RequireRateLimiting("auth-strict");
 
 app.MapPost("/api/v1/auth/google", async (
@@ -8536,57 +8559,47 @@ app.MapPut("/api/v1/users/me/password", async (
 app.MapPost("/api/v1/auth/forgot-password", async (
     ForgotPasswordRequest request,
     Db db,
-    EmailService emailService
+    EmailService emailService,
+    RedisService redis
 ) =>
 {
     if (ValidateRequest(request) is { } validationError) return validationError;
 
     var email = request.Email.ToLowerInvariant();
-    var otpKey = $"pwreset:{email}";
+    var dbKey = $"pwreset:{email}";
 
     await using var connection = await db.OpenConnectionAsync();
 
-    // KullanÄ±cÄ± var mÄ± ve ÅŸifre hesabÄ± mÄ±?
     await using var userCmd = new NpgsqlCommand(
         "SELECT 1 FROM users WHERE email = @email AND auth_provider = 'password' AND deleted_at IS NULL",
         connection
     );
     userCmd.Parameters.AddWithValue("email", email);
-    var exists = await userCmd.ExecuteScalarAsync();
+    if (await userCmd.ExecuteScalarAsync() is null)
+        return Results.Ok(new MessageResponse("Eğer bu e-posta kayıtlıysa kod gönderildi."));
 
-    // KullanÄ±cÄ± yoksa yine de baÅŸarÄ±lÄ± dÃ¶ndÃ¼r (user enumeration Ã¶nleme)
-    if (exists is null)
-        return Results.Ok(new MessageResponse("EÄŸer bu e-posta kayÄ±tlÄ±ysa kod gÃ¶nderildi."));
+    // Redis: 3 dk cooldown, aynı pencerede aynı kod
+    var (otp, tooSoon, waitSecs) = await GetOrCreateCachedOtpAsync(
+        redis.GetDb(), $"otp:pwreset:{email}",
+        validFor: TimeSpan.FromMinutes(10),
+        resendAfter: TimeSpan.FromMinutes(3));
 
-    // Rate limit: son 60 saniyede kod gÃ¶nderilmiÅŸ mi?
-    await using var rateLimitCmd = new NpgsqlCommand(
-        "SELECT created_at FROM email_otps WHERE email = @email ORDER BY created_at DESC LIMIT 1",
-        connection
-    );
-    rateLimitCmd.Parameters.AddWithValue("email", otpKey);
-    var lastSent = await rateLimitCmd.ExecuteScalarAsync() as DateTimeOffset?;
-    if (lastSent.HasValue && (DateTimeOffset.UtcNow - lastSent.Value).TotalSeconds < 60)
-        return BadRequest("OTP_RATE_LIMIT", "LÃ¼tfen 60 saniye bekleyip tekrar deneyin.");
+    if (tooSoon)
+        return TooManyRequests("OTP_TOO_SOON", $"Yeni kod için {waitSecs} saniye bekleyin.", waitSecs);
 
-    // Eski OTP'leri temizle
-    await using var deleteCmd = new NpgsqlCommand(
-        "DELETE FROM email_otps WHERE email = @email",
-        connection
-    );
-    deleteCmd.Parameters.AddWithValue("email", otpKey);
+    // DB güncelle (aynı kod → aynı hash, yeni kod → yeni hash)
+    await using var deleteCmd = new NpgsqlCommand("DELETE FROM email_otps WHERE email = @email", connection);
+    deleteCmd.Parameters.AddWithValue("email", dbKey);
     await deleteCmd.ExecuteNonQueryAsync();
 
-    var otp = PasswordService.GenerateOtp();
     await using var insertCmd = new NpgsqlCommand(
-        "INSERT INTO email_otps (email, otp_hash) VALUES (@email, @hash)",
-        connection
-    );
-    insertCmd.Parameters.AddWithValue("email", otpKey);
-    insertCmd.Parameters.AddWithValue("hash", PasswordService.HashOtp(otp));
+        "INSERT INTO email_otps (email, otp_hash) VALUES (@email, @hash)", connection);
+    insertCmd.Parameters.AddWithValue("email", dbKey);
+    insertCmd.Parameters.AddWithValue("hash", PasswordService.HashOtp(otp!));
     await insertCmd.ExecuteNonQueryAsync();
 
-    _ = emailService.SendPasswordResetOtpAsync(email, otp);
-    return Results.Ok(new MessageResponse("EÄŸer bu e-posta kayÄ±tlÄ±ysa kod gÃ¶nderildi."));
+    _ = emailService.SendPasswordResetOtpAsync(email, otp!);
+    return Results.Ok(new MessageResponse("Eğer bu e-posta kayıtlıysa kod gönderildi."));
 }).RequireRateLimiting("auth-strict");
 
 // â"€â"€ RESET PASSWORD â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
@@ -9312,7 +9325,8 @@ app.MapPost("/api/v1/auth/change-email/request", async (
     HttpRequest httpRequest,
     Db db,
     JwtService jwtService,
-    EmailService emailService
+    EmailService emailService,
+    RedisService redis
 ) =>
 {
     if (ValidateRequest(request) is { } ve) return ve;
@@ -9348,22 +9362,28 @@ app.MapPost("/api/v1/auth/change-email/request", async (
     if (await checkCmd.ExecuteScalarAsync() is not null)
         return Conflict("EMAIL_IN_USE", "Bu e-posta adresi zaten kullaniliyor.");
 
-    var otp = PasswordService.GenerateOtp();
-    var otpHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(otp)));
-    var otpKey = $"chgmail:{newEmail}";
+    var dbKey = $"chgmail:{newEmail}";
+
+    // Redis: 3 dk cooldown, aynı pencerede aynı kod
+    var (otp, tooSoon, waitSecs) = await GetOrCreateCachedOtpAsync(
+        redis.GetDb(), $"otp:chgemail:{newEmail}",
+        validFor: TimeSpan.FromMinutes(10),
+        resendAfter: TimeSpan.FromMinutes(3));
+
+    if (tooSoon)
+        return TooManyRequests("OTP_TOO_SOON", $"Yeni kod için {waitSecs} saniye bekleyin.", waitSecs);
 
     await using var delOld = new NpgsqlCommand("DELETE FROM email_otps WHERE email = @key", connection);
-    delOld.Parameters.AddWithValue("key", otpKey);
+    delOld.Parameters.AddWithValue("key", dbKey);
     await delOld.ExecuteNonQueryAsync();
 
     await using var insertOtp = new NpgsqlCommand(
-        "INSERT INTO email_otps (email, otp_hash) VALUES (@email, @hash)", connection
-    );
-    insertOtp.Parameters.AddWithValue("email", otpKey);
-    insertOtp.Parameters.AddWithValue("hash", otpHash);
+        "INSERT INTO email_otps (email, otp_hash) VALUES (@email, @hash)", connection);
+    insertOtp.Parameters.AddWithValue("email", dbKey);
+    insertOtp.Parameters.AddWithValue("hash", PasswordService.HashOtp(otp!));
     await insertOtp.ExecuteNonQueryAsync();
 
-    _ = emailService.SendChangeEmailOtpAsync(newEmail, otp);
+    _ = emailService.SendChangeEmailOtpAsync(newEmail, otp!);
     return Results.Ok(new { message = "Dogrulama kodu yeni e-posta adresinize gonderildi." });
 }).RequireRateLimiting("auth-strict");
 
@@ -9602,6 +9622,39 @@ static string TruncateForMeta(string value, int maxLength)
 
 static IResult? RequireAdmin(HttpRequest request, AdminAuthService adminAuth) =>
     adminAuth.TryGetAdminEmail(request) is null ? Unauthorized() : null;
+
+// OTP cache: {unix_ts}|{sha256_hash}|{plain_otp}  — TTL = validFor, resend cooldown = resendAfter
+// Returns (otp: string, tooSoon: bool, waitSeconds: int)
+static async Task<(string? Otp, bool TooSoon, int WaitSeconds)> GetOrCreateCachedOtpAsync(
+    IDatabase redis, string key, TimeSpan validFor, TimeSpan resendAfter)
+{
+    var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+    var existing = (string?)(await redis.StringGetAsync(key));
+    if (existing is not null)
+    {
+        var parts = existing.Split('|');
+        if (parts.Length == 3 && long.TryParse(parts[0], out var ts))
+        {
+            var age = now - ts;
+            var cooldown = (long)resendAfter.TotalSeconds;
+            if (age < cooldown)
+                return (null, true, (int)(cooldown - age));
+            // Within validity window — resend same code, do NOT extend TTL
+            return (parts[2], false, 0);
+        }
+    }
+    var otp = PasswordService.GenerateOtp();
+    await redis.StringSetAsync(key, $"{now}|{PasswordService.HashOtp(otp)}|{otp}", validFor);
+    return (otp, false, 0);
+}
+
+static async Task<bool> ValidateCachedOtpAsync(IDatabase redis, string key, string inputOtp)
+{
+    var existing = (string?)(await redis.StringGetAsync(key));
+    if (existing is null) return false;
+    var parts = existing.Split('|');
+    return parts.Length == 3 && parts[1] == PasswordService.HashOtp(inputOtp);
+}
 
 static IResult? ValidateRequest(object request)
 {
