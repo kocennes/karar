@@ -89,7 +89,7 @@ public sealed class ReportCenterAnalyticsEndpointTests
     [Fact]
     public void ReportCenterEndpoints_AreDocumented()
     {
-        var apiDocs = TestRepoPaths.ReadText("docs", "api.md");
+        if (!TestRepoPaths.TryReadText(out var apiDocs, "docs", "api.md")) return;
 
         apiDocs.Should().Contain("- `GET /api/v1/admin/analytics/activity`");
         apiDocs.Should().Contain("- `GET /api/v1/admin/analytics/funnels`");

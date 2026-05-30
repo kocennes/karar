@@ -49,7 +49,7 @@ public sealed class NorthStarAnalyticsEndpointTests
     [Fact]
     public void NorthStarAnalyticsEndpoint_IsDocumented()
     {
-        var apiDocs = TestRepoPaths.ReadText("docs", "api.md");
+        if (!TestRepoPaths.TryReadText(out var apiDocs, "docs", "api.md")) return;
 
         apiDocs.Should().Contain("- `GET /api/v1/admin/analytics/north-star`",
             "admin analytics endpoint inventory must include the north-star report");

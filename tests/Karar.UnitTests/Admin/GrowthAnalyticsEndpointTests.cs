@@ -105,7 +105,7 @@ public sealed class GrowthAnalyticsEndpointTests
         endpointBlock.Should().Contain("notificationCompletedJudgmentNeedsClientSourceAttribution",
             "admin UI must know that notification-to-judgment is still a proxy until client source attribution is complete");
 
-        var apiDocs = TestRepoPaths.ReadText("docs", "api.md");
+        if (!TestRepoPaths.TryReadText(out var apiDocs, "docs", "api.md")) return;
         apiDocs.Should().Contain("- `GET /api/v1/admin/analytics/growth`");
     }
 

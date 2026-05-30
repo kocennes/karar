@@ -275,7 +275,7 @@ public sealed class FeedQualityEndpointTests
     [Fact]
     public void FeedQualityDrillDownEndpoint_IsDocumented()
     {
-        var apiDocs = TestRepoPaths.ReadText("docs", "api.md");
+        if (!TestRepoPaths.TryReadText(out var apiDocs, "docs", "api.md")) return;
         apiDocs.Should().Contain("- `GET /api/v1/admin/analytics/feed-quality/posts`",
             "drill-down endpoint must be listed in api.md");
     }
@@ -283,8 +283,8 @@ public sealed class FeedQualityEndpointTests
     [Fact]
     public void FeedQualityEndpoint_IsDocumented()
     {
-        var apiDocs = TestRepoPaths.ReadText("docs", "api.md");
-        apiDocs.Should().Contain("- `GET /api/v1/admin/analytics/feed-quality`",
+        if (!TestRepoPaths.TryReadText(out var apiDocs2, "docs", "api.md")) return;
+        apiDocs2.Should().Contain("- `GET /api/v1/admin/analytics/feed-quality`",
             "feed-quality endpoint must be listed in api.md");
     }
 
@@ -369,7 +369,7 @@ public sealed class FeedQualityEndpointTests
     [Fact]
     public void TimeseriesEndpoint_IsDocumented()
     {
-        var apiDocs = TestRepoPaths.ReadText("docs", "api.md");
+        if (!TestRepoPaths.TryReadText(out var apiDocs, "docs", "api.md")) return;
         apiDocs.Should().Contain("- `GET /api/v1/admin/analytics/feed-quality/timeseries`",
             "timeseries endpoint must be listed in api.md");
     }

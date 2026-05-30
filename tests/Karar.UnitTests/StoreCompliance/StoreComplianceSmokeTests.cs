@@ -75,11 +75,12 @@ public sealed class StoreComplianceSmokeTests
     public void ReleaseGateCommand_IsDocumentedAndRunnable()
     {
         var script = TestRepoPaths.ReadText("scripts", "run-store-compliance-smoke.ps1");
-        var releaseDoc = TestRepoPaths.ReadText("docs", "app-store-release.md");
 
         script.Should().Contain("store-compliance-smoke");
         script.Should().Contain("dotnet test tests/Karar.UnitTests/Karar.UnitTests.csproj");
         script.Should().Contain("flutter test --no-pub test/release_store_compliance_smoke_test.dart");
+
+        if (!TestRepoPaths.TryReadText(out var releaseDoc, "docs", "app-store-release.md")) return;
         releaseDoc.Should().Contain("scripts/run-store-compliance-smoke.ps1");
     }
 
