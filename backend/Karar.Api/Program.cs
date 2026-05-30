@@ -107,6 +107,14 @@ builder.Services.AddHttpClient("resend", c =>
         c.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
 });
+builder.Services.AddHttpClient("brevo", c =>
+{
+    c.BaseAddress = new Uri("https://api.brevo.com/v3/");
+    c.Timeout = TimeSpan.FromSeconds(15);
+    var apiKey = builder.Configuration["Brevo:ApiKey"];
+    if (!string.IsNullOrEmpty(apiKey))
+        c.DefaultRequestHeaders.Add("api-key", apiKey);
+});
 builder.Services.AddSingleton<PlayIntegrityService>();
 var hostedServicesEnabled = !builder.Environment.IsEnvironment("Testing")
     && !builder.Configuration.GetValue("Testing:DisableHostedServices", false);

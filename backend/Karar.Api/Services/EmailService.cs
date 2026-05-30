@@ -13,6 +13,7 @@ public sealed class EmailService
     private readonly string _fromAddress;
     private readonly string _fromName;
     private readonly string? _resendApiKey;
+    private readonly string? _brevoApiKey;
 
     private readonly bool _configured;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -29,10 +30,16 @@ public sealed class EmailService
         _fromAddress = configuration["Email:FromAddress"] ?? _smtpUser;
         _fromName = configuration["Email:FromName"] ?? "Karar";
         _resendApiKey = configuration["Resend:ApiKey"];
+        _brevoApiKey = configuration["Brevo:ApiKey"];
 
-        _configured = !string.IsNullOrEmpty(_resendApiKey) || !string.IsNullOrEmpty(_smtpUser);
+        _configured = !string.IsNullOrEmpty(_brevoApiKey)
+                   || !string.IsNullOrEmpty(_resendApiKey)
+                   || !string.IsNullOrEmpty(_smtpUser);
+
         if (!_configured)
             logger.LogWarning("E-posta yapılandırması eksik. OTP e-postaları gönderilmeyecek.");
+        else if (!string.IsNullOrEmpty(_brevoApiKey))
+            logger.LogInformation("E-posta servisi: Brevo API");
         else if (!string.IsNullOrEmpty(_resendApiKey))
             logger.LogInformation("E-posta servisi: Resend API");
         else
@@ -101,10 +108,34 @@ public sealed class EmailService
             return;
         }
 
-        if (!string.IsNullOrEmpty(_resendApiKey))
+        if (!string.IsNullOrEmpty(_brevoApiKey))
+            await SendViaBrevoAsync(toEmail, subject, body);
+        else if (!string.IsNullOrEmpty(_resendApiKey))
             await SendViaResendAsync(toEmail, subject, body);
         else
             await SendViaSmtpAsync(toEmail, subject, body);
+    }
+
+    private async Task SendViaBrevoAsync(string toEmail, string subject, string body)
+    {
+        var client = _httpClientFactory.CreateClient("brevo");
+        var payload = new
+        {
+            sender = new { name = _fromName, email = _fromAddress },
+            to = new[] { new { email = toEmail } },
+            subject,
+            textContent = body,
+        };
+
+        var response = await client.PostAsJsonAsync("smtp/email", payload);
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = await response.Content.ReadAsStringAsync();
+            _logger.LogError("Brevo API hatası: {Status} {Error}", response.StatusCode, error);
+            throw new InvalidOperationException($"Brevo API hatası: {response.StatusCode}");
+        }
+
+        _logger.LogInformation("Brevo: e-posta gönderildi → {To}", toEmail);
     }
 
     private async Task SendViaResendAsync(string toEmail, string subject, string body)
