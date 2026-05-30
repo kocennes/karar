@@ -1,3 +1,4 @@
+using System.Net.Http.Json;
 using MailKit.Net.Smtp;
 using MimeKit;
 
@@ -11,24 +12,31 @@ public sealed class EmailService
     private readonly string _smtpPass;
     private readonly string _fromAddress;
     private readonly string _fromName;
+    private readonly string? _resendApiKey;
 
     private readonly bool _configured;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<EmailService> _logger;
 
-    public EmailService(IConfiguration configuration, ILogger<EmailService> logger)
+    public EmailService(IConfiguration configuration, ILogger<EmailService> logger, IHttpClientFactory httpClientFactory)
     {
         _logger = logger;
+        _httpClientFactory = httpClientFactory;
         _smtpHost = configuration["Email:SmtpHost"] ?? "smtp.gmail.com";
         _smtpPort = int.Parse(configuration["Email:SmtpPort"] ?? "587");
         _smtpUser = configuration["Email:SmtpUser"] ?? "";
         _smtpPass = configuration["Email:SmtpPass"] ?? "";
         _fromAddress = configuration["Email:FromAddress"] ?? _smtpUser;
         _fromName = configuration["Email:FromName"] ?? "Karar";
-        _configured = !string.IsNullOrEmpty(_smtpUser);
+        _resendApiKey = configuration["Resend:ApiKey"];
+
+        _configured = !string.IsNullOrEmpty(_resendApiKey) || !string.IsNullOrEmpty(_smtpUser);
         if (!_configured)
-        {
             logger.LogWarning("E-posta yapılandırması eksik. OTP e-postaları gönderilmeyecek.");
-        }
+        else if (!string.IsNullOrEmpty(_resendApiKey))
+            logger.LogInformation("E-posta servisi: Resend API");
+        else
+            logger.LogInformation("E-posta servisi: SMTP ({Host}:{Port})", _smtpHost, _smtpPort);
     }
 
     public bool IsConfigured => _configured;
@@ -63,10 +71,10 @@ public sealed class EmailService
                 """);
 
     public Task SendAdminLoginOtpAsync(string toEmail, string otp) =>
-        SendAsync(toEmail, "Karar Admin giris kodunuz", $"""
-                Karar Admin giris kodunuz: {otp}
+        SendAsync(toEmail, "Karar Admin Giriş Kodunuz", $"""
+                Karar Admin giriş kodunuz: {otp}
 
-                Bu kod 10 dakika gecerlidir. Kodu kimseyle paylasmayin.
+                Bu kod 10 dakika geçerlidir. Kodu kimseyle paylaşmayın.
                 """);
 
     public Task SendAccountRecoveryAsync(string toEmail, string username, string recoveryUrl) =>
@@ -88,10 +96,41 @@ public sealed class EmailService
         if (!_configured)
         {
             _logger.LogWarning(
-                "[DEV] SMTP yapılandırılmamış — e-posta console'a yazıldı | To={To} | Subject={Subject} | Body={Body}",
+                "[DEV] E-posta yapılandırılmamış — console'a yazıldı | To={To} | Subject={Subject} | Body={Body}",
                 toEmail, subject, body);
             return;
         }
+
+        if (!string.IsNullOrEmpty(_resendApiKey))
+            await SendViaResendAsync(toEmail, subject, body);
+        else
+            await SendViaSmtpAsync(toEmail, subject, body);
+    }
+
+    private async Task SendViaResendAsync(string toEmail, string subject, string body)
+    {
+        var client = _httpClientFactory.CreateClient("resend");
+        var payload = new
+        {
+            from = $"{_fromName} <{_fromAddress}>",
+            to = new[] { toEmail },
+            subject,
+            text = body,
+        };
+
+        var response = await client.PostAsJsonAsync("emails", payload);
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = await response.Content.ReadAsStringAsync();
+            _logger.LogError("Resend API hatası: {Status} {Error}", response.StatusCode, error);
+            throw new InvalidOperationException($"Resend API hatası: {response.StatusCode}");
+        }
+
+        _logger.LogInformation("Resend: e-posta gönderildi → {To}", toEmail);
+    }
+
+    private async Task SendViaSmtpAsync(string toEmail, string subject, string body)
+    {
         var message = new MimeMessage();
         message.From.Add(new MailboxAddress(_fromName, _fromAddress));
         message.To.Add(MailboxAddress.Parse(toEmail));

@@ -98,6 +98,15 @@ builder.Services.AddHttpClient("play-integrity", c =>
     c.Timeout = TimeSpan.FromSeconds(10);
 })
 .AddStandardResilienceHandler();
+builder.Services.AddHttpClient("resend", c =>
+{
+    c.BaseAddress = new Uri("https://api.resend.com/");
+    c.Timeout = TimeSpan.FromSeconds(15);
+    var apiKey = builder.Configuration["Resend:ApiKey"];
+    if (!string.IsNullOrEmpty(apiKey))
+        c.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+});
 builder.Services.AddSingleton<PlayIntegrityService>();
 var hostedServicesEnabled = !builder.Environment.IsEnvironment("Testing")
     && !builder.Configuration.GetValue("Testing:DisableHostedServices", false);
