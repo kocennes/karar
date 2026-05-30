@@ -113,6 +113,41 @@ class AnalyticsService {
     await _a?.logEvent(name: 'create_post_started');
   }
 
+  Future<void> logCreatePostCategorySelected({required String category}) async {
+    await _a?.logEvent(
+      name: 'create_post_category_selected',
+      parameters: {'category': category},
+    );
+  }
+
+  Future<void> logCreatePostContentStarted() async {
+    await _a?.logEvent(name: 'create_post_content_started');
+  }
+
+  Future<void> logCreatePostSubmitAttempted({
+    required String category,
+    required int titleLength,
+    required int contentLength,
+    required bool hasImage,
+  }) async {
+    await _a?.logEvent(
+      name: 'create_post_submit_attempted',
+      parameters: {
+        'category': category,
+        'title_length': titleLength,
+        'content_length': contentLength,
+        'has_image': hasImage,
+      },
+    );
+  }
+
+  Future<void> logCreatePostRejected({required String reason}) async {
+    await _a?.logEvent(
+      name: 'create_post_rejected',
+      parameters: {'reason': reason},
+    );
+  }
+
   Future<void> logCreatePostImageAdded() async {
     await _a?.logEvent(name: 'create_post_image_added');
   }
@@ -547,6 +582,49 @@ class AnalyticsService {
         'post_id': postId,
         'source': source,
         if (rankingReason != null) 'ranking_reason': rankingReason,
+      },
+    );
+  }
+
+  Future<void> logFeedScrollDepth({
+    required int milestone,
+    required int positionReached,
+    required String sort,
+    String? categoryId,
+  }) async {
+    await _a?.logEvent(
+      name: 'feed_scroll_depth',
+      parameters: {
+        'milestone': milestone,
+        'position_reached': positionReached,
+        'sort': sort,
+        if (categoryId != null) 'category_id': categoryId,
+      },
+    );
+  }
+
+  Future<void> logDiscoverSnapDepth({
+    required int milestone,
+    required int positionReached,
+  }) async {
+    await _a?.logEvent(
+      name: 'discover_snap_depth',
+      parameters: {
+        'milestone': milestone,
+        'position_reached': positionReached,
+      },
+    );
+  }
+
+  Future<void> logPostContentScrollDepth({
+    required String postId,
+    required int milestone,
+  }) async {
+    await _a?.logEvent(
+      name: 'post_content_scroll_depth',
+      parameters: {
+        'post_id': postId,
+        'milestone': milestone,
       },
     );
   }

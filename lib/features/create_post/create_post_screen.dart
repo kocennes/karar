@@ -24,6 +24,7 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
   final _contentController = TextEditingController();
   bool _submitted = false;
   bool _acceptedPolicy = false;
+  bool _contentStartedLogged = false;
 
   @override
   void initState() {
@@ -108,17 +109,35 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
 
     final title = _titleController.text.trim();
     final content = _contentController.text.trim();
+    final state0 = ref.read(createPostProvider);
+    final categoryName = state0.selectedCategoryId?.toString() ?? 'unknown';
+
+    ref.read(analyticsServiceProvider).logCreatePostSubmitAttempted(
+          category: categoryName,
+          titleLength: title.length,
+          contentLength: content.length,
+          hasImage: state0.images.isNotEmpty,
+        );
 
     if (title.length < 10) {
+      ref
+          .read(analyticsServiceProvider)
+          .logCreatePostRejected(reason: 'title_too_short');
       _showError('Başlık en az 10 karakter olmalı.');
       return;
     }
     if (content.length < 50) {
+      ref
+          .read(analyticsServiceProvider)
+          .logCreatePostRejected(reason: 'content_too_short');
       _showError('İçerik en az 50 karakter olmalı.');
       return;
     }
 
     if (!_acceptedPolicy) {
+      ref
+          .read(analyticsServiceProvider)
+          .logCreatePostRejected(reason: 'policy_not_accepted');
       _showError('Kullanim kosullari ve topluluk kurallarini kabul etmelisin.');
       return;
     }
@@ -257,9 +276,16 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
                             return ChoiceChip(
                               label: Text(category.name),
                               selected: state.selectedCategoryId == category.id,
-                              onSelected: (_) => ref
+                              onSelected: (_) {
+                              ref
                                   .read(createPostProvider.notifier)
-                                  .selectCategory(category.id),
+                                  .selectCategory(category.id);
+                              ref
+                                  .read(analyticsServiceProvider)
+                                  .logCreatePostCategorySelected(
+                                    category: category.name,
+                                  );
+                            },
                             );
                           },
                         ),
@@ -281,7 +307,15 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
                       maxLength: 1500,
                       minLines: 8,
                       maxLines: 14,
-                      onChanged: (_) => setState(() {}),
+                      onChanged: (text) {
+                        setState(() {});
+                        if (!_contentStartedLogged && text.isNotEmpty) {
+                          _contentStartedLogged = true;
+                          ref
+                              .read(analyticsServiceProvider)
+                              .logCreatePostContentStarted();
+                        }
+                      },
                       decoration: InputDecoration(
                         hintText: 'Durumu anlat... Diğer taraf ne yaptı?',
                         alignLabelWithHint: true,

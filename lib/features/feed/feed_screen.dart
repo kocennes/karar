@@ -39,8 +39,10 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
   final _scrollController = ScrollController();
   ProviderSubscription<AsyncValue<ConnectivityStatus>>? _connectivitySub;
   final _itemKeys = <int, GlobalKey>{};
+  int _scrollDepthMilestoneFired = 0;
 
   static const _fabThreshold = 400.0;
+  static const _scrollMilestones = [5, 10, 25, 50];
 
   @override
   void initState() {
@@ -105,16 +107,42 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
         _scrollController.position.maxScrollExtent - 300) {
       ref.read(feedProvider.notifier).loadMore();
     }
-    
+
     // FAB visibility
     final shouldShowFab = _scrollController.position.pixels > _fabThreshold;
     if (shouldShowFab != _showFab) setState(() => _showFab = shouldShowFab);
 
     // Top bar visibility (hide on scroll down, show on scroll up)
-    if (_scrollController.position.userScrollDirection == ScrollDirection.reverse) {
+    if (_scrollController.position.userScrollDirection ==
+        ScrollDirection.reverse) {
       if (_showTopBar) setState(() => _showTopBar = false);
-    } else if (_scrollController.position.userScrollDirection == ScrollDirection.forward) {
+    } else if (_scrollController.position.userScrollDirection ==
+        ScrollDirection.forward) {
       if (!_showTopBar) setState(() => _showTopBar = true);
+    }
+
+    // Scroll depth milestones — fire once per milestone per session
+    final postCount = ref.read(feedProvider).posts.length;
+    if (postCount == 0) return;
+    final maxExtent = _scrollController.position.maxScrollExtent;
+    if (maxExtent <= 0) return;
+    final ratio = _scrollController.position.pixels / maxExtent;
+    final estimatedPosition =
+        (ratio * postCount).round().clamp(0, postCount);
+    for (final milestone in _scrollMilestones) {
+      if (estimatedPosition >= milestone &&
+          milestone > _scrollDepthMilestoneFired) {
+        _scrollDepthMilestoneFired = milestone;
+        ref.read(analyticsServiceProvider).logFeedScrollDepth(
+              milestone: milestone,
+              positionReached: estimatedPosition,
+              sort: _sortMode.queryValue,
+              categoryId: _selectedCategoryId == 0
+                  ? null
+                  : _selectedCategoryId.toString(),
+            );
+        break;
+      }
     }
   }
 
@@ -189,7 +217,10 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
       _showNoConnectionSnack();
       return;
     }
-    setState(() => _selectedCategoryId = id);
+    setState(() {
+      _selectedCategoryId = id;
+      _scrollDepthMilestoneFired = 0;
+    });
     _replaceRouteState(categoryId: id);
     final categoryId = id == 0 ? null : id;
     ref.read(feedProvider.notifier).load(

@@ -29,6 +29,9 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen>
   DateTime _pageEnteredAt = DateTime.now();
   bool _firstImpressionSent = false;
   String? _activePostId;
+  int _snapDepthMilestoneFired = 0;
+
+  static const _snapMilestones = [3, 7, 15, 30];
 
   @override
   void initState() {
@@ -69,6 +72,18 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen>
     _handlePageEnter(page, items);
     if (page >= items.length - 3) {
       ref.read(discoverFeedProvider.notifier).loadMore();
+    }
+
+    // Snap depth milestones (counted by cards seen, not position in list)
+    for (final milestone in _snapMilestones) {
+      if (page + 1 >= milestone && milestone > _snapDepthMilestoneFired) {
+        _snapDepthMilestoneFired = milestone;
+        ref.read(analyticsServiceProvider).logDiscoverSnapDepth(
+              milestone: milestone,
+              positionReached: page + 1,
+            );
+        break;
+      }
     }
   }
 
