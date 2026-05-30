@@ -53,8 +53,7 @@ public sealed class PoliticalNarrativeClusterJob(
                     p.category_id,
                     COUNT(v.*)::int AS recent_votes,
                     COUNT(DISTINCT v.device_id)::int AS distinct_voters,
-                    COUNT(DISTINCT v.voter_ip_block)::int
-                        FILTER (WHERE v.voter_ip_block IS NOT NULL) AS distinct_ip_blocks,
+                    COUNT(DISTINCT v.voter_ip_block) FILTER (WHERE v.voter_ip_block IS NOT NULL) AS distinct_ip_blocks,
                     PERCENTILE_CONT(0.5) WITHIN GROUP (
                         ORDER BY EXTRACT(EPOCH FROM (NOW() - d.created_at)) / 3600.0
                     ) AS median_account_age_hours,

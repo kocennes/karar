@@ -64,7 +64,7 @@ public sealed class ViralNotificationJob(
               AND p.distribution_stage >= 3
               AND p.created_at > NOW() - INTERVAL '48 hours'
               AND p.vote_count_hakli + p.vote_count_haksiz >= @minVotes
-              AND p.report_count <= @maxReports
+              AND (SELECT COUNT(*) FROM reports r WHERE r.post_id = p.id) <= @maxReports
             ORDER BY p.vote_count_hakli + p.vote_count_haksiz DESC
             LIMIT 30
             """,
