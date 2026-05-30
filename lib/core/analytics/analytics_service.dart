@@ -1,7 +1,15 @@
-﻿import 'package:firebase_analytics/firebase_analytics.dart';
+import 'dart:async';
+
+import 'package:firebase_analytics/firebase_analytics.dart';
+
+import '../api/api_client.dart';
+import '../api/api_endpoints.dart';
 
 class AnalyticsService {
+  AnalyticsService({ApiClient? apiClient}) : _apiClient = apiClient;
+
   FirebaseAnalytics? _analytics;
+  final ApiClient? _apiClient;
 
   FirebaseAnalytics? get _a {
     try {
@@ -188,11 +196,50 @@ class AnalyticsService {
     );
   }
 
+  Future<void> logAppSessionStarted({
+    required int sessionNumber,
+    required bool isGuest,
+  }) async {
+    await _a?.logEvent(
+      name: 'app_session_started',
+      parameters: {
+        'session_number': sessionNumber,
+        'user_type': isGuest ? 'guest' : 'registered',
+      },
+    );
+  }
+
+  Future<void> logSessionHeartbeat({
+    required int durationSeconds,
+    required int postsSeen,
+    required int votesCast,
+    required int commentsPosted,
+    required int postsCreated,
+    required int maxFeedPosition,
+    required int maxDiscoverPosition,
+  }) async {
+    await _a?.logEvent(
+      name: 'app_session_heartbeat',
+      parameters: {
+        'duration_seconds': durationSeconds,
+        'posts_seen': postsSeen,
+        'votes_cast': votesCast,
+        'comments_posted': commentsPosted,
+        'posts_created': postsCreated,
+        'max_feed_position': maxFeedPosition,
+        'max_discover_position': maxDiscoverPosition,
+      },
+    );
+  }
+
   Future<void> logSessionEnd({
     required int durationSeconds,
     required int postsViewed,
     required int votesCast,
     required int commentsPosted,
+    int postsCreated = 0,
+    int maxFeedPosition = -1,
+    int maxDiscoverPosition = -1,
   }) async {
     await _a?.logEvent(
       name: 'session_end',
@@ -201,6 +248,9 @@ class AnalyticsService {
         'posts_viewed': postsViewed,
         'votes_cast': votesCast,
         'comments_posted': commentsPosted,
+        'posts_created': postsCreated,
+        'max_feed_position': maxFeedPosition,
+        'max_discover_position': maxDiscoverPosition,
       },
     );
   }
@@ -209,6 +259,295 @@ class AnalyticsService {
     await _a?.logEvent(
       name: 'push_notification_opened',
       parameters: {'type': type},
+    );
+  }
+
+  // ── Share Landing Funnel ────────────────────────────────────────────────
+
+  Future<void> logShareLandingOpened({
+    required String postId,
+    String? referrerCode,
+    String source = 'share_link',
+    String platform = 'app',
+    required bool isGuest,
+  }) async {
+    await _logFirebaseEventBestEffort(
+      name: 'share_landing_opened',
+      parameters: {
+        'post_id': postId,
+        if (referrerCode != null) 'referrer_code': referrerCode,
+        'source': source,
+        'platform': platform,
+        'is_guest': isGuest,
+        'user_type': isGuest ? 'guest' : 'registered',
+      },
+    );
+    _postGrowthEvent(
+      eventType: 'share_landing_opened',
+      postId: postId,
+      source: source,
+      platform: platform,
+      referrerCode: referrerCode,
+    );
+  }
+
+  Future<void> logShareLandingVoteAttempt({
+    required String postId,
+    String? referrerCode,
+    String source = 'share_link',
+    String platform = 'app',
+    required bool isGuest,
+  }) async {
+    await _logFirebaseEventBestEffort(
+      name: 'share_landing_vote_attempt',
+      parameters: {
+        'post_id': postId,
+        if (referrerCode != null) 'referrer_code': referrerCode,
+        'source': source,
+        'platform': platform,
+        'is_guest': isGuest,
+        'user_type': isGuest ? 'guest' : 'registered',
+      },
+    );
+    _postGrowthEvent(
+      eventType: 'share_landing_vote_attempt',
+      postId: postId,
+      source: source,
+      platform: platform,
+      referrerCode: referrerCode,
+    );
+  }
+
+  Future<void> logShareLandingCompletedJudgment({
+    required String postId,
+    required String voteType,
+    String? referrerCode,
+    String source = 'share_link',
+    String platform = 'app',
+    required bool isGuest,
+  }) async {
+    await _logFirebaseEventBestEffort(
+      name: 'share_landing_completed_judgment',
+      parameters: {
+        'post_id': postId,
+        'vote_type': voteType,
+        if (referrerCode != null) 'referrer_code': referrerCode,
+        'source': source,
+        'platform': platform,
+        'is_guest': isGuest,
+        'user_type': isGuest ? 'guest' : 'registered',
+      },
+    );
+    _postGrowthEvent(
+      eventType: 'share_landing_completed_judgment',
+      postId: postId,
+      source: source,
+      platform: platform,
+      referrerCode: referrerCode,
+    );
+  }
+
+  /// Stub for future install attribution
+  Future<void> logShareToInstall({
+    String? postId,
+    String? referrerCode,
+    String source = 'share_link',
+    String platform = 'app',
+    bool? isGuest,
+  }) async {
+    await _logFirebaseEventBestEffort(
+      name: 'share_to_install',
+      parameters: {
+        if (postId != null) 'post_id': postId,
+        if (referrerCode != null) 'referrer_code': referrerCode,
+        'source': source,
+        'platform': platform,
+        if (isGuest != null) 'is_guest': isGuest,
+        if (isGuest != null) 'user_type': isGuest ? 'guest' : 'registered',
+      },
+    );
+    _postGrowthEvent(
+      eventType: 'share_to_install',
+      postId: postId,
+      source: source,
+      platform: platform,
+      referrerCode: referrerCode,
+    );
+  }
+
+  Future<void> _logFirebaseEventBestEffort({
+    required String name,
+    Map<String, Object>? parameters,
+  }) async {
+    try {
+      await _a?.logEvent(name: name, parameters: parameters);
+    } catch (_) {}
+  }
+
+  void _postGrowthEvent({
+    required String eventType,
+    String? postId,
+    String? source,
+    String? platform,
+    String? referrerCode,
+  }) {
+    if (_apiClient == null) return;
+    unawaited(
+      _apiClient.postJson<void>(
+        ApiEndpoints.growthEvents,
+        body: {
+          'eventType': eventType,
+          if (postId != null) 'postId': postId,
+          if (source != null) 'source': source,
+          if (platform != null) 'platform': platform,
+          if (referrerCode != null) 'referrerCode': referrerCode,
+        },
+      ).catchError((_) {}),
+    );
+  }
+
+  // ── North-Star: Weekly Completed Judgment Loops ─────────────────────────
+
+  Future<void> logVerdictViewed({
+    required String postId,
+    required String voteType,
+    String source = 'post_detail',
+    String? rankingReason,
+  }) async {
+    await _a?.logEvent(
+      name: 'verdict_viewed',
+      parameters: {
+        'post_id': postId,
+        'vote_type': voteType,
+        'source': source,
+        if (rankingReason != null) 'ranking_reason': rankingReason,
+      },
+    );
+
+    if (source == 'notification') {
+      _postGrowthEvent(
+        eventType: 'notification_completed_judgment',
+        postId: postId,
+        source: source,
+      );
+    } else if (source == 'feed') {
+      _postGrowthEvent(
+        eventType: 'feed_completed_judgment',
+        postId: postId,
+        source: source,
+      );
+    } else if (source == 'search') {
+      _postGrowthEvent(
+        eventType: 'search_completed_judgment',
+        postId: postId,
+        source: source,
+      );
+    }
+  }
+
+  Future<void> logDiscoverImpression({
+    required String postId,
+    required int position,
+    String source = 'discover',
+    String rankingReason = 'trending',
+  }) async {
+    await _a?.logEvent(
+      name: 'discover_impression',
+      parameters: {
+        'post_id': postId,
+        'source': source,
+        'position': position,
+        'ranking_reason': rankingReason,
+      },
+    );
+  }
+
+  Future<void> logDiscoverDwell({
+    required String postId,
+    required int durationSeconds,
+    required int position,
+    String source = 'discover',
+    String rankingReason = 'trending',
+  }) async {
+    await _a?.logEvent(
+      name: 'discover_dwell',
+      parameters: {
+        'post_id': postId,
+        'source': source,
+        'duration_seconds': durationSeconds,
+        'position': position,
+        'ranking_reason': rankingReason,
+      },
+    );
+  }
+
+  Future<void> logDiscoverSkip({
+    required String postId,
+    required int durationSeconds,
+    required int position,
+    String source = 'discover',
+    String rankingReason = 'trending',
+  }) async {
+    await _a?.logEvent(
+      name: 'discover_skip',
+      parameters: {
+        'post_id': postId,
+        'source': source,
+        'duration_seconds': durationSeconds,
+        'position': position,
+        'ranking_reason': rankingReason,
+      },
+    );
+  }
+
+  Future<void> logDiscoverVote({
+    required String postId,
+    required String voteType,
+    required int position,
+    String source = 'discover',
+    String rankingReason = 'trending',
+  }) async {
+    await _a?.logEvent(
+      name: 'discover_vote',
+      parameters: {
+        'post_id': postId,
+        'source': source,
+        'vote_type': voteType,
+        'position': position,
+        'ranking_reason': rankingReason,
+      },
+    );
+  }
+
+  Future<void> logDiscoverCommentOpen({
+    required String postId,
+    required int position,
+    String source = 'discover',
+    String rankingReason = 'trending',
+  }) async {
+    await _a?.logEvent(
+      name: 'discover_comment_open',
+      parameters: {
+        'post_id': postId,
+        'source': source,
+        'position': position,
+        'ranking_reason': rankingReason,
+      },
+    );
+  }
+
+  Future<void> logPostNotInterested({
+    required String postId,
+    String source = 'discover',
+    String? rankingReason,
+  }) async {
+    await _a?.logEvent(
+      name: 'post_not_interested',
+      parameters: {
+        'post_id': postId,
+        'source': source,
+        if (rankingReason != null) 'ranking_reason': rankingReason,
+      },
     );
   }
 
@@ -223,4 +562,3 @@ class AnalyticsService {
     );
   }
 }
-

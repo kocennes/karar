@@ -1,17 +1,19 @@
 using FirebaseAdmin.Messaging;
+using Karar.Api.Observability;
 using Npgsql;
 
 namespace Karar.Api.Services;
 
-/// <summary>
-/// DB outbox pattern: every 30 s, picks up due notifications, sends FCM push,
+/// DB outbox pattern: every 30 s picks up due notifications, sends FCM push,
 /// then stamps sent_at only after the provider accepts the message.
-/// </summary>
 public sealed class NotificationDispatcher(
     IConfiguration configuration,
     ILogger<NotificationDispatcher> logger,
+    IFcmSender fcmSender,
     NotificationRateLimiter rateLimiter,
-    NotificationPreferenceRouter preferenceRouter)
+    NotificationPreferenceRouter preferenceRouter,
+    SloMetrics sloMetrics,
+    RedisService redis)
     : BackgroundService
 {
     private readonly string _connectionString = Karar.Api.Data.Db.ConvertToKeyValue(
@@ -22,17 +24,53 @@ public sealed class NotificationDispatcher(
     private static readonly TimeSpan ReservationTtl = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan RateLimitDelay = TimeSpan.FromMinutes(15);
     private const int MaxAttempts = 5;
-    private bool _firebaseMissingLogged;
 
+    // ─── Public helper methods (unit-testable) ───────────────────────────────
+
+    // Base delay without jitter — deterministic, used in tests.
+    public static TimeSpan CalculateBaseDelay(int attemptCount)
+    {
+        var seconds = Math.Min(30.0 * Math.Pow(2, attemptCount), 3600.0);
+        return TimeSpan.FromSeconds(seconds);
+    }
+
+    // Base delay + up to 10% random jitter as specified.
     public static TimeSpan CalculateRetryDelay(int attemptCount)
     {
-        var exponent = Math.Clamp(attemptCount - 1, 0, 6);
-        return TimeSpan.FromMinutes(Math.Pow(2, exponent));
+        var baseDelay = CalculateBaseDelay(attemptCount);
+        var jitter = TimeSpan.FromSeconds(Random.Shared.NextDouble() * baseDelay.TotalSeconds * 0.1);
+        return baseDelay + jitter;
     }
+
+    /// Pure decision function — determines what DB update is needed after a send attempt.
+    /// sent_at is set ONLY when this returns DeliveryAction.MarkSent.
+    public static DeliveryDecision DetermineDeliveryDecision(
+        PushSendResult result, int attemptCount, int maxAttempts) =>
+        result.Status switch
+        {
+            PushSendStatus.Success =>
+                new(DeliveryAction.MarkSent, result.ProviderMessageId, null, null),
+            PushSendStatus.PermanentFailure =>
+                new(DeliveryAction.MarkFailed, null, result.LastError, null),
+            _ when attemptCount + 1 >= maxAttempts =>
+                new(DeliveryAction.MarkFailed, null, result.LastError, null),
+            _ =>
+                new(DeliveryAction.ScheduleRetry, null, result.LastError,
+                    CalculateRetryDelay(attemptCount + 1))
+        };
+
+    // ─── BackgroundService ───────────────────────────────────────────────────
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         logger.LogInformation("NotificationDispatcher started");
+
+        if (!fcmSender.IsAvailable)
+        {
+            logger.LogError(
+                "NotificationDispatcher: FCM sender is unavailable — push notifications will not be delivered. " +
+                "Resolve Firebase credential issues and restart the service.");
+        }
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -51,25 +89,21 @@ public sealed class NotificationDispatcher(
 
     private async Task ProcessPendingNotificationsAsync(CancellationToken ct)
     {
-        if (FirebaseAdmin.FirebaseApp.DefaultInstance is null)
-        {
-            if (!_firebaseMissingLogged)
-            {
-                logger.LogWarning("NotificationDispatcher skipped because Firebase Admin is not initialized");
-                _firebaseMissingLogged = true;
-            }
+        using var activity = KararTelemetry.StartActivity("notification_dispatcher.process_batch");
+        activity?.SetTag("messaging.system", "fcm");
 
+        if (!fcmSender.IsAvailable)
             return;
-        }
 
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(ct);
 
         await using var fetchCmd = new NpgsqlCommand(
             """
-            SELECT n.id, n.device_id, n.type, n.title, n.body, n.post_id, d.created_at, n.attempt_count
+            SELECT n.id, n.device_id, n.type, n.title, n.body, n.post_id, d.created_at, n.attempt_count, n.dedupe_key, u.id AS user_id
             FROM notifications n
             JOIN devices d ON d.id = n.device_id
+            LEFT JOIN users u ON u.device_id = n.device_id AND u.deleted_at IS NULL
             WHERE n.sent_at IS NULL
               AND n.failed_at IS NULL
               AND (n.next_attempt_at IS NULL OR n.next_attempt_at <= NOW())
@@ -96,7 +130,9 @@ public sealed class NotificationDispatcher(
                         reader.GetString(4),
                         reader.IsDBNull(5) ? null : reader.GetGuid(5),
                         reader.GetFieldValue<DateTimeOffset>(6),
-                        reader.GetInt32(7)));
+                        reader.GetInt32(7),
+                        reader.IsDBNull(8) ? null : reader.GetString(8),
+                        reader.IsDBNull(9) ? null : reader.GetGuid(9)));
                 }
             }
 
@@ -137,19 +173,13 @@ public sealed class NotificationDispatcher(
                     ct);
 
                 if (canSend)
-                {
                     sendable.Add(notification.Id);
-                }
                 else
-                {
                     deferred.Add((notification.Id, null));
-                }
             }
 
             if (deferred.Count > 0)
-            {
                 await DeferNotificationsAsync(connection, tx, deferred, ct);
-            }
 
             if (sendable.Count == 0)
             {
@@ -164,6 +194,28 @@ public sealed class NotificationDispatcher(
 
         foreach (var notification in batch)
         {
+            // Redis lock — prevents double-send if two instances raced past the DB lock.
+            var lockKey = $"notif:lock:{notification.Id:N}";
+            var lockAcquired = await redis.GetDb().StringSetAsync(
+                lockKey, "1", TimeSpan.FromMinutes(5), StackExchange.Redis.When.NotExists);
+            if (!lockAcquired)
+            {
+                logger.LogDebug("Notification {Id} already locked by another instance, skipping", notification.Id);
+                continue;
+            }
+
+            // Dedup check — skip if this dedupe_key was sent within the last 24 h.
+            if (notification.DedupeKey is not null)
+            {
+                var dedupRedisKey = $"notif:dedup:{notification.DedupeKey}";
+                var alreadySent = await redis.GetDb().KeyExistsAsync(dedupRedisKey);
+                if (alreadySent)
+                {
+                    await MarkDedupSuppressedAsync(connection, notification, ct);
+                    continue;
+                }
+            }
+
             await LogEventAsync(connection, notification.Id, notification.DeviceId, "send_attempt", ct: ct);
 
             var badgeCount = await GetUnreadCountAsync(connection, notification.DeviceId, ct);
@@ -178,6 +230,13 @@ public sealed class NotificationDispatcher(
                 ct);
 
             await UpdateDeliveryStateAsync(connection, notification, result, ct);
+
+            // Stamp dedup key only on confirmed delivery to FCM.
+            if (result.Status == PushSendStatus.Success && notification.DedupeKey is not null)
+            {
+                await redis.GetDb().StringSetAsync(
+                    $"notif:dedup:{notification.DedupeKey}", "1", TimeSpan.FromHours(24));
+            }
         }
     }
 
@@ -200,11 +259,13 @@ public sealed class NotificationDispatcher(
         int badgeCount,
         CancellationToken ct)
     {
+        using var activity = KararTelemetry.StartActivity("notification_dispatcher.send_push");
+        activity?.SetTag("messaging.system", "fcm");
+        activity?.SetTag("karar.notification_type", type);
+
         var tokens = await GetFcmTokensAsync(connection, deviceId, ct);
         if (tokens.Count == 0)
-        {
             return PushSendResult.PermanentFailure("no_fcm_token");
-        }
 
         var staleTokens = new List<string>();
         var failures = new List<string>();
@@ -247,7 +308,7 @@ public sealed class NotificationDispatcher(
                     },
                 };
 
-                providerMessageId ??= await FirebaseMessaging.DefaultInstance.SendAsync(message, ct);
+                providerMessageId ??= await fcmSender.SendAsync(message, ct);
             }
             catch (FirebaseMessagingException ex) when
                 (ex.MessagingErrorCode == MessagingErrorCode.Unregistered)
@@ -262,19 +323,13 @@ public sealed class NotificationDispatcher(
         }
 
         if (staleTokens.Count > 0)
-        {
             await DeleteStaleTokensAsync(connection, staleTokens, ct);
-        }
 
         if (providerMessageId is not null)
-        {
             return PushSendResult.Success(providerMessageId);
-        }
 
         if (failures.Count == 0 && staleTokens.Count > 0)
-        {
             return PushSendResult.PermanentFailure("all_tokens_unregistered");
-        }
 
         return PushSendResult.TransientFailure(
             failures.Count == 0 ? "fcm_send_failed" : string.Join(",", failures.Distinct()));
@@ -291,9 +346,7 @@ public sealed class NotificationDispatcher(
         var tokens = new List<string>();
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
-        {
             tokens.Add(reader.GetString(0));
-        }
 
         return tokens;
     }
@@ -336,7 +389,6 @@ public sealed class NotificationDispatcher(
         List<(Guid Id, TimeSpan? Delay)> deferred,
         CancellationToken ct)
     {
-        // Group by delay bucket to minimize round-trips
         foreach (var group in deferred.GroupBy(d => (int)(d.Delay ?? RateLimitDelay).TotalSeconds))
         {
             await using var cmd = new NpgsqlCommand(
@@ -362,7 +414,9 @@ public sealed class NotificationDispatcher(
         PushSendResult result,
         CancellationToken ct)
     {
-        if (result.Status == PushSendStatus.Success)
+        var decision = DetermineDeliveryDecision(result, notification.AttemptCount, MaxAttempts);
+
+        if (decision.Action == DeliveryAction.MarkSent)
         {
             await using var cmd = new NpgsqlCommand(
                 """
@@ -371,19 +425,34 @@ public sealed class NotificationDispatcher(
                     provider_message_id = @providerMessageId,
                     next_attempt_at = NULL,
                     last_error = NULL,
-                    failed_at = NULL
+                    failed_at = NULL,
+                    status = 'sent'
                 WHERE id = @id
                 """,
                 connection);
             cmd.Parameters.AddWithValue("id", notification.Id);
-            cmd.Parameters.AddWithValue("providerMessageId", result.ProviderMessageId!);
+            cmd.Parameters.AddWithValue("providerMessageId", decision.ProviderMessageId!);
             await cmd.ExecuteNonQueryAsync(ct);
             await LogEventAsync(connection, notification.Id, notification.DeviceId, "sent",
-                $"{{\"provider_message_id\":\"{result.ProviderMessageId}\"}}", ct);
+                $"{{\"provider_message_id\":\"{decision.ProviderMessageId}\"}}", ct);
+            sloMetrics.RecordNotificationDelivery("sent", notification.Type);
+
+            // SSE fan-out: notify the user's active browser/app connections
+            if (notification.UserId is { } userId)
+            {
+                var unreadCount = await GetUnreadCountAsync(connection, notification.DeviceId, ct);
+                await redis.PublishUserEventAsync(userId, new
+                {
+                    type = "notification.created",
+                    notificationId = notification.Id,
+                    unreadCount
+                });
+            }
+
             return;
         }
 
-        if (result.Status == PushSendStatus.PermanentFailure || notification.AttemptCount + 1 >= MaxAttempts)
+        if (decision.Action == DeliveryAction.MarkFailed)
         {
             await using var cmd = new NpgsqlCommand(
                 """
@@ -391,20 +460,23 @@ public sealed class NotificationDispatcher(
                 SET attempt_count = attempt_count + 1,
                     last_error = @lastError,
                     failed_at = NOW(),
-                    next_attempt_at = NULL
+                    next_attempt_at = NULL,
+                    status = 'permanently_failed'
                 WHERE id = @id
                   AND sent_at IS NULL
                 """,
                 connection);
             cmd.Parameters.AddWithValue("id", notification.Id);
-            cmd.Parameters.AddWithValue("lastError", result.LastError);
+            cmd.Parameters.AddWithValue("lastError", decision.Error!);
             await cmd.ExecuteNonQueryAsync(ct);
+            await InsertDeadLetterAsync(connection, notification, decision.Error!, ct);
             await LogEventAsync(connection, notification.Id, notification.DeviceId, "failed",
-                $"{{\"error\":\"{result.LastError}\"}}", ct);
+                $"{{\"error\":\"{decision.Error}\"}}", ct);
+            sloMetrics.RecordNotificationDelivery("failed", notification.Type);
             return;
         }
 
-        var retryDelay = CalculateRetryDelay(notification.AttemptCount + 1);
+        // ScheduleRetry — sent_at is never touched
         await using var retryCmd = new NpgsqlCommand(
             """
             UPDATE notifications
@@ -417,11 +489,68 @@ public sealed class NotificationDispatcher(
             """,
             connection);
         retryCmd.Parameters.AddWithValue("id", notification.Id);
-        retryCmd.Parameters.AddWithValue("lastError", result.LastError);
-        retryCmd.Parameters.AddWithValue("delaySeconds", (int)retryDelay.TotalSeconds);
+        retryCmd.Parameters.AddWithValue("lastError", decision.Error!);
+        retryCmd.Parameters.AddWithValue("delaySeconds", (int)decision.RetryDelay!.Value.TotalSeconds);
         await retryCmd.ExecuteNonQueryAsync(ct);
         await LogEventAsync(connection, notification.Id, notification.DeviceId, "retrying",
-            $"{{\"error\":\"{result.LastError}\",\"delay_seconds\":{(int)retryDelay.TotalSeconds}}}", ct);
+            $"{{\"error\":\"{decision.Error}\",\"delay_seconds\":{(int)decision.RetryDelay.Value.TotalSeconds}}}", ct);
+        sloMetrics.RecordNotificationDelivery("retrying", notification.Type);
+    }
+
+    private async Task MarkDedupSuppressedAsync(
+        NpgsqlConnection connection,
+        PendingNotification notification,
+        CancellationToken ct)
+    {
+        await using var cmd = new NpgsqlCommand(
+            """
+            UPDATE notifications
+            SET failed_at = NOW(),
+                last_error = 'deduplicated',
+                next_attempt_at = NULL,
+                status = 'permanently_failed'
+            WHERE id = @id
+              AND sent_at IS NULL
+            """,
+            connection);
+        cmd.Parameters.AddWithValue("id", notification.Id);
+        await cmd.ExecuteNonQueryAsync(ct);
+        await LogEventAsync(connection, notification.Id, notification.DeviceId, "suppressed",
+            "{\"reason\":\"deduplicated\"}", ct);
+        sloMetrics.RecordNotificationDelivery("failed", notification.Type);
+    }
+
+    private async Task InsertDeadLetterAsync(
+        NpgsqlConnection connection,
+        PendingNotification notification,
+        string error,
+        CancellationToken ct)
+    {
+        try
+        {
+            await using var cmd = new NpgsqlCommand(
+                """
+                INSERT INTO dead_letter_notifications
+                    (notification_id, device_id, type, title, body, post_id, attempt_count, last_error, reason)
+                VALUES
+                    (@notificationId, @deviceId, @type, @title, @body, @postId, @attemptCount, @lastError, @reason)
+                """,
+                connection);
+            cmd.Parameters.AddWithValue("notificationId", notification.Id);
+            cmd.Parameters.AddWithValue("deviceId", notification.DeviceId);
+            cmd.Parameters.AddWithValue("type", notification.Type);
+            cmd.Parameters.AddWithValue("title", notification.Title);
+            cmd.Parameters.AddWithValue("body", notification.Body);
+            cmd.Parameters.AddWithValue("postId", notification.PostId.HasValue ? (object)notification.PostId.Value : DBNull.Value);
+            cmd.Parameters.AddWithValue("attemptCount", notification.AttemptCount + 1);
+            cmd.Parameters.AddWithValue("lastError", (object?)error ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("reason", "max_attempts_exceeded");
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to insert dead letter for notification {NotificationId}", notification.Id);
+        }
     }
 
     private async Task LogEventAsync(
@@ -455,7 +584,7 @@ public sealed class NotificationDispatcher(
     public static string GetAndroidChannelId(string type) => type switch
     {
         "comment_on_post" => "comments",
-        "reply_on_comment" or "mention" => "mentions",
+        "reply_on_comment" or "mention" or "follow" => "mentions",
         "verdict_milestone" or "viral_post_owner" => "milestones",
         "trend_alert" or "follow_new_post" => "viral",
         "weekly_digest" => "digest",
@@ -467,7 +596,10 @@ public sealed class NotificationDispatcher(
         "comment_on_post" => "COMMENT",
         "reply_on_comment" => "REPLY",
         "mention" => "MENTION",
+        "follow" => "FOLLOW",
         "verdict_milestone" or "viral_post_owner" => "MILESTONE",
+        "trend_alert" or "follow_new_post" => "TREND",
+        "weekly_digest" => "DIGEST",
         "moderation_result" => "MODERATION",
         "system_announcement" => "SYSTEM",
         _ => "GENERAL",
@@ -477,6 +609,7 @@ public sealed class NotificationDispatcher(
     {
         "comment_on_post" or "reply_on_comment" or "mention"
             or "verdict_milestone" or "viral_post_owner"
+            or "trend_alert" or "follow_new_post"
             when postId.HasValue => $"/posts/{postId}",
         "weekly_digest" => "/notifications",
         "moderation_result" => "/profile",
@@ -487,6 +620,8 @@ public sealed class NotificationDispatcher(
     private static string TokenSuffix(string token) =>
         token.Length <= 6 ? token : token[^6..];
 
+    // ─── Types ───────────────────────────────────────────────────────────────
+
     private sealed record PendingNotification(
         Guid Id,
         Guid DeviceId,
@@ -495,16 +630,13 @@ public sealed class NotificationDispatcher(
         string Body,
         Guid? PostId,
         DateTimeOffset DeviceCreatedAt,
-        int AttemptCount);
+        int AttemptCount,
+        string? DedupeKey,
+        Guid? UserId);
 
-    private enum PushSendStatus
-    {
-        Success,
-        TransientFailure,
-        PermanentFailure
-    }
+    public enum PushSendStatus { Success, TransientFailure, PermanentFailure }
 
-    private sealed record PushSendResult(
+    public sealed record PushSendResult(
         PushSendStatus Status,
         string? ProviderMessageId,
         string LastError)
@@ -518,4 +650,12 @@ public sealed class NotificationDispatcher(
         public static PushSendResult PermanentFailure(string error) =>
             new(PushSendStatus.PermanentFailure, null, error);
     }
+
+    public enum DeliveryAction { MarkSent, MarkFailed, ScheduleRetry }
+
+    public readonly record struct DeliveryDecision(
+        DeliveryAction Action,
+        string? ProviderMessageId,
+        string? Error,
+        TimeSpan? RetryDelay);
 }

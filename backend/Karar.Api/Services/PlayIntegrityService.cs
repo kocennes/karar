@@ -14,7 +14,7 @@ namespace Karar.Api.Services;
 ///   3. Client includes integrity_token + nonce in POST /api/v1/devices/register
 ///   4. Backend verifies via Google Play Integrity decodeIntegrityToken API
 ///
-/// Configure Android:PackageName to enable. Without it the service returns null
+/// Configure Android:PackageName to enable. Without it the service returns Skipped
 /// (skip) so device registration still succeeds — use for gradual rollout.
 ///
 /// Requires ADC with the "playintegrity" IAM role on the GCP project.
@@ -23,13 +23,14 @@ public sealed class PlayIntegrityService(
     IConfiguration config,
     RedisService redis,
     IHttpClientFactory httpClientFactory,
-    ILogger<PlayIntegrityService> logger)
+    ILogger<PlayIntegrityService> logger) : IIntegrityProvider
 {
     private static readonly TimeSpan NonceExpiry = TimeSpan.FromMinutes(5);
     private const string PlayIntegrityScope = "https://www.googleapis.com/auth/playintegrity";
 
     private readonly string? _packageName = config["Android:PackageName"];
 
+    public string ProviderName => "play-integrity";
     public bool IsEnabled => !string.IsNullOrWhiteSpace(_packageName);
 
     /// <summary>
@@ -49,14 +50,15 @@ public sealed class PlayIntegrityService(
     /// <summary>
     /// Verifies a Play Integrity token against the stored nonce.
     /// Returns:
-    ///   true  — verification passed (MEETS_BASIC_INTEGRITY)
-    ///   false — verification failed (tampered device / emulator / wrong nonce)
-    ///   null  — skipped (not configured or nonce not found in Redis)
+    ///   Valid   — verification passed (MEETS_BASIC_INTEGRITY)
+    ///   Invalid — verification failed (tampered device / emulator / wrong nonce)
+    ///   Expired — nonce not found in Redis
+    ///   Skipped — provider not configured or transient verification error
     /// </summary>
-    public async Task<bool?> VerifyAsync(string nonce, string integrityToken)
+    public async Task<IntegrityTokenStatus> VerifyAsync(string token, string nonce)
     {
         if (!IsEnabled)
-            return null;
+            return IntegrityTokenStatus.Skipped;
 
         // Consume the nonce so it can't be replayed
         var nonceKey = $"integrity:nonce:{nonce}";
@@ -64,7 +66,7 @@ public sealed class PlayIntegrityService(
         if (exists is null)
         {
             logger.LogWarning("PlayIntegrity: nonce bulunamadı veya süresi dolmuş.");
-            return false;
+            return IntegrityTokenStatus.Expired;
         }
         await redis.DeleteAsync(nonceKey);
 
@@ -79,13 +81,13 @@ public sealed class PlayIntegrityService(
                 HttpMethod.Post,
                 $"https://playintegrity.googleapis.com/v1/{_packageName}:decodeIntegrityToken");
             req.Headers.Authorization = new("Bearer", accessToken);
-            req.Content = JsonContent.Create(new { integrity_token = integrityToken });
+            req.Content = JsonContent.Create(new { integrity_token = token });
 
             using var res = await client.SendAsync(req);
             if (!res.IsSuccessStatusCode)
             {
                 logger.LogWarning("PlayIntegrity: API hatası {Status}", res.StatusCode);
-                return false;
+                return IntegrityTokenStatus.Invalid;
             }
 
             var body = await res.Content.ReadAsStringAsync();
@@ -106,22 +108,22 @@ public sealed class PlayIntegrityService(
                 if (!receivedNonce.Equals(expectedNonceSha256, StringComparison.OrdinalIgnoreCase))
                 {
                     logger.LogWarning("PlayIntegrity: nonce SHA256 uyuşmuyor.");
-                    return false;
+                    return IntegrityTokenStatus.Invalid;
                 }
             }
             else
             {
                 logger.LogWarning("PlayIntegrity: requestDetails.nonceSha256 alanı bulunamadı.");
-                return false;
+                return IntegrityTokenStatus.Invalid;
             }
 
             // Verdict check: appIntegrity.appRecognitionVerdict must not be UNEVALUATED
             // deviceIntegrity.deviceRecognitionVerdict must include MEETS_BASIC_INTEGRITY
             if (!tokenDetails.TryGetProperty("deviceIntegrity", out var deviceIntegrity))
-                return false;
+                return IntegrityTokenStatus.Invalid;
 
             if (!deviceIntegrity.TryGetProperty("deviceRecognitionVerdict", out var verdictArray))
-                return false;
+                return IntegrityTokenStatus.Invalid;
 
             var verdicts = verdictArray.EnumerateArray()
                 .Select(v => v.GetString())
@@ -132,12 +134,12 @@ public sealed class PlayIntegrityService(
             if (!meetsBasic)
                 logger.LogWarning("PlayIntegrity: cihaz temel bütünlük kontrolünü geçemedi. Verdicts: {V}", string.Join(",", verdicts));
 
-            return meetsBasic;
+            return meetsBasic ? IntegrityTokenStatus.Valid : IntegrityTokenStatus.Invalid;
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "PlayIntegrity: doğrulama sırasında hata oluştu.");
-            return null; // treat as skipped on unexpected error to avoid blocking legit users
+            return IntegrityTokenStatus.Skipped; // treat transient errors as skipped to avoid blocking legit users
         }
     }
 }

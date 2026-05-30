@@ -7,7 +7,7 @@ namespace Karar.IntegrationTests;
 // DB gerektiren testler için [Trait("Category", "RequiresDb")] kullan ve
 // Docker stack çalışırken çalıştır: docker-compose up -d
 [Collection("ApiTests")]
-public class SecurityHeaderTests : IClassFixture<CustomWebApplicationFactory>
+public class SecurityHeaderTests
 {
     private readonly HttpClient _client;
 
@@ -61,7 +61,7 @@ public class SecurityHeaderTests : IClassFixture<CustomWebApplicationFactory>
 }
 
 [Collection("ApiTests")]
-public class HealthCheckTests : IClassFixture<CustomWebApplicationFactory>
+public class HealthCheckTests
 {
     private readonly HttpClient _client;
 
@@ -94,6 +94,17 @@ public class HealthCheckTests : IClassFixture<CustomWebApplicationFactory>
     }
 
     [Fact]
+    public async Task HealthSlo_ReturnsGateSnapshot_WithoutDatabaseOrTelemetryConfig()
+    {
+        var response = await _client.GetAsync("/health/slo");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("status", body);
+        Assert.Contains("burnRatePolicies", body);
+    }
+
+    [Fact]
     public async Task UnknownRoute_Returns404()
     {
         var response = await _client.GetAsync("/api/v1/nonexistent-endpoint-xyz");
@@ -122,7 +133,7 @@ public class HealthCheckTests : IClassFixture<CustomWebApplicationFactory>
 }
 
 [Collection("ApiTests")]
-public class CorsTests : IClassFixture<CustomWebApplicationFactory>
+public class CorsTests
 {
     private readonly HttpClient _client;
 
@@ -148,7 +159,7 @@ public class CorsTests : IClassFixture<CustomWebApplicationFactory>
 }
 
 [Collection("ApiTests")]
-public class AuthEndpointTests : IClassFixture<CustomWebApplicationFactory>
+public class AuthEndpointTests
 {
     private readonly HttpClient _client;
 

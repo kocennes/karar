@@ -35,6 +35,7 @@ abstract final class ApiEndpoints {
   static const String feedback = '/api/v1/feedback';
   static const String notifications = '/api/v1/notifications';
   static const String notificationsReadAll = '/api/v1/notifications/read-all';
+  static const String notificationsEvents = '/api/v1/notifications/events';
 
   static const String userMe = '/api/v1/users/me';
   static const String userMePosts = '/api/v1/users/me/posts';
@@ -71,4 +72,5 @@ abstract final class ApiEndpoints {
   static const String moderationTransparency =
       '/api/v1/moderation/transparency';
 
+  static const String growthEvents = '/api/v1/growth-events';
 }

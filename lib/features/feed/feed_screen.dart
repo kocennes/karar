@@ -662,7 +662,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
               post: post,
               isSeen: seenPosts.contains(post.id),
               isFocused: focusedIndex == index,
-              onTap: () => context.push('/posts/${post.id}', extra: post),
+              onTap: () => context.push('/posts/${post.id}?source=feed', extra: post),
             ),
           );
         },

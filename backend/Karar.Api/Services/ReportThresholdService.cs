@@ -1,14 +1,21 @@
 namespace Karar.Api.Services;
 
-public sealed class ReportThresholdService
+public sealed class ReportThresholdService(IConfiguration? configuration = null)
 {
+    private readonly double _postThreshold =
+        configuration?.GetValue<double?>("Moderation:WeightedReportThresholds:Post") ?? 5.0;
+    private readonly double _commentThreshold =
+        configuration?.GetValue<double?>("Moderation:WeightedReportThresholds:Comment") ?? 3.0;
+    private readonly double _criticalThreshold =
+        configuration?.GetValue<double?>("Moderation:WeightedReportThresholds:Critical") ?? 3.0;
+
     public ReportThresholdDecision Evaluate(
         string targetType,
         double weightedReporterCount,
         double weightedCriticalCount
     )
     {
-        if (weightedCriticalCount >= 3.0)
+        if (weightedCriticalCount >= _criticalThreshold)
         {
             return ReportThresholdDecision.AutoHide(
                 "critical",
@@ -16,7 +23,7 @@ public sealed class ReportThresholdService
             );
         }
 
-        if (targetType == "post" && weightedReporterCount >= 5.0)
+        if (targetType == "post" && weightedReporterCount >= _postThreshold)
         {
             return ReportThresholdDecision.AutoHide(
                 "high",
@@ -24,7 +31,7 @@ public sealed class ReportThresholdService
             );
         }
 
-        if (targetType == "comment" && weightedReporterCount >= 3.0)
+        if (targetType == "comment" && weightedReporterCount >= _commentThreshold)
         {
             return ReportThresholdDecision.AutoHide(
                 "medium",

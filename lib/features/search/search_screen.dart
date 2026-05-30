@@ -223,7 +223,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
         return PostCard(
           post: post,
           searchQuery: state.query,
-          onTap: () => context.push('/posts/${post.id}', extra: post),
+          onTap: () => context.push('/posts/${post.id}?source=search', extra: post),
         );
       },
     );

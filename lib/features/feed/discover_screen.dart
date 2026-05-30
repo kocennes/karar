@@ -11,6 +11,7 @@ import '../../shared/widgets/karar_logo.dart';
 import '../../shared/widgets/skeleton.dart';
 import '../post_detail/comment_list.dart';
 import '../post_detail/post_detail_provider.dart';
+import '../post_detail/share_picker_sheet.dart';
 import '../post_detail/vote_bar.dart';
 import 'discover_feed_provider.dart';
 
@@ -78,6 +79,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen>
 
     final dwell = DateTime.now().difference(_pageEnteredAt).inSeconds;
     final repo = ref.read(postRepositoryProvider);
+    final analytics = ref.read(analyticsServiceProvider);
     _activePostId = null;
 
     if (dwell >= 3) {
@@ -86,12 +88,26 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen>
         eventType: 'dwell',
         dwellSeconds: dwell,
         impressionToken: item.impressionToken,
+        rankingReason: item.rankingReason,
+      );
+      analytics.logDiscoverDwell(
+        postId: item.post.id,
+        durationSeconds: dwell,
+        position: index,
+        rankingReason: item.rankingReason,
       );
     } else {
       repo.sendDiscoverEvent(
         postId: item.post.id,
         eventType: 'skip',
         impressionToken: item.impressionToken,
+        rankingReason: item.rankingReason,
+      );
+      analytics.logDiscoverSkip(
+        postId: item.post.id,
+        durationSeconds: dwell,
+        position: index,
+        rankingReason: item.rankingReason,
       );
     }
   }
@@ -107,6 +123,12 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen>
           postId: item.post.id,
           eventType: 'impression',
           impressionToken: item.impressionToken,
+          rankingReason: item.rankingReason,
+        );
+    ref.read(analyticsServiceProvider).logDiscoverImpression(
+          postId: item.post.id,
+          position: index,
+          rankingReason: item.rankingReason,
         );
   }
 
@@ -196,6 +218,11 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen>
                         postId: item.post.id,
                         eventType: 'not_interested',
                         impressionToken: item.impressionToken,
+                        rankingReason: item.rankingReason,
+                      );
+                  ref.read(analyticsServiceProvider).logPostNotInterested(
+                        postId: item.post.id,
+                        rankingReason: item.rankingReason,
                       );
                   ref
                       .read(postRepositoryProvider)
@@ -212,8 +239,27 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen>
                         postId: item.post.id,
                         eventType: 'comment_open',
                         impressionToken: item.impressionToken,
+                        rankingReason: item.rankingReason,
+                      );
+                  ref.read(analyticsServiceProvider).logDiscoverCommentOpen(
+                        postId: item.post.id,
+                        position: index,
+                        rankingReason: item.rankingReason,
                       );
                   _showCommentsSheet(context, item.post);
+                },
+                onShare: () {
+                  ref.read(postRepositoryProvider).sendDiscoverEvent(
+                        postId: item.post.id,
+                        eventType: 'share',
+                        impressionToken: item.impressionToken,
+                        rankingReason: item.rankingReason,
+                      );
+                  ref.read(analyticsServiceProvider).logPostShared(
+                        postId: item.post.id,
+                        category: item.post.category.name,
+                      );
+                  SharePickerSheet.show(context, item.post);
                 },
                 onSave: (isSaved) async {
                   final repo = ref.read(postRepositoryProvider);
@@ -225,6 +271,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen>
                           postId: item.post.id,
                           eventType: 'save',
                           impressionToken: item.impressionToken,
+                          rankingReason: item.rankingReason,
                         );
                   }
                 },
@@ -262,6 +309,7 @@ class _DiscoverCard extends ConsumerStatefulWidget {
     required this.onVote,
     required this.onNotInterested,
     required this.onCommentOpen,
+    required this.onShare,
     required this.onSave,
   });
 
@@ -271,6 +319,7 @@ class _DiscoverCard extends ConsumerStatefulWidget {
   final Future<void> Function(VoteType voteType) onVote;
   final VoidCallback onNotInterested;
   final VoidCallback onCommentOpen;
+  final VoidCallback onShare;
   final Future<void> Function(bool isSaved) onSave;
 
   @override
@@ -310,23 +359,17 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 56, 12, 8),
-        child: Card(
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-            side: BorderSide(
-              color: theme.dividerColor.withValues(alpha: 0.08),
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Progress indicator
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+    return Material(
+      color: theme.colorScheme.surface,
+      child: Column(
+        children: [
+          // Header sits under the transparent AppBar
+          SafeArea(
+            bottom: false,
+            child: SizedBox(
+              height: kToolbarHeight,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Row(
                   children: [
                     _RankingBadge(reason: widget.item.rankingReason),
@@ -341,144 +384,144 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
                   ],
                 ),
               ),
+            ),
+          ),
 
-              // Scrollable content area
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Category chip
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: AppColors.primary.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(20),
+          // Scrollable content (edge-to-edge)
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Category chip
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      '${post.category.icon} ${post.category.name}',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.primary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Title
+                  GestureDetector(
+                    onTap: () => context.push('/posts/${post.id}', extra: post),
+                    child: Text(
+                      post.title,
+                      style: theme.textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        height: 1.3,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+
+                  // Content (expandable)
+                  if (post.content.isNotEmpty) ...[
+                    GestureDetector(
+                      onTap: () => setState(() => _expanded = !_expanded),
+                      child: Text(
+                        post.content,
+                        maxLines: _expanded ? null : 5,
+                        overflow: _expanded
+                            ? TextOverflow.visible
+                            : TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                          height: 1.5,
                         ),
-                        child: Text(
-                          '${post.category.icon} ${post.category.name}',
-                          style: const TextStyle(
-                            fontSize: 12,
+                      ),
+                    ),
+                    if (!_expanded && post.content.length > 200)
+                      GestureDetector(
+                        onTap: () => setState(() => _expanded = true),
+                        child: const Text(
+                          'Devamını oku',
+                          style: TextStyle(
                             color: AppColors.primary,
+                            fontSize: 13,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
                       ),
-                      const SizedBox(height: 12),
+                    const SizedBox(height: 10),
+                  ],
 
-                      // Title
-                      GestureDetector(
-                        onTap: () =>
-                            context.push('/posts/${post.id}', extra: post),
-                        child: Text(
-                          post.title,
-                          style: theme.textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.bold,
-                            height: 1.3,
-                          ),
-                        ),
+                  // Image
+                  if (post.imageUrl != null) ...[
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Image.network(
+                        post.imageUrl!,
+                        width: double.infinity,
+                        height: 220,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                       ),
-                      const SizedBox(height: 10),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
 
-                      // Content (expandable)
-                      if (post.content.isNotEmpty) ...[
-                        GestureDetector(
-                          onTap: () => setState(() => _expanded = !_expanded),
-                          child: Text(
-                            post.content,
-                            maxLines: _expanded ? null : 5,
-                            overflow: _expanded
-                                ? TextOverflow.visible
-                                : TextOverflow.ellipsis,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
-                              height: 1.5,
-                            ),
-                          ),
-                        ),
-                        if (!_expanded && post.content.length > 200)
-                          GestureDetector(
-                            onTap: () => setState(() => _expanded = true),
-                            child: const Text(
-                              'Devamını oku',
-                              style: TextStyle(
-                                color: AppColors.primary,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        const SizedBox(height: 10),
-                      ],
-
-                      // Image
-                      if (post.imageUrl != null) ...[
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: Image.network(
-                            post.imageUrl!,
-                            width: double.infinity,
-                            height: 200,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) =>
-                                const SizedBox.shrink(),
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                      ],
-
-                      // Author + time
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.person_outline,
-                            size: 14,
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            post.isAnonymous
-                                ? 'Anonim'
-                                : (post.authorName ?? 'Anonim'),
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            '·',
-                            style: TextStyle(
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            post.createdAgo,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
+                  // Author + time
+                  Row(
+                    children: [
+                      Icon(Icons.person_outline,
+                          size: 14, color: theme.colorScheme.onSurfaceVariant),
+                      const SizedBox(width: 4),
+                      Text(
+                        post.isAnonymous
+                            ? 'Anonim'
+                            : (post.authorName ?? 'Anonim'),
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: theme.colorScheme.onSurfaceVariant),
+                      ),
+                      const SizedBox(width: 6),
+                      Text('·',
+                          style: TextStyle(
+                              color: theme.colorScheme.onSurfaceVariant)),
+                      const SizedBox(width: 6),
+                      Text(
+                        post.createdAgo,
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: theme.colorScheme.onSurfaceVariant),
                       ),
                     ],
                   ),
-                ),
+                  const SizedBox(height: 8),
+                ],
               ),
+            ),
+          ),
 
-              // Bottom section: vote bar + buttons
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+          // Bottom bar: vote bar + vote buttons + action row
+          DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(
+                    color: theme.dividerColor.withValues(alpha: 0.12)),
+              ),
+            ),
+            child: SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    // VoteBar (visual)
                     VoteBar(post: post, isCompact: true),
                     const SizedBox(height: 8),
-
-                    // Vote buttons
                     Row(
                       children: [
                         Expanded(
@@ -507,19 +550,21 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 10),
-
-                    // Action row
+                    const SizedBox(height: 6),
                     Row(
                       children: [
-                        // Comments
                         _ActionButton(
                           icon: Icons.chat_bubble_outline_rounded,
                           label: '${post.commentCount}',
                           onTap: widget.onCommentOpen,
                         ),
-                        const SizedBox(width: 4),
-                        // Save
+                        const SizedBox(width: 2),
+                        _ActionButton(
+                          icon: Icons.share_rounded,
+                          label: '',
+                          onTap: widget.onShare,
+                        ),
+                        const SizedBox(width: 2),
                         _ActionButton(
                           icon: _isSaved
                               ? Icons.bookmark_rounded
@@ -536,8 +581,7 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
                             }
                           },
                         ),
-                        const SizedBox(width: 4),
-                        // Open full post
+                        const SizedBox(width: 2),
                         _ActionButton(
                           icon: Icons.open_in_new_rounded,
                           label: '',
@@ -545,7 +589,6 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
                               context.push('/posts/${post.id}', extra: post),
                         ),
                         const Spacer(),
-                        // Not interested
                         TextButton(
                           onPressed: widget.onNotInterested,
                           style: TextButton.styleFrom(
@@ -567,9 +610,9 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
                   ],
                 ),
               ),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -831,6 +874,16 @@ class _CommentsBody extends ConsumerWidget {
       return const Center(child: CircularProgressIndicator());
     }
 
+    if (detailState.error != null && detailState.comments.isEmpty) {
+      return Center(
+        child: ErrorView(
+          message: detailState.error!,
+          onRetry: () =>
+              ref.read(postDetailProvider(postId).notifier).loadComments(),
+        ),
+      );
+    }
+
     if (detailState.comments.isEmpty) {
       return const EmptyState(
         message: 'Henüz yorum yok. İlk yorumu sen yap.',
@@ -850,6 +903,8 @@ class _CommentsBody extends ConsumerWidget {
           ref.read(postDetailProvider(postId).notifier).downvoteComment(c),
       onDelete: (c) =>
           ref.read(postDetailProvider(postId).notifier).deleteComment(c),
+      onReply: (c) =>
+          ref.read(postDetailProvider(postId).notifier).setReplyingTo(c),
     );
   }
 }
@@ -866,11 +921,13 @@ class _DiscoverCommentInput extends ConsumerStatefulWidget {
 
 class _DiscoverCommentInputState extends ConsumerState<_DiscoverCommentInput> {
   final _ctrl = TextEditingController();
+  final _focusNode = FocusNode();
   var _loading = false;
 
   @override
   void dispose() {
     _ctrl.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 
@@ -883,6 +940,7 @@ class _DiscoverCommentInputState extends ConsumerState<_DiscoverCommentInput> {
           .read(postDetailProvider(widget.postId).notifier)
           .submitComment(text);
       _ctrl.clear();
+      ref.read(postDetailProvider(widget.postId).notifier).cancelReply();
     } catch (_) {
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -892,6 +950,17 @@ class _DiscoverCommentInputState extends ConsumerState<_DiscoverCommentInput> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final replyingTo = ref.watch(
+      postDetailProvider(widget.postId).select((s) => s.replyingToComment),
+    );
+
+    ref.listen(
+      postDetailProvider(widget.postId).select((s) => s.replyingToComment),
+      (prev, next) {
+        if (next != null && prev == null) _focusNode.requestFocus();
+      },
+    );
+
     return SafeArea(
       child: Padding(
         padding: EdgeInsets.only(
@@ -900,40 +969,83 @@ class _DiscoverCommentInputState extends ConsumerState<_DiscoverCommentInput> {
           bottom: MediaQuery.of(context).viewInsets.bottom + 8,
           top: 8,
         ),
-        child: Row(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Expanded(
-              child: TextField(
-                controller: _ctrl,
-                maxLines: null,
-                textInputAction: TextInputAction.send,
-                onSubmitted: (_) => _submit(),
-                decoration: InputDecoration(
-                  hintText: 'Yorum yaz…',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(20),
-                    borderSide: BorderSide.none,
-                  ),
-                  filled: true,
-                  fillColor: theme.colorScheme.surfaceContainerHighest
-                      .withValues(alpha: 0.5),
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            if (replyingTo != null)
+              Container(
+                margin: const EdgeInsets.only(bottom: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.reply_rounded,
+                        size: 14, color: AppColors.primary),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '@${replyingTo.authorName ?? 'kullanıcı'} yanıtlanıyor',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () => ref
+                          .read(postDetailProvider(widget.postId).notifier)
+                          .cancelReply(),
+                      child: Icon(Icons.close_rounded,
+                          size: 16,
+                          color: theme.colorScheme.onSurfaceVariant),
+                    ),
+                  ],
                 ),
               ),
-            ),
-            const SizedBox(width: 8),
-            _loading
-                ? const SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : IconButton(
-                    onPressed: _submit,
-                    icon: const Icon(Icons.send_rounded),
-                    color: AppColors.primary,
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _ctrl,
+                    focusNode: _focusNode,
+                    maxLines: null,
+                    textInputAction: TextInputAction.send,
+                    onSubmitted: (_) => _submit(),
+                    decoration: InputDecoration(
+                      hintText:
+                          replyingTo != null ? 'Yanıt yaz…' : 'Yorum yaz…',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        borderSide: BorderSide.none,
+                      ),
+                      filled: true,
+                      fillColor: theme.colorScheme.surfaceContainerHighest
+                          .withValues(alpha: 0.5),
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 10),
+                    ),
                   ),
+                ),
+                const SizedBox(width: 8),
+                _loading
+                    ? const SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : IconButton(
+                        onPressed: _submit,
+                        icon: const Icon(Icons.send_rounded),
+                        color: AppColors.primary,
+                      ),
+              ],
+            ),
           ],
         ),
       ),
@@ -948,45 +1060,76 @@ class _DiscoverLoadingSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const SafeArea(
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(12, 56, 12, 8),
-        child: Card(
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.all(Radius.circular(20)),
+    return const Column(
+      children: [
+        SafeArea(
+          bottom: false,
+          child: SizedBox(
+            height: kToolbarHeight,
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  Skeleton(height: 22, width: 90, borderRadius: 12),
+                  Spacer(),
+                  Skeleton(height: 14, width: 40),
+                ],
+              ),
+            ),
           ),
+        ),
+        Expanded(
           child: Padding(
-            padding: EdgeInsets.all(16),
+            padding: EdgeInsets.fromLTRB(20, 12, 20, 8),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Skeleton(height: 20, width: 80, borderRadius: 12),
-                SizedBox(height: 16),
-                Skeleton(height: 24, width: double.infinity),
+                Skeleton(height: 22, width: 100, borderRadius: 20),
+                SizedBox(height: 14),
+                Skeleton(height: 26, width: double.infinity),
                 SizedBox(height: 8),
-                Skeleton(height: 24, width: 200),
+                Skeleton(height: 26, width: 220),
                 SizedBox(height: 16),
-                Skeleton(height: 14, width: double.infinity),
+                Skeleton(height: 15, width: double.infinity),
                 SizedBox(height: 6),
-                Skeleton(height: 14, width: double.infinity),
+                Skeleton(height: 15, width: double.infinity),
                 SizedBox(height: 6),
-                Skeleton(height: 14, width: 180),
-                Spacer(),
-                Skeleton(height: 48, width: double.infinity, borderRadius: 10),
+                Skeleton(height: 15, width: 190),
+              ],
+            ),
+          ),
+        ),
+        SafeArea(
+          top: false,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(16, 8, 16, 10),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Skeleton(height: 10, width: double.infinity, borderRadius: 5),
                 SizedBox(height: 8),
                 Row(
                   children: [
-                    Expanded(child: Skeleton(height: 42, borderRadius: 10)),
+                    Expanded(child: Skeleton(height: 44, borderRadius: 10)),
                     SizedBox(width: 8),
-                    Expanded(child: Skeleton(height: 42, borderRadius: 10)),
+                    Expanded(child: Skeleton(height: 44, borderRadius: 10)),
+                  ],
+                ),
+                SizedBox(height: 6),
+                Row(
+                  children: [
+                    Skeleton(height: 32, width: 60, borderRadius: 8),
+                    SizedBox(width: 8),
+                    Skeleton(height: 32, width: 40, borderRadius: 8),
+                    SizedBox(width: 8),
+                    Skeleton(height: 32, width: 40, borderRadius: 8),
                   ],
                 ),
               ],
             ),
           ),
         ),
-      ),
+      ],
     );
   }
 }

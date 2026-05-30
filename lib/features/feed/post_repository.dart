@@ -5,12 +5,24 @@ import '../../core/api/api_client.dart';
 import '../../core/api/api_endpoints.dart';
 import '../../shared/models/post.dart';
 
+class FeedResponse {
+  const FeedResponse({
+    required this.posts,
+    required this.hasMore,
+    this.rankingLabel,
+  });
+
+  final List<Post> posts;
+  final bool hasMore;
+  final String? rankingLabel;
+}
+
 class PostRepository {
   const PostRepository({required ApiClient apiClient}) : _apiClient = apiClient;
 
   final ApiClient _apiClient;
 
-  Future<List<Post>> fetchFeed({
+  Future<FeedResponse> fetchFeed({
     int page = 1,
     int limit = 20,
     int? categoryId,
@@ -27,7 +39,14 @@ class PostRepository {
         if (afterId != null) 'afterId': afterId,
       },
     );
-    return _readPosts(json);
+    final posts = _readPosts(json);
+    final pagination = json['pagination'] as Map<String, Object?>?;
+    final hasMore = pagination?['hasNext'] as bool? ?? posts.length >= limit;
+    return FeedResponse(
+      posts: posts,
+      hasMore: hasMore,
+      rankingLabel: json['rankingLabel'] as String?,
+    );
   }
 
   Future<List<Post>> search(
@@ -87,6 +106,7 @@ class PostRepository {
     required String eventType,
     int? dwellSeconds,
     String? impressionToken,
+    String? rankingReason,
   }) async {
     try {
       await _apiClient.postJson<void>(
@@ -96,6 +116,8 @@ class PostRepository {
           'eventType': eventType,
           if (dwellSeconds != null) 'dwellSeconds': dwellSeconds,
           if (impressionToken != null) 'impressionToken': impressionToken,
+          if (rankingReason != null)
+            'metadata': {'ranking_reason': rankingReason},
         },
       );
     } catch (_) {}
@@ -234,6 +256,8 @@ class PostRepository {
     List<String>? pollOptions,
     bool isUnlisted = false,
     bool isAnonymous = true,
+    required bool acceptedTerms,
+    required bool acceptedCommunityGuidelines,
   }) async {
     if (images != null && images.isNotEmpty) {
       final image = images.first;
@@ -246,6 +270,8 @@ class PostRepository {
         if (pollOptions != null) 'pollOptions': pollOptions.join(','),
         'isUnlisted': isUnlisted.toString(),
         'isAnonymous': isAnonymous.toString(),
+        'acceptedTerms': acceptedTerms.toString(),
+        'acceptedCommunityGuidelines': acceptedCommunityGuidelines.toString(),
         'image_0': MultipartFile.fromBytes(
           bytes,
           filename: image.name.isEmpty ? 'image.jpg' : image.name,
@@ -265,6 +291,8 @@ class PostRepository {
           if (pollOptions != null) 'pollOptions': pollOptions,
           'isUnlisted': isUnlisted,
           'isAnonymous': isAnonymous,
+          'acceptedTerms': acceptedTerms,
+          'acceptedCommunityGuidelines': acceptedCommunityGuidelines,
         },
       );
     }

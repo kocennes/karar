@@ -23,6 +23,7 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
   final _titleController = TextEditingController();
   final _contentController = TextEditingController();
   bool _submitted = false;
+  bool _acceptedPolicy = false;
 
   @override
   void initState() {
@@ -117,8 +118,18 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
       return;
     }
 
+    if (!_acceptedPolicy) {
+      _showError('Kullanim kosullari ve topluluk kurallarini kabul etmelisin.');
+      return;
+    }
+
     final notifier = ref.read(createPostProvider.notifier);
-    final success = await notifier.submit(title: title, content: content);
+    final success = await notifier.submit(
+      title: title,
+      content: content,
+      acceptedTerms: _acceptedPolicy,
+      acceptedCommunityGuidelines: _acceptedPolicy,
+    );
 
     if (!mounted) return;
 
@@ -347,6 +358,29 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
                       contentPadding: EdgeInsets.zero,
                     ),
                     const SizedBox(height: 12),
+                    CheckboxListTile(
+                      value: _acceptedPolicy,
+                      onChanged: state.isLoading
+                          ? null
+                          : (value) => setState(
+                                () => _acceptedPolicy = value ?? false,
+                              ),
+                      controlAffinity: ListTileControlAffinity.leading,
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text(
+                        'Kullanim Kosullari ve Topluluk Kurallarini kabul ediyorum.',
+                      ),
+                    ),
+                    Center(
+                      child: TextButton(
+                        onPressed: () => context.push('/legal/terms'),
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        child: const Text('Kullanim Kosullari'),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
 
                     // Community guidelines link
                     Center(

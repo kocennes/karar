@@ -37,24 +37,66 @@ public sealed class SubnetBanService(
         return ip.ToString();
     }
 
+    private static readonly TimeSpan BanCacheTtl = TimeSpan.FromMinutes(1);
+    private static string BanCacheKey(string subnet) => $"ban:subnet:{subnet}";
+
     public async Task<bool> IsBannedAsync(IPAddress? ip)
     {
         var subnet = GetSubnet(ip);
         if (subnet is null) return false;
 
-        await using var connection = await db.OpenConnectionAsync();
-        await using var command = new NpgsqlCommand(
-            """
-            SELECT 1
-            FROM banned_subnets
-            WHERE subnet = @subnet
-              AND (expires_at IS NULL OR expires_at > NOW())
-            LIMIT 1
-            """,
-            connection
-        );
-        command.Parameters.AddWithValue("subnet", subnet);
-        return await command.ExecuteScalarAsync() is not null;
+        // Loopback and private IPs are never banned (also avoids DB roundtrip in tests)
+        if (ip is not null && (IPAddress.IsLoopback(ip) || IsPrivate(ip))) return false;
+
+        // Redis cache: avoid DB hit on every request for the same /24 subnet
+        var cacheKey = BanCacheKey(subnet);
+        try
+        {
+            var cached = await _cache.StringGetAsync(cacheKey);
+            if (cached.HasValue) return cached == "1";
+        }
+        catch { /* Redis unavailable: fall through to DB */ }
+
+        // Cache miss: query DB
+        bool isBanned;
+        try
+        {
+            await using var connection = await db.OpenConnectionAsync();
+            await using var command = new NpgsqlCommand(
+                """
+                SELECT 1
+                FROM banned_subnets
+                WHERE subnet = @subnet
+                  AND (expires_at IS NULL OR expires_at > NOW())
+                LIMIT 1
+                """,
+                connection
+            );
+            command.Parameters.AddWithValue("subnet", subnet);
+            isBanned = await command.ExecuteScalarAsync() is not null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // DB unreachable: fail open so we never block legitimate traffic
+            logger.LogWarning(ex, "SubnetBanService: DB unreachable for subnet {Subnet}, failing open", subnet);
+            return false;
+        }
+
+        // Populate cache (best-effort; ignore Redis errors)
+        try { await _cache.StringSetAsync(cacheKey, isBanned ? "1" : "0", BanCacheTtl); }
+        catch { }
+
+        return isBanned;
+    }
+
+    private static bool IsPrivate(IPAddress ip)
+    {
+        if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+        var b = ip.GetAddressBytes();
+        return ip.AddressFamily == AddressFamily.InterNetwork && (
+            b[0] == 10 ||
+            (b[0] == 172 && b[1] >= 16 && b[1] <= 31) ||
+            (b[0] == 192 && b[1] == 168));
     }
 
     public async Task RecordRateLimitRejectionAsync(IPAddress? ip)

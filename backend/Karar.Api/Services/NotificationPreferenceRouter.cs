@@ -142,13 +142,13 @@ public sealed class NotificationPreferenceRouter(ILogger<NotificationPreferenceR
         }
     }
 
-    private static bool IsCategoryEnabled(string type, NotificationPreferencesRequest prefs) => type switch
+    public static bool IsCategoryEnabled(string type, NotificationPreferencesRequest prefs) => type switch
     {
         "comment_on_post" => prefs.NotifyOnComment ?? true,
         "reply_on_comment" => prefs.NotifyOnReply ?? true,
         "verdict_milestone" or "viral_post_owner" => prefs.NotifyOnVerdict ?? true,
         "moderation_result" => prefs.NotifyOnPostStatus ?? true,
-        "mention" => prefs.NotifyOnMention ?? true,
+        "mention" or "follow" => prefs.NotifyOnMention ?? true,
         "trend_alert" => prefs.NotifyOnTrend ?? false,
         "weekly_digest" => prefs.NotifyOnDigest ?? false,
         "follow_new_post" => prefs.NotifyOnTrend ?? false,

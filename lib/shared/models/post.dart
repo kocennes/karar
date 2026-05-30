@@ -41,7 +41,8 @@ class PostPoll {
   }) =>
       PostPoll(
         options: options ?? this.options,
-        mySelectionId: clearSelection ? null : (mySelectionId ?? this.mySelectionId),
+        mySelectionId:
+            clearSelection ? null : (mySelectionId ?? this.mySelectionId),
         totalVotes: totalVotes ?? this.totalVotes,
       );
 }
@@ -225,7 +226,7 @@ class Comment {
       downvoteCount: downvoteCount ?? this.downvoteCount,
       createdAgo: createdAgo,
       authorId: authorId,
-      authorName: this.authorName,
+      authorName: authorName ?? this.authorName,
       parentId: parentId,
       replies: replies ?? this.replies,
       myUpvote: myUpvote ?? this.myUpvote,

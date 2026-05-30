@@ -49,13 +49,18 @@ class _LoginScreenState extends State<LoginScreen> {
       await widget.authService.loginWithPassword(
         identifier: _identifierCtrl.text.trim(),
         password: _passwordCtrl.text,
-        totpCode: (_showMfaField && !_useBackupCode) ? _totpCtrl.text.trim() : null,
-        backupCode: (_showMfaField && _useBackupCode) ? _backupCodeCtrl.text.trim() : null,
+        totpCode:
+            (_showMfaField && !_useBackupCode) ? _totpCtrl.text.trim() : null,
+        backupCode: (_showMfaField && _useBackupCode)
+            ? _backupCodeCtrl.text.trim()
+            : null,
       );
       widget.onSuccess?.call();
     } on ApiException catch (e) {
       if (e.code == 'EMAIL_NOT_VERIFIED') {
-        if (mounted) context.go('/auth/verify-email', extra: _identifierCtrl.text.trim());
+        if (mounted) {
+          context.go('/auth/verify-email', extra: _identifierCtrl.text.trim());
+        }
         return;
       }
       if (e.code == 'MFA_REQUIRED' || e.code == 'TWO_FACTOR_REQUIRED') {
@@ -156,8 +161,9 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     keyboardType: TextInputType.emailAddress,
                     textInputAction: TextInputAction.next,
-                    validator: (v) =>
-                        v == null || v.trim().isEmpty ? 'Bu alan gerekli.' : null,
+                    validator: (v) => v == null || v.trim().isEmpty
+                        ? 'Bu alan gerekli.'
+                        : null,
                   ),
                   const SizedBox(height: 20),
                   TextFormField(
@@ -193,9 +199,10 @@ class _LoginScreenState extends State<LoginScreen> {
                         maxLength: 6,
                         textInputAction: TextInputAction.done,
                         onFieldSubmitted: (_) => _submit(),
-                        validator: (v) => _useBackupCode || (v != null && v.length == 6)
-                            ? null
-                            : 'Geçerli bir kod girin.',
+                        validator: (v) =>
+                            _useBackupCode || (v != null && v.length == 6)
+                                ? null
+                                : 'Geçerli bir kod girin.',
                       )
                     else
                       TextFormField(
@@ -209,7 +216,8 @@ class _LoginScreenState extends State<LoginScreen> {
                         textCapitalization: TextCapitalization.characters,
                         textInputAction: TextInputAction.done,
                         onFieldSubmitted: (_) => _submit(),
-                        validator: (v) => !_useBackupCode || (v != null && v.trim().isNotEmpty)
+                        validator: (v) => !_useBackupCode ||
+                                (v != null && v.trim().isNotEmpty)
                             ? null
                             : 'Yedek kodu girin.',
                       ),
@@ -221,7 +229,9 @@ class _LoginScreenState extends State<LoginScreen> {
                           _error = null;
                         }),
                         child: Text(
-                          _useBackupCode ? '2FA kodunu kullan' : 'Yedek kod kullan',
+                          _useBackupCode
+                              ? '2FA kodunu kullan'
+                              : 'Yedek kod kullan',
                           style: const TextStyle(fontSize: 13),
                         ),
                       ),
@@ -232,7 +242,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: colorScheme.errorContainer.withOpacity(0.3),
+                        color:
+                            colorScheme.errorContainer.withValues(alpha: 0.3),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(
@@ -274,7 +285,9 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   const SizedBox(height: 16),
                   TextButton(
-                    onPressed: _isLoading ? null : () => context.push('/auth/forgot-password'),
+                    onPressed: _isLoading
+                        ? null
+                        : () => context.push('/auth/forgot-password'),
                     child: const Text('Şifremi Unuttum'),
                   ),
                   const SizedBox(height: 8),
@@ -305,4 +318,3 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 }
-

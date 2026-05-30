@@ -77,7 +77,7 @@ class AppServices {
       deviceService: deviceService,
     );
 
-    final analyticsService = AnalyticsService();
+    final analyticsService = AnalyticsService(apiClient: apiClient);
     final shareService = ShareService(analyticsService: analyticsService);
     final ratingService = RatingService();
     final sessionTracker = await SessionTracker.create();

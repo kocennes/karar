@@ -31,10 +31,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _passwordCtrl = TextEditingController();
   final _confirmPasswordCtrl = TextEditingController();
   final _dobCtrl = TextEditingController();
-  
+
   DateTime? _selectedDob;
   String? _selectedGender;
-  
+  bool _acceptedPolicy = false;
+
   var _isLoading = false;
   var _obscure = true;
   var _obscureConfirm = true;
@@ -68,7 +69,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   void _onUsernameChanged() {
     if (_debounce?.isActive ?? false) _debounce?.cancel();
-    
+
     final username = _usernameCtrl.text.trim();
     if (username.length < 3) {
       setState(() {
@@ -79,10 +80,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
 
     setState(() => _isCheckingUsername = true);
-    
+
     _debounce = Timer(const Duration(milliseconds: 500), () async {
       try {
-        final available = await widget.authService.isUsernameAvailable(username);
+        final available =
+            await widget.authService.isUsernameAvailable(username);
         if (mounted && _usernameCtrl.text.trim() == username) {
           setState(() {
             _isUsernameAvailable = available;
@@ -120,12 +122,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
-    
+
     if (_selectedDob == null) {
       setState(() => _error = 'Doğum tarihi seçmelisin.');
       return;
     }
-    
+
     if (_selectedGender == null) {
       setState(() => _error = 'Cinsiyet seçmelisin.');
       return;
@@ -133,6 +135,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     if (_isUsernameAvailable == false) {
       setState(() => _error = 'Bu kullanıcı adı zaten alınmış.');
+      return;
+    }
+
+    if (!_acceptedPolicy) {
+      setState(
+        () => _error =
+            'Kullanim kosullari ve topluluk kurallarini kabul etmelisin.',
+      );
       return;
     }
 
@@ -147,6 +157,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         password: _passwordCtrl.text,
         dateOfBirth: _selectedDob!,
         gender: _selectedGender!,
+        acceptedTerms: _acceptedPolicy,
+        acceptedCommunityGuidelines: _acceptedPolicy,
       );
       if (!mounted) return;
       context.go(_authLocation('/auth/verify-email'), extra: email);
@@ -228,12 +240,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: colorScheme.secondaryContainer.withOpacity(0.4),
+                      color:
+                          colorScheme.secondaryContainer.withValues(alpha: 0.4),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Row(
                       children: [
-                        Icon(Icons.info_outline, size: 20, color: colorScheme.secondary),
+                        Icon(Icons.info_outline,
+                            size: 20, color: colorScheme.secondary),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Text(
@@ -252,28 +266,34 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       prefixIcon: const Icon(Icons.alternate_email),
                       border: const OutlineInputBorder(),
                       helperText: '3-20 karakter, harf/rakam/alt çizgi',
-                      suffixIcon: _isCheckingUsername 
-                        ? const SizedBox(
-                            width: 20, 
-                            height: 20, 
-                            child: Padding(
-                              padding: EdgeInsets.all(12),
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          )
-                        : _isUsernameAvailable == null 
-                          ? null 
-                          : Icon(
-                              _isUsernameAvailable! ? Icons.check_circle_outline : Icons.error_outline,
-                              color: _isUsernameAvailable! ? Colors.green : colorScheme.error,
-                            ),
+                      suffixIcon: _isCheckingUsername
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: Padding(
+                                padding: EdgeInsets.all(12),
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              ))
+                          : _isUsernameAvailable == null
+                              ? null
+                              : Icon(
+                                  _isUsernameAvailable!
+                                      ? Icons.check_circle_outline
+                                      : Icons.error_outline,
+                                  color: _isUsernameAvailable!
+                                      ? Colors.green
+                                      : colorScheme.error,
+                                ),
                     ),
                     keyboardType: TextInputType.name,
                     textInputAction: TextInputAction.next,
                     validator: (v) {
                       final basic = Validators.username(v);
                       if (basic != null) return basic;
-                      if (_isUsernameAvailable == false) return 'Bu kullanıcı adı zaten alınmış.';
+                      if (_isUsernameAvailable == false) {
+                        return 'Bu kullanıcı adı zaten alınmış.';
+                      }
                       return null;
                     },
                   ),
@@ -300,11 +320,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       border: OutlineInputBorder(),
                       hintText: 'Gün/Ay/Yıl',
                     ),
-                    validator: (v) => v == null || v.isEmpty ? 'Doğum tarihi gerekli.' : null,
+                    validator: (v) =>
+                        v == null || v.isEmpty ? 'Doğum tarihi gerekli.' : null,
                   ),
                   const SizedBox(height: 20),
                   DropdownButtonFormField<String>(
-                    value: _selectedGender,
+                    initialValue: _selectedGender,
                     decoration: const InputDecoration(
                       labelText: 'Cinsiyet',
                       prefixIcon: Icon(Icons.people_outline),
@@ -314,15 +335,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       DropdownMenuItem(value: 'female', child: Text('Kadın')),
                       DropdownMenuItem(value: 'male', child: Text('Erkek')),
                       DropdownMenuItem(value: 'other', child: Text('Diğer')),
-                      DropdownMenuItem(value: 'prefer_not_to_say', child: Text('Belirtmek İstemiyorum')),
+                      DropdownMenuItem(
+                          value: 'prefer_not_to_say',
+                          child: Text('Belirtmek İstemiyorum')),
                     ],
                     onChanged: (v) => setState(() => _selectedGender = v),
-                    validator: (v) => v == null ? 'Cinsiyet seçimi gerekli.' : null,
+                    validator: (v) =>
+                        v == null ? 'Cinsiyet seçimi gerekli.' : null,
                   ),
                   const SizedBox(height: 20),
                   TextFormField(
                     controller: _passwordCtrl,
-                    onFieldSubmitted: (_) => _confirmPasswordFocus.requestFocus(),
+                    onFieldSubmitted: (_) =>
+                        _confirmPasswordFocus.requestFocus(),
                     decoration: InputDecoration(
                       labelText: 'Şifre',
                       prefixIcon: const Icon(Icons.lock_outline),
@@ -348,23 +373,56 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       prefixIcon: const Icon(Icons.lock_reset_outlined),
                       border: const OutlineInputBorder(),
                       suffixIcon: IconButton(
-                        onPressed: () => setState(() => _obscureConfirm = !_obscureConfirm),
+                        onPressed: () =>
+                            setState(() => _obscureConfirm = !_obscureConfirm),
                         icon: Icon(
-                          _obscureConfirm ? Icons.visibility_off : Icons.visibility,
+                          _obscureConfirm
+                              ? Icons.visibility_off
+                              : Icons.visibility,
                         ),
                       ),
                     ),
                     obscureText: _obscureConfirm,
                     textInputAction: TextInputAction.done,
                     onFieldSubmitted: (_) => _submit(),
-                    validator: (v) => Validators.passwordsMatch(v, _passwordCtrl.text),
+                    validator: (v) =>
+                        Validators.passwordsMatch(v, _passwordCtrl.text),
+                  ),
+                  const SizedBox(height: 16),
+                  CheckboxListTile(
+                    value: _acceptedPolicy,
+                    onChanged: _isLoading
+                        ? null
+                        : (value) => setState(
+                              () => _acceptedPolicy = value ?? false,
+                            ),
+                    controlAffinity: ListTileControlAffinity.leading,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text(
+                      'Kullanim Kosullari ve Topluluk Kurallarini kabul ediyorum.',
+                    ),
+                  ),
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 8,
+                    children: [
+                      TextButton(
+                        onPressed: () => context.push('/legal/terms'),
+                        child: const Text('Kullanim Kosullari'),
+                      ),
+                      TextButton(
+                        onPressed: () => context.push('/legal/community'),
+                        child: const Text('Topluluk Kurallari'),
+                      ),
+                    ],
                   ),
                   if (_error != null) ...[
                     const SizedBox(height: 16),
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: colorScheme.errorContainer.withOpacity(0.3),
+                        color:
+                            colorScheme.errorContainer.withValues(alpha: 0.3),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(
@@ -434,4 +492,3 @@ class _RegisterScreenState extends State<RegisterScreen> {
     return '$path?returnTo=${Uri.encodeQueryComponent(target)}';
   }
 }
-

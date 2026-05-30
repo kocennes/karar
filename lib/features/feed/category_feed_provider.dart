@@ -11,10 +11,18 @@ class CategoryFeedNotifier extends FamilyNotifier<FeedState, int> {
   FeedState build(int arg) {
     if (!AppRuntime.useRemoteApi) {
       final filtered = samplePosts.where((p) => p.category.id == arg).toList();
-      return FeedState(posts: filtered, categoryId: arg);
+      return FeedState(
+        posts: filtered,
+        categoryId: arg,
+        rankingLabel: feedRankingLabelFor(sort: 'trending', categoryId: arg),
+      );
     }
     Future.microtask(() => _fetch(page: 1));
-    return FeedState(isLoading: true, categoryId: arg);
+    return FeedState(
+      isLoading: true,
+      categoryId: arg,
+      rankingLabel: feedRankingLabelFor(sort: 'trending', categoryId: arg),
+    );
   }
 
   PostRepository get _repo => ref.read(postRepositoryProvider);
@@ -31,7 +39,12 @@ class CategoryFeedNotifier extends FamilyNotifier<FeedState, int> {
   }
 
   Future<void> changeSort(String sort) {
-    state = state.copyWith(isLoading: true, sort: sort, clearError: true);
+    state = state.copyWith(
+      isLoading: true,
+      sort: sort,
+      rankingLabel: feedRankingLabelFor(sort: sort, categoryId: arg),
+      clearError: true,
+    );
     return _fetch(page: 1, sort: sort);
   }
 
@@ -54,6 +67,10 @@ class CategoryFeedNotifier extends FamilyNotifier<FeedState, int> {
         sort: effectiveSort,
         categoryId: categoryId,
         hasMore: false,
+        rankingLabel: feedRankingLabelFor(
+          sort: effectiveSort,
+          categoryId: categoryId,
+        ),
       );
       return;
     }
@@ -65,14 +82,16 @@ class CategoryFeedNotifier extends FamilyNotifier<FeedState, int> {
         sort: effectiveSort,
       );
 
-      final newPosts = page == 1 ? result : [...state.posts, ...result];
+      final newPosts =
+          page == 1 ? result.posts : [...state.posts, ...result.posts];
       state = state.copyWith(
         posts: newPosts,
         isLoading: false,
         isLoadingMore: false,
         sort: effectiveSort,
         page: page,
-        hasMore: result.length >= 20,
+        hasMore: result.hasMore,
+        rankingLabel: result.rankingLabel,
         clearError: true,
       );
     } catch (e) {

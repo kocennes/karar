@@ -18,7 +18,8 @@ public sealed record PagedResponse<T>(
 public sealed record FeedResponse(
     IReadOnlyList<PostDto> Posts,
     Pagination Pagination,
-    string? RankingLabel = null
+    string? RankingLabel = null,
+    string? NextCursor = null
 );
 
 public sealed record DiscoverResponse(

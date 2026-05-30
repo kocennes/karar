@@ -26,7 +26,9 @@ public sealed record CreatePostRequest(
     string? ImageUrl = null,
     bool IsUnlisted = false,
     bool IsAnonymous = false,
-    IReadOnlyList<string>? Tags = null
+    IReadOnlyList<string>? Tags = null,
+    bool AcceptedTerms = false,
+    bool AcceptedCommunityGuidelines = false
 );
 
 public sealed record VoteRequest([Required] string VoteType);
@@ -145,6 +147,26 @@ public sealed record DiscoverEventRequest(
     string? Metadata = null
 );
 
+public sealed record GrowthEventRequest(
+    [Required] string EventType,
+    Guid? PostId = null,
+    [StringLength(100)] string? Source = null,
+    [StringLength(50)] string? Platform = null,
+    [StringLength(200)] string? ReferrerCode = null
+);
+
+public sealed record AdminScheduledReportRequest(
+    [Required] string Report,
+    [Required] string Frequency,
+    [Required] string Format,
+    [StringLength(120)] string? Name = null,
+    [StringLength(80)] string? Timezone = null,
+    [StringLength(30)] string? Platform = null,
+    [StringLength(30)] string? UserType = null,
+    [StringLength(60)] string? Source = null,
+    int? CategoryId = null
+);
+
 public sealed record AdminLoginRequest(
     [Required, EmailAddress] string Email,
     [Required] string Password,
@@ -190,7 +212,9 @@ public sealed record RegisterRequest(
     [Required, EmailAddress] string Email,
     [Required, StringLength(72, MinimumLength = 8)] string Password,
     [Required] DateTime DateOfBirth,
-    [Required] string Gender
+    [Required] string Gender,
+    bool AcceptedTerms = false,
+    bool AcceptedCommunityGuidelines = false
 );
 
 public sealed record VerifyEmailRequest(

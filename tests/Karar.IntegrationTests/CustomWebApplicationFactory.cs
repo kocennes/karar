@@ -24,8 +24,11 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         {
             config.AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["ConnectionStrings:Postgres"] = "Host=localhost;Port=5432;Database=karar_test;Username=karar;Password=karar_dev_password",
-                ["ConnectionStrings:Redis"] = "localhost:6379,abortConnect=false",
+                // Short timeouts so tests fail fast instead of hanging:
+                // - Postgres: Timeout=3 (connection), Command Timeout=3 (query) instead of 15s defaults
+                // - Redis: connectTimeout=500ms instead of the 5000ms default that can block for 30s
+                ["ConnectionStrings:Postgres"] = "Host=localhost;Port=5432;Database=karar_test;Username=karar;Password=karar_dev_password;Timeout=2;Command Timeout=2",
+                ["ConnectionStrings:Redis"] = "localhost:6379,abortConnect=false,connectTimeout=500,syncTimeout=200",
                 ["Admin:Token"] = "test-admin-token",
                 ["Admin:Email"] = "admin@test.local",
                 ["Admin:Password"] = "test-admin-password",

@@ -48,9 +48,18 @@ public sealed class NotificationRateLimiterTests
 
     [Theory]
     [InlineData("moderation_result", NotificationPriority.Critical)]
+    [InlineData("system_announcement", NotificationPriority.Critical)]
+    [InlineData("reply_on_comment", NotificationPriority.High)]
+    [InlineData("mention", NotificationPriority.High)]
+    [InlineData("follow", NotificationPriority.High)]
     [InlineData("verdict_milestone", NotificationPriority.High)]
+    [InlineData("viral_post_owner", NotificationPriority.High)]
     [InlineData("comment_on_post", NotificationPriority.Normal)]
-    public void GetPriority_MapsNotificationTypes(string type, NotificationPriority expected)
+    [InlineData("verdict_reminder", NotificationPriority.Normal)]
+    [InlineData("trend_alert", NotificationPriority.Normal)]
+    [InlineData("follow_new_post", NotificationPriority.Normal)]
+    [InlineData("weekly_digest", NotificationPriority.Normal)]
+    public void GetPriority_MapsAllConstraintTypes(string type, NotificationPriority expected)
     {
         NotificationRateLimiter.GetPriority(type).Should().Be(expected);
     }

@@ -1,5 +1,6 @@
 using Npgsql;
 using Google.Apis.Auth.OAuth2;
+using Karar.Api.Observability;
 
 namespace Karar.Api.Data;
 
@@ -22,6 +23,9 @@ public sealed class Db
 
     public async Task<NpgsqlConnection> OpenConnectionAsync()
     {
+        using var activity = KararTelemetry.StartActivity("postgres.open_connection");
+        activity?.SetTag("db.system", "postgresql");
+
         if (_useIamAuth)
         {
             if (string.IsNullOrWhiteSpace(_iamUser))

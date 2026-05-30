@@ -11,7 +11,7 @@ public sealed class TrendScoreUpdater(
     private readonly string _connectionString = Karar.Api.Data.Db.ConvertToKeyValue(
         configuration.GetConnectionString("Postgres")
         ?? throw new InvalidOperationException("ConnectionStrings:Postgres is missing."));
-    private static readonly TimeSpan Interval = TimeSpan.FromMinutes(2); // Reduced interval for distributed updates
+    private static readonly TimeSpan Interval = TimeSpan.FromMinutes(2);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -21,14 +21,12 @@ public sealed class TrendScoreUpdater(
         {
             try
             {
-                // 1. Önce "dirty" (etkileşim almış) postları hızla güncelle
+                // 1. Fast path: only posts that received interactions since the last cycle
                 await UpdateDirtyTrendScoresAsync(stoppingToken);
 
-                // 2. Her 10 dakikada bir tüm aktif postları (zaman aşımı cezası için) güncelle
+                // 2. Slow path: age-decay all active posts every 10 minutes
                 if (DateTime.UtcNow.Minute % 10 == 0)
-                {
                     await UpdateAllActiveTrendScoresAsync(stoppingToken);
-                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -44,15 +42,8 @@ public sealed class TrendScoreUpdater(
         var dirtyPostIds = await redis.GetDirtyPostsAsync(100);
         if (dirtyPostIds.Count == 0) return;
 
-        await using var connection = new NpgsqlConnection(_connectionString);
-        await connection.OpenAsync(ct);
-
-        var updates = await ComputeSmoothedScoresAsync(connection, dirtyPostIds, ct);
-        if (updates.Count > 0)
-        {
-            await BatchUpdateScoresAsync(connection, updates, ct);
-            logger.LogDebug("{Count} adet etkileşimli postun trend skoru güncellendi", updates.Count);
-        }
+        await RefreshScoresAsync(dirtyPostIds, ct);
+        logger.LogDebug("{Count} adet etkileşimli postun trend skoru güncellendi", dirtyPostIds.Count);
     }
 
     private async Task UpdateAllActiveTrendScoresAsync(CancellationToken ct)
@@ -60,128 +51,27 @@ public sealed class TrendScoreUpdater(
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(ct);
 
-        // Get all active post IDs for bulk processing
-        await using var idCmd = new NpgsqlCommand("SELECT id FROM posts WHERE status = 'active'", connection);
+        await using var idCmd = new NpgsqlCommand(
+            "SELECT id FROM posts WHERE status = 'active'", connection);
         var allIds = new List<Guid>();
         await using (var r = await idCmd.ExecuteReaderAsync(ct))
-        {
             while (await r.ReadAsync(ct)) allIds.Add(r.GetGuid(0));
-        }
 
-        var updates = await ComputeSmoothedScoresAsync(connection, allIds, ct);
-        if (updates.Count > 0)
-        {
-            await BatchUpdateScoresAsync(connection, updates, ct);
-            logger.LogDebug("Tüm aktif postların ({Count}) trend skorları tazelendi", updates.Count);
-        }
+        if (allIds.Count == 0) return;
+        await RefreshScoresAsync(allIds, ct);
+        logger.LogDebug("Tüm aktif postların ({Count}) trend skorları tazelendi", allIds.Count);
     }
 
-    // Uses COUNT(DISTINCT device fingerprint) to deduplicate coordinated voting,
-    // then applies EWMA velocity smoothing (alpha=0.3) to dampen sudden spikes.
-    private async Task<List<(Guid Id, double Score)>> ComputeSmoothedScoresAsync(
-        NpgsqlConnection connection,
-        List<Guid> postIds,
-        CancellationToken ct)
+    // Delegates all computation to the pure-SQL refresh_trend_scores() function (V47 migration).
+    // EWMA state (velocity + prev_votes) is persisted in the posts table itself; Redis is no
+    // longer used for EWMA, only for the dirty-post queue.
+    private async Task RefreshScoresAsync(List<Guid> postIds, CancellationToken ct)
     {
-        if (postIds.Count == 0) return [];
-
-        // Fingerprint-deduplicated vote counts per post, with geographic spread count,
-        // toxicity, reports and quality comment signals.
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(ct);
         await using var cmd = new NpgsqlCommand(
-            """
-            SELECT p.id,
-                   COUNT(DISTINCT CASE WHEN v.vote_type = 'hakli' THEN d.fingerprint END)::int AS unique_hakli,
-                   COUNT(DISTINCT CASE WHEN v.vote_type = 'haksiz' THEN d.fingerprint END)::int AS unique_haksiz,
-                   p.comment_count,
-                   p.created_at,
-                   COALESCE(pvd.avg_dwell_seconds, 0) AS avg_dwell_seconds,
-                   COALESCE(pvd.total_exposures, 0)::int AS total_exposures,
-                   COUNT(DISTINCT v.voter_region) FILTER (WHERE v.voter_region IS NOT NULL)::int AS distinct_regions,
-                   p.perspective_toxicity,
-                   (SELECT COUNT(*)::int FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') AS pending_reports,
-                   (SELECT COUNT(*)::int FROM comments c WHERE c.post_id = p.id AND c.status = 'active' AND char_length(c.content) >= 100) AS quality_comments
-            FROM posts p
-            LEFT JOIN votes v ON v.post_id = p.id AND v.is_quarantined = FALSE
-            LEFT JOIN devices d ON d.id = v.device_id AND NOT d.is_banned
-            LEFT JOIN (
-                SELECT post_id,
-                       SUM(dwell_seconds_total)::double precision / NULLIF(SUM(dwell_count), 0) AS avg_dwell_seconds,
-                       SUM(view_count) AS total_exposures
-                FROM post_views
-                GROUP BY post_id
-            ) pvd ON pvd.post_id = p.id
-            WHERE p.id = ANY(@ids) AND p.status = 'active'
-            GROUP BY p.id, p.comment_count, p.created_at, pvd.avg_dwell_seconds, pvd.total_exposures, p.perspective_toxicity
-            """,
-            connection);
+            "SELECT refresh_trend_scores(@ids)", connection);
         cmd.Parameters.AddWithValue("ids", postIds.ToArray());
-
-        const double Alpha = 0.3;
-        var updates = new List<(Guid Id, double Score)>();
-
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
-        {
-            var id = reader.GetGuid(0);
-            var hakli = reader.GetInt32(1);
-            var haksiz = reader.GetInt32(2);
-            var comments = reader.GetInt32(3);
-            var createdAt = reader.GetFieldValue<DateTimeOffset>(4);
-            var averageDwellSeconds = reader.GetDouble(5);
-            var totalExposures = reader.GetInt32(6);
-            var distinctRegions = reader.GetInt32(7);
-            var toxicity = reader.IsDBNull(8) ? 0.0 : reader.GetDouble(8);
-            var pendingReports = reader.GetInt32(9);
-            var qualityComments = reader.GetInt32(10);
-            var ageHours = (DateTimeOffset.UtcNow - createdAt).TotalHours;
-
-            // Total unique voters — use for EWMA velocity computation
-            var totalUniqueVotes = hakli + haksiz;
-
-            // EWMA velocity smoothing
-            var (prevVotes, prevEwma) = await redis.GetTrendVelocityAsync(id);
-            var delta = Math.Max(0, totalUniqueVotes - prevVotes);
-            var newEwma = Alpha * delta + (1 - Alpha) * prevEwma;
-            await redis.SetTrendVelocityAsync(id, totalUniqueVotes, newEwma);
-
-            // Smooth the effective vote count: blend raw unique count with EWMA-smoothed count
-            var effectiveVotes = (int)Math.Round(totalUniqueVotes * 0.7 + newEwma * 0.3);
-            var score = TrendScoreCalculator.Compute(
-                hakli > 0 ? Math.Max(1, (int)(effectiveVotes * hakli / (double)Math.Max(1, totalUniqueVotes))) : 0,
-                haksiz > 0 ? Math.Max(1, (int)(effectiveVotes * haksiz / (double)Math.Max(1, totalUniqueVotes))) : 0,
-                comments,
-                ageHours,
-                averageDwellSeconds,
-                totalExposures,
-                pendingReports,
-                toxicity,
-                qualityComments
-            );
-
-            // Geographic spread guard: posts with < 3 distinct voter regions get a
-            // 70% score penalty to prevent locally-coordinated content from trending nationally.
-            // Penalty is lifted proportionally as more regions contribute.
-            var geoMultiplier = distinctRegions >= 3 ? 1.0 : 0.3 + (distinctRegions / 3.0) * 0.7;
-            updates.Add((id, score * geoMultiplier));
-        }
-
-        return updates;
-    }
-
-    private async Task BatchUpdateScoresAsync(NpgsqlConnection conn, List<(Guid Id, double Score)> updates, CancellationToken ct)
-    {
-        await using var updateCmd = new NpgsqlCommand(
-            """
-            UPDATE posts
-            SET trend_score = u.score, updated_at = NOW()
-            FROM unnest(@ids, @scores) AS u(id uuid, score double precision)
-            WHERE posts.id = u.id
-            """,
-            conn);
-
-        updateCmd.Parameters.AddWithValue("ids", updates.Select(u => u.Id).ToArray());
-        updateCmd.Parameters.AddWithValue("scores", updates.Select(u => u.Score).ToArray());
-
-        await updateCmd.ExecuteNonQueryAsync(ct);
+        await cmd.ExecuteNonQueryAsync(ct);
     }
 }

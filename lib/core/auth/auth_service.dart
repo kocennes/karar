@@ -125,6 +125,8 @@ class AuthService {
     required String password,
     required DateTime dateOfBirth,
     required String gender,
+    required bool acceptedTerms,
+    required bool acceptedCommunityGuidelines,
   }) async {
     await _apiClient.postJson<Map<String, Object?>>(
       ApiEndpoints.authRegister,
@@ -134,6 +136,8 @@ class AuthService {
         'password': password,
         'dateOfBirth': dateOfBirth.toIso8601String(),
         'gender': gender,
+        'acceptedTerms': acceptedTerms,
+        'acceptedCommunityGuidelines': acceptedCommunityGuidelines,
       },
     );
     return email;

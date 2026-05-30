@@ -14,6 +14,7 @@ public sealed class NotificationSchemaTests
         "moderation_result",
         "mention",
         "follow",
+        "follow_new_post",
         "system_announcement",
         "trend_alert",
         "viral_post_owner",
@@ -37,7 +38,7 @@ public sealed class NotificationSchemaTests
     [Fact]
     public void LatestNotificationTypeConstraint_AllowsAllKnownNotificationTypes()
     {
-        var migrationPath = FindRepoFile("backend/migrations/V38__notification_type_check.sql");
+        var migrationPath = FindRepoFile("backend/migrations/V44__notification_follow_new_post_type.sql");
         var migrationSql = File.ReadAllText(migrationPath);
         var allowedTypes = Regex.Matches(migrationSql, "'([a-z_]+)'")
             .Select(match => match.Groups[1].Value)

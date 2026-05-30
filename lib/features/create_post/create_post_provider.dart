@@ -224,6 +224,8 @@ class CreatePostNotifier extends Notifier<CreatePostState> {
   Future<bool> submit({
     required String title,
     required String content,
+    required bool acceptedTerms,
+    required bool acceptedCommunityGuidelines,
   }) async {
     final categoryId = state.selectedCategoryId;
     if (categoryId == null) {
@@ -261,6 +263,8 @@ class CreatePostNotifier extends Notifier<CreatePostState> {
                 state.pollOptions.isNotEmpty ? state.pollOptions : null,
             isUnlisted: state.isUnlisted,
             isAnonymous: state.isAnonymous,
+            acceptedTerms: acceptedTerms,
+            acceptedCommunityGuidelines: acceptedCommunityGuidelines,
           );
 
       // Log analytics

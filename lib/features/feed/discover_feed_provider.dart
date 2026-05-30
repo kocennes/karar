@@ -47,7 +47,21 @@ class DiscoverFeedNotifier extends AsyncNotifier<DiscoverFeedState> {
           postId: postId,
           eventType: 'vote',
           impressionToken: impressionToken ?? item.impressionToken,
+          rankingReason: item.rankingReason,
         );
+        final position = current.items.indexWhere((i) => i.post.id == postId);
+        ref.read(analyticsServiceProvider).logDiscoverVote(
+              postId: postId,
+              voteType: voteType.name,
+              position: position < 0 ? 0 : position,
+              rankingReason: item.rankingReason,
+            );
+        ref.read(analyticsServiceProvider).logVerdictViewed(
+              postId: postId,
+              voteType: voteType.name,
+              source: 'discover',
+              rankingReason: item.rankingReason,
+            );
       }
       _updatePost(updated);
     } catch (_) {}

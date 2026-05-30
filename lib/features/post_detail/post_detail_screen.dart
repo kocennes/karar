@@ -40,11 +40,15 @@ class PostDetailScreen extends ConsumerStatefulWidget {
     required this.postId,
     this.post,
     this.initialCommentId,
+    this.referrerCode,
+    this.source,
   });
 
   final String postId;
   final Post? post;
   final String? initialCommentId;
+  final String? referrerCode;
+  final String? source;
 
   @override
   ConsumerState<PostDetailScreen> createState() => _PostDetailScreenState();
@@ -75,6 +79,7 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
         ref.read(analyticsServiceProvider).logPostViewed(
               postId: widget.postId,
               category: widget.post!.category.name,
+              source: widget.source ?? 'feed',
             );
       } else {
         final post = ref.read(postDetailProvider(widget.postId)).post;
@@ -82,8 +87,17 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
           ref.read(analyticsServiceProvider).logPostViewed(
                 postId: widget.postId,
                 category: post.category.name,
+                source: widget.source ?? 'feed',
               );
         }
+      }
+
+      if (widget.referrerCode != null) {
+        ref.read(analyticsServiceProvider).logShareLandingOpened(
+              postId: widget.postId,
+              referrerCode: widget.referrerCode,
+              isGuest: ref.read(currentUserProvider) == null,
+            );
       }
     });
   }
@@ -343,6 +357,22 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
         setState(() => _interacted = true);
         _confettiController.play();
 
+        ref.read(analyticsServiceProvider).logVerdictViewed(
+              postId: widget.postId,
+              voteType: next.post!.myVote!.name,
+              source: widget.source ?? 'post_detail',
+              rankingReason: next.post?.rankingReason,
+            );
+
+        if (widget.referrerCode != null) {
+          ref.read(analyticsServiceProvider).logShareLandingCompletedJudgment(
+                postId: widget.postId,
+                voteType: next.post!.myVote!.name,
+                referrerCode: widget.referrerCode,
+                isGuest: ref.read(currentUserProvider) == null,
+              );
+        }
+
         final tracker = ref.read(sessionTrackerProvider);
         tracker.incrementVoteCast();
         ref.read(sessionVoteTrackerProvider.notifier).onVoteCast(context);
@@ -597,12 +627,14 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
                         detailState: detailState,
                         notifier: notifier,
                         initialCommentId: widget.initialCommentId,
+                        referrerCode: widget.referrerCode,
                       )
                     : _MobileLayout(
                         post: post,
                         detailState: detailState,
                         notifier: notifier,
                         initialCommentId: widget.initialCommentId,
+                        referrerCode: widget.referrerCode,
                       ),
               ),
             ],
@@ -782,12 +814,14 @@ class _DesktopLayout extends StatelessWidget {
     required this.detailState,
     required this.notifier,
     this.initialCommentId,
+    this.referrerCode,
   });
 
   final Post post;
   final PostDetailState detailState;
   final PostDetailNotifier notifier;
   final String? initialCommentId;
+  final String? referrerCode;
 
   @override
   Widget build(BuildContext context) {
@@ -807,6 +841,7 @@ class _DesktopLayout extends StatelessWidget {
                   notifier: notifier,
                   topRationale: detailState.topRationale,
                   balancedRationale: detailState.balancedRationale,
+                  referrerCode: referrerCode,
                 ),
                 const SizedBox(height: 28),
                 SimilarPostsSection(postId: post.id),
@@ -867,12 +902,14 @@ class _MobileLayout extends StatelessWidget {
     required this.detailState,
     required this.notifier,
     this.initialCommentId,
+    this.referrerCode,
   });
 
   final Post post;
   final PostDetailState detailState;
   final PostDetailNotifier notifier;
   final String? initialCommentId;
+  final String? referrerCode;
 
   @override
   Widget build(BuildContext context) {
@@ -884,6 +921,7 @@ class _MobileLayout extends StatelessWidget {
           notifier: notifier,
           topRationale: detailState.topRationale,
           balancedRationale: detailState.balancedRationale,
+          referrerCode: referrerCode,
         ),
         const SizedBox(height: 28),
         _CommentHeader(
@@ -974,12 +1012,14 @@ class _PostContent extends ConsumerWidget {
     required this.notifier,
     this.topRationale,
     this.balancedRationale,
+    this.referrerCode,
   });
 
   final Post post;
   final PostDetailNotifier notifier;
   final Comment? topRationale;
   final Comment? balancedRationale;
+  final String? referrerCode;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -1160,13 +1200,25 @@ class _PostContent extends ConsumerWidget {
                 onTap: post.isClosed
                     ? null
                     : () {
+                        if (referrerCode != null) {
+                          ref
+                              .read(analyticsServiceProvider)
+                              .logShareLandingVoteAttempt(
+                                postId: post.id,
+                                referrerCode: referrerCode,
+                                isGuest: ref.read(currentUserProvider) == null,
+                              );
+                        }
                         if (ref.read(currentUserProvider) == null) {
+                          final returnTo = referrerCode == null
+                              ? '/posts/${post.id}'
+                              : '/posts/${post.id}?ref=${Uri.encodeComponent(referrerCode!)}';
                           LoginNudge.show(
                             context,
                             title: 'Oy Ver',
                             message:
                                 'Topluluk kararına katılmak ve oylarını kaydetmek için giriş yapmalısın.',
-                            returnTo: '/posts/${post.id}',
+                            returnTo: returnTo,
                           );
                           return;
                         }
@@ -1189,13 +1241,25 @@ class _PostContent extends ConsumerWidget {
                 onTap: post.isClosed
                     ? null
                     : () {
+                        if (referrerCode != null) {
+                          ref
+                              .read(analyticsServiceProvider)
+                              .logShareLandingVoteAttempt(
+                                postId: post.id,
+                                referrerCode: referrerCode,
+                                isGuest: ref.read(currentUserProvider) == null,
+                              );
+                        }
                         if (ref.read(currentUserProvider) == null) {
+                          final returnTo = referrerCode == null
+                              ? '/posts/${post.id}'
+                              : '/posts/${post.id}?ref=${Uri.encodeComponent(referrerCode!)}';
                           LoginNudge.show(
                             context,
                             title: 'Oy Ver',
                             message:
                                 'Topluluk kararına katılmak ve oylarını kaydetmek için giriş yapmalısın.',
-                            returnTo: '/posts/${post.id}',
+                            returnTo: returnTo,
                           );
                           return;
                         }

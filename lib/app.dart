@@ -36,6 +36,7 @@ class _KararAppState extends ConsumerState<KararApp>
   StreamSubscription<RemoteMessage>? _sub;
   StreamSubscription<bool>? _tabAuthSub;
   DateTime? _backgroundedAt;
+  Timer? _heartbeatTimer;
 
   @override
   void initState() {
@@ -69,6 +70,17 @@ class _KararAppState extends ConsumerState<KararApp>
       if (rc.getBool(RemoteConfigKeys.maintenanceMode)) {
         ref.read(maintenanceProvider.notifier).state = true;
       }
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final tracker = ref.read(sessionTrackerProvider);
+      final isGuest = ref.read(currentUserProvider) == null;
+      ref.read(analyticsServiceProvider).logAppSessionStarted(
+            sessionNumber: tracker.sessionNumber,
+            isGuest: isGuest,
+          );
+      _startHeartbeat();
     });
 
     // W34: service worker update banner
@@ -114,6 +126,7 @@ class _KararAppState extends ConsumerState<KararApp>
     WidgetsBinding.instance.removeObserver(this);
     _sub?.cancel();
     _tabAuthSub?.cancel();
+    _heartbeatTimer?.cancel();
     super.dispose();
   }
 
@@ -122,10 +135,30 @@ class _KararAppState extends ConsumerState<KararApp>
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       _backgroundedAt = DateTime.now();
+      _heartbeatTimer?.cancel();
+      _heartbeatTimer = null;
       _flushSession();
     } else if (state == AppLifecycleState.resumed) {
       _onResumed();
     }
+  }
+
+  void _startHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+      if (!mounted) return;
+      final tracker = ref.read(sessionTrackerProvider);
+      final stats = tracker.snapshot();
+      ref.read(analyticsServiceProvider).logSessionHeartbeat(
+            durationSeconds: stats.durationSeconds,
+            postsSeen: stats.postsViewed,
+            votesCast: stats.votesCast,
+            commentsPosted: stats.commentsPosted,
+            postsCreated: stats.postsCreated,
+            maxFeedPosition: stats.maxFeedPosition,
+            maxDiscoverPosition: stats.maxDiscoverPosition,
+          );
+    });
   }
 
   void _onResumed() {
@@ -138,6 +171,7 @@ class _KararAppState extends ConsumerState<KararApp>
       ref.invalidate(notificationsProvider);
     }
     _backgroundedAt = null;
+    _startHeartbeat();
   }
 
   void _flushSession() {
@@ -149,6 +183,9 @@ class _KararAppState extends ConsumerState<KararApp>
           postsViewed: stats.postsViewed,
           votesCast: stats.votesCast,
           commentsPosted: stats.commentsPosted,
+          postsCreated: stats.postsCreated,
+          maxFeedPosition: stats.maxFeedPosition,
+          maxDiscoverPosition: stats.maxDiscoverPosition,
         );
   }
 
@@ -182,13 +219,23 @@ class _KararAppState extends ConsumerState<KararApp>
     final deepLink = message.data['deepLink'] as String?;
 
     ref.read(analyticsServiceProvider).logPushNotificationOpened(
-      type: type ?? 'unknown',
-    );
+          type: type ?? 'unknown',
+        );
 
-    final destination = deepLink?.isNotEmpty == true
+    var destination = deepLink?.isNotEmpty == true
         ? deepLink!
         : _deepLinkFromLegacy(message.data);
-    _router.go(destination);
+
+    _router.go(_withNotificationSource(destination));
+  }
+
+  String _withNotificationSource(String destination) {
+    if (!destination.startsWith('/posts/')) return destination;
+
+    final uri = Uri.parse(destination);
+    final query = Map<String, String>.from(uri.queryParameters);
+    query['source'] = 'notification';
+    return uri.replace(queryParameters: query).toString();
   }
 
   String _deepLinkFromLegacy(Map<String, dynamic> data) {

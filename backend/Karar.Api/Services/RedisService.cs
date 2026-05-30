@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Karar.Api.Observability;
 using StackExchange.Redis;
 
 namespace Karar.Api.Services;
@@ -42,15 +43,20 @@ public sealed class RedisService : IDisposable
     // Cache-aside okuma. Redis erişilemezse null döner (DB fallback için).
     public async Task<T?> GetAsync<T>(string key) where T : class
     {
+        using var activity = KararTelemetry.StartActivity("redis.get");
+        activity?.SetTag("db.system", "redis");
+        activity?.SetTag("db.operation.name", "GET");
         try
         {
             var value = await _db.StringGetAsync(key);
             if (!value.HasValue)
             {
                 await IncrementMetricAsync("redis:misses");
+                KararTelemetry.RecordRedisOperation("GET", true);
                 return null;
             }
             await IncrementMetricAsync("redis:hits");
+            KararTelemetry.RecordRedisOperation("GET", true);
             return JsonSerializer.Deserialize<T>((string)value!);
         }
         catch (Exception ex)
@@ -85,10 +91,14 @@ public sealed class RedisService : IDisposable
 
     public async Task SetAsync<T>(string key, T value, TimeSpan expiry)
     {
+        using var activity = KararTelemetry.StartActivity("redis.set");
+        activity?.SetTag("db.system", "redis");
+        activity?.SetTag("db.operation.name", "SET");
         try
         {
             var json = JsonSerializer.Serialize(value);
             await _db.StringSetAsync(key, json, expiry);
+            KararTelemetry.RecordRedisOperation("SET", true);
         }
         catch (Exception ex)
         {
@@ -139,6 +149,10 @@ public sealed class RedisService : IDisposable
     // Distributed Sliding Window Rate Limiting (Redis Lua)
     public async Task<bool> IsAllowedAsync(string endpoint, string identity, int limit, TimeSpan window)
     {
+        using var activity = KararTelemetry.StartActivity("redis.rate_limit");
+        activity?.SetTag("db.system", "redis");
+        activity?.SetTag("db.operation.name", "EVAL");
+        activity?.SetTag("karar.rate_limit.endpoint", endpoint);
         var key = $"rl:{endpoint}:{identity}";
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var windowMs = (long)window.TotalMilliseconds;
@@ -166,6 +180,7 @@ public sealed class RedisService : IDisposable
                 keys: new RedisKey[] { key },
                 values: new RedisValue[] { now, windowMs, limit });
 
+            KararTelemetry.RecordRedisOperation("EVAL", true);
             return (int)result == 1;
         }
         catch (Exception ex)
@@ -177,9 +192,13 @@ public sealed class RedisService : IDisposable
 
     public async Task MarkPostDirtyAsync(Guid postId)
     {
+        using var activity = KararTelemetry.StartActivity("redis.mark_post_dirty");
+        activity?.SetTag("db.system", "redis");
+        activity?.SetTag("db.operation.name", "ZADD");
         try
         {
             await _db.SortedSetAddAsync("posts:dirty", postId.ToString(), DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+            KararTelemetry.RecordRedisOperation("ZADD", true);
         }
         catch (Exception ex)
         {
@@ -227,6 +246,91 @@ public sealed class RedisService : IDisposable
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "NotInterested get başarısız: {DeviceId}", deviceId);
+            return [];
+        }
+    }
+
+    // "Hızlı skip" soft suppress — cihaz başına 24 saatlik sorted set.
+    // Hard block değil; TTL dolunca post tekrar aday havuzuna girer.
+    private static string SkipSuppressKey(Guid deviceId) => $"device:skipsupress:{deviceId}";
+    private static readonly TimeSpan SkipSuppressWindow = TimeSpan.FromHours(24);
+
+    public async Task AddSkipSuppressionAsync(Guid deviceId, Guid postId)
+    {
+        try
+        {
+            var key = SkipSuppressKey(deviceId);
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            await _db.SortedSetAddAsync(key, postId.ToString(), now);
+            await _db.KeyExpireAsync(key, SkipSuppressWindow);
+            var cutoff = now - (long)SkipSuppressWindow.TotalSeconds;
+            await _db.SortedSetRemoveRangeByScoreAsync(key, double.NegativeInfinity, cutoff);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "SkipSuppression mark başarısız: {DeviceId}/{PostId}", deviceId, postId);
+        }
+    }
+
+    // "İlgilenmiyorum" — kategori başına 7 günlük bastırma (score = unix timestamp)
+    private static string NotInterestedCategoryKey(Guid deviceId) => $"device:{deviceId}:notinterested_categories";
+    private static readonly TimeSpan CategorySuppressWindow = TimeSpan.FromDays(7);
+
+    public async Task MarkNotInterestedCategoryAsync(Guid deviceId, int categoryId)
+    {
+        try
+        {
+            var key = NotInterestedCategoryKey(deviceId);
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            await _db.SortedSetAddAsync(key, categoryId.ToString(), now);
+            await _db.KeyExpireAsync(key, CategorySuppressWindow);
+            var cutoff = now - (long)CategorySuppressWindow.TotalSeconds;
+            await _db.SortedSetRemoveRangeByScoreAsync(key, double.NegativeInfinity, cutoff);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "NotInterestedCategory mark başarısız: {DeviceId}/{CategoryId}", deviceId, categoryId);
+        }
+    }
+
+    public async Task<HashSet<int>> GetNotInterestedCategoriesAsync(Guid deviceId)
+    {
+        try
+        {
+            var key = NotInterestedCategoryKey(deviceId);
+            var cutoff = DateTimeOffset.UtcNow.Subtract(CategorySuppressWindow).ToUnixTimeSeconds();
+            var members = await _db.SortedSetRangeByScoreAsync(key, cutoff, double.PositiveInfinity);
+            var result = new HashSet<int>(members.Length);
+            foreach (var m in members)
+            {
+                if (int.TryParse((string?)m, out var id)) result.Add(id);
+            }
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "NotInterestedCategory get başarısız: {DeviceId}", deviceId);
+            return [];
+        }
+    }
+
+    public async Task<HashSet<Guid>> GetSkipSuppressedPostsAsync(Guid deviceId)
+    {
+        try
+        {
+            var key = SkipSuppressKey(deviceId);
+            var cutoff = DateTimeOffset.UtcNow.Subtract(SkipSuppressWindow).ToUnixTimeSeconds();
+            var members = await _db.SortedSetRangeByScoreAsync(key, cutoff, double.PositiveInfinity);
+            var result = new HashSet<Guid>(members.Length);
+            foreach (var m in members)
+            {
+                if (Guid.TryParse((string?)m, out var id)) result.Add(id);
+            }
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "SkipSuppression get başarısız: {DeviceId}", deviceId);
             return [];
         }
     }
@@ -402,6 +506,22 @@ public sealed class RedisService : IDisposable
         catch
         {
             return null;
+        }
+    }
+
+    public ISubscriber GetSubscriber() => _redis.GetSubscriber();
+
+    public async Task PublishUserEventAsync(Guid userId, object payload)
+    {
+        try
+        {
+            var json = JsonSerializer.Serialize(payload);
+            var channel = RedisChannel.Literal($"user:{userId}:events");
+            await _redis.GetSubscriber().PublishAsync(channel, json);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Redis publish başarısız: user:{UserId}:events", userId);
         }
     }
 

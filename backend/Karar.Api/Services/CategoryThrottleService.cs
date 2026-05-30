@@ -32,6 +32,17 @@ public sealed class CategoryThrottleService(RedisService redis, ILogger<Category
         }
     }
 
+    public Task SetThrottledUntilAsync(int categoryId, DateTime untilUtc, string reason)
+    {
+        var duration = untilUtc - DateTime.UtcNow;
+        if (duration <= TimeSpan.Zero)
+        {
+            duration = TimeSpan.FromMinutes(1);
+        }
+
+        return SetThrottledAsync(categoryId, duration, reason);
+    }
+
     public async Task ClearThrottleAsync(int categoryId)
     {
         try

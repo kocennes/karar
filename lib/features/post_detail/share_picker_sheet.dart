@@ -17,7 +17,7 @@ class SharePickerSheet extends StatelessWidget {
     );
   }
 
-  String get _postUrl => 'https://karar.app/posts/${post.id}';
+  String get _postUrl => 'https://karar.app/posts/${post.id}?ref=share';
 
   Future<void> _shareLink(BuildContext context) async {
     Navigator.pop(context);

@@ -25,6 +25,7 @@ class FeedState {
     this.sort = 'trending',
     this.categoryId,
     this.newPostsCount = 0,
+    this.rankingLabel,
   }) : postMap = {for (final p in posts) p.id: p};
 
   final List<Post> posts;
@@ -38,6 +39,7 @@ class FeedState {
   final String sort;
   final int? categoryId;
   final int newPostsCount;
+  final String? rankingLabel;
 
   FeedState copyWith({
     List<Post>? posts,
@@ -53,6 +55,7 @@ class FeedState {
     int? categoryId,
     bool clearCategoryId = false,
     int? newPostsCount,
+    String? rankingLabel,
   }) =>
       FeedState(
         posts: posts ?? this.posts,
@@ -66,7 +69,14 @@ class FeedState {
         sort: sort ?? this.sort,
         categoryId: clearCategoryId ? null : (categoryId ?? this.categoryId),
         newPostsCount: newPostsCount ?? this.newPostsCount,
+        rankingLabel: rankingLabel ?? this.rankingLabel,
       );
+}
+
+String feedRankingLabelFor({required String sort, int? categoryId}) {
+  final isNew = sort == 'new';
+  if (categoryId != null) return isNew ? 'category_new' : 'category_trending';
+  return isNew ? 'new' : 'trending';
 }
 
 class FeedNotifier extends Notifier<FeedState> {
@@ -75,7 +85,10 @@ class FeedNotifier extends Notifier<FeedState> {
   @override
   FeedState build() {
     if (!AppRuntime.useRemoteApi) {
-      return FeedState(posts: List.of(samplePosts));
+      return FeedState(
+        posts: List.of(samplePosts),
+        rankingLabel: feedRankingLabelFor(sort: 'trending'),
+      );
     }
     Future.microtask(() => _fetch(page: 1));
     _startPolling();
@@ -96,7 +109,7 @@ class FeedNotifier extends Notifier<FeedState> {
     if (!AppRuntime.useRemoteApi) return;
 
     try {
-      final latestPosts = await _repo.fetchFeed(
+      final result = await _repo.fetchFeed(
         page: 1,
         limit: 50,
         categoryId: state.categoryId,
@@ -104,8 +117,8 @@ class FeedNotifier extends Notifier<FeedState> {
         afterId: state.posts.first.id,
       );
 
-      if (latestPosts.isNotEmpty) {
-        state = state.copyWith(newPostsCount: latestPosts.length);
+      if (result.posts.isNotEmpty) {
+        state = state.copyWith(newPostsCount: result.posts.length);
       }
     } catch (_) {}
   }
@@ -121,6 +134,7 @@ class FeedNotifier extends Notifier<FeedState> {
       clearCategoryId: categoryId == null,
       sort: sort,
       newPostsCount: 0,
+      rankingLabel: feedRankingLabelFor(sort: sort, categoryId: categoryId),
     );
     return _fetch(page: 1, categoryId: categoryId, sort: sort);
   }
@@ -169,6 +183,10 @@ class FeedNotifier extends Notifier<FeedState> {
         page: 1,
         hasMore: false,
         clearError: true,
+        rankingLabel: feedRankingLabelFor(
+          sort: effectiveSort,
+          categoryId: effectiveCategoryId,
+        ),
       );
       return;
     }
@@ -188,7 +206,7 @@ class FeedNotifier extends Notifier<FeedState> {
         }
       }
 
-      final posts = await _repo.fetchFeed(
+      final result = await _repo.fetchFeed(
         page: page,
         categoryId: effectiveCategoryId,
         sort: effectiveSort,
@@ -198,7 +216,7 @@ class FeedNotifier extends Notifier<FeedState> {
       final history = ref.read(historyProvider.notifier);
       final suppressed = ref.read(sessionSuppressedCategoriesProvider);
 
-      final filteredPosts = posts.where((p) {
+      final filteredPosts = result.posts.where((p) {
         if (p.isOwner) return true;
         // Suppress category based on Phase 3 Real-time feedback
         if (suppressed.contains(p.category.id)) return false;
@@ -217,7 +235,8 @@ class FeedNotifier extends Notifier<FeedState> {
           posts: filteredPosts,
           isLoading: false,
           page: 1,
-          hasMore: posts.length >= 20,
+          hasMore: result.hasMore,
+          rankingLabel: result.rankingLabel,
           clearError: true,
         );
       } else {
@@ -225,7 +244,7 @@ class FeedNotifier extends Notifier<FeedState> {
           posts: [...state.posts, ...filteredPosts],
           isLoadingMore: false,
           page: page,
-          hasMore: posts.length >= 20,
+          hasMore: result.hasMore,
         );
       }
     } on ApiException catch (e) {

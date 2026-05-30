@@ -9,7 +9,7 @@ namespace Karar.IntegrationTests.Security;
 // kullanıcı B'nin kaynağına erişimi) için [Trait("Category","RequiresDb")]
 // işaretli testler ayrıca yazılmalıdır.
 [Collection("ApiTests")]
-public class AccessControlTests : IClassFixture<CustomWebApplicationFactory>
+public class AccessControlTests
 {
     private readonly HttpClient _client;
 
@@ -79,6 +79,17 @@ public class AccessControlTests : IClassFixture<CustomWebApplicationFactory>
     [InlineData("GET", "/api/v1/admin/analytics/notifications")]
     [InlineData("GET", "/api/v1/admin/analytics/cache")]
     [InlineData("GET", "/api/v1/admin/categories/health")]
+    [InlineData("GET", "/api/v1/admin/analytics/activity")]
+    [InlineData("GET", "/api/v1/admin/analytics/funnels")]
+    [InlineData("GET", "/api/v1/admin/analytics/reports/timeseries")]
+    [InlineData("GET", "/api/v1/admin/analytics/export")]
+    [InlineData("POST", "/api/v1/admin/analytics/scheduled-reports")]
+    [InlineData("GET", "/api/v1/admin/analytics/feed-quality")]
+    [InlineData("GET", "/api/v1/admin/analytics/feed-quality/posts")]
+    [InlineData("GET", "/api/v1/admin/analytics/feed-quality/timeseries")]
+    [InlineData("GET", "/api/v1/admin/analytics/feed-quality/export")]
+    [InlineData("GET", "/api/v1/admin/analytics/growth")]
+    [InlineData("GET", "/api/v1/admin/analytics/north-star")]
     public async Task AdminEndpoint_WithoutAnyToken_Returns401(string method, string path)
     {
         var request = BuildRequest(method, path);
@@ -102,6 +113,17 @@ public class AccessControlTests : IClassFixture<CustomWebApplicationFactory>
     [InlineData("GET", "/api/v1/admin/appeals")]
     [InlineData("GET", "/api/v1/admin/actions")]
     [InlineData("GET", "/api/v1/admin/automod/rules")]
+    [InlineData("GET", "/api/v1/admin/analytics/activity")]
+    [InlineData("GET", "/api/v1/admin/analytics/funnels")]
+    [InlineData("GET", "/api/v1/admin/analytics/reports/timeseries")]
+    [InlineData("GET", "/api/v1/admin/analytics/export")]
+    [InlineData("POST", "/api/v1/admin/analytics/scheduled-reports")]
+    [InlineData("GET", "/api/v1/admin/analytics/feed-quality")]
+    [InlineData("GET", "/api/v1/admin/analytics/feed-quality/posts")]
+    [InlineData("GET", "/api/v1/admin/analytics/feed-quality/timeseries")]
+    [InlineData("GET", "/api/v1/admin/analytics/feed-quality/export")]
+    [InlineData("GET", "/api/v1/admin/analytics/growth")]
+    [InlineData("GET", "/api/v1/admin/analytics/north-star")]
     public async Task AdminEndpoint_WithUserJwt_Returns401(string method, string path)
     {
         var userToken = JwtTestHelper.CreateUserToken(
@@ -129,14 +151,37 @@ public class AccessControlTests : IClassFixture<CustomWebApplicationFactory>
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
+    // Admin single-resource endpoints with GUID path segments — must reject user JWT.
     [Theory]
     [InlineData("GET",  "/api/v1/admin/users/{id}")]
     [InlineData("GET",  "/api/v1/admin/devices/{id}")]
     [InlineData("POST", "/api/v1/admin/users/{id}/ban")]
+    [InlineData("POST", "/api/v1/admin/users/{id}/unban")]
+    [InlineData("POST", "/api/v1/admin/users/{id}/warn")]
+    [InlineData("POST", "/api/v1/admin/users/{id}/strike")]
+    [InlineData("GET",  "/api/v1/admin/users/{id}/strikes")]
+    [InlineData("GET",  "/api/v1/admin/users/{id}/data-export")]
     [InlineData("POST", "/api/v1/admin/devices/{id}/ban")]
+    [InlineData("POST", "/api/v1/admin/devices/{id}/unban")]
+    [InlineData("POST", "/api/v1/admin/appeals/{id}/decide")]
     public async Task AdminSingleResourceEndpoint_WithUserJwt_Returns401(string method, string pathTemplate)
     {
         var path = pathTemplate.Replace("{id}", Guid.NewGuid().ToString());
+        var userToken = JwtTestHelper.CreateUserToken(Guid.NewGuid().ToString(), "attacker");
+        var request = BuildRequest(method, path);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", userToken);
+        var response = await _client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    // Admin endpoints with integer path segments — must reject user JWT.
+    // Route constraint {id:int} means GUID paths return 404 from routing, not 401.
+    [Theory]
+    [InlineData("GET",    "/api/v1/admin/categories/1/throttle")]
+    [InlineData("POST",   "/api/v1/admin/categories/1/throttle")]
+    [InlineData("DELETE", "/api/v1/admin/categories/1/throttle")]
+    public async Task AdminIntIdEndpoint_WithUserJwt_Returns401(string method, string path)
+    {
         var userToken = JwtTestHelper.CreateUserToken(Guid.NewGuid().ToString(), "attacker");
         var request = BuildRequest(method, path);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", userToken);

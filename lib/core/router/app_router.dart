@@ -243,10 +243,14 @@ GoRouter buildRouter(AppServices services) => GoRouter(
           path: '/posts/:id',
           builder: (_, state) {
             final commentId = state.uri.queryParameters['commentId'];
+            final refCode = state.uri.queryParameters['ref'];
+            final source = state.uri.queryParameters['source'];
             return PostDetailScreen(
               postId: state.pathParameters['id']!,
               post: state.extra as Post?,
               initialCommentId: commentId,
+              referrerCode: refCode,
+              source: source,
             );
           },
         ),

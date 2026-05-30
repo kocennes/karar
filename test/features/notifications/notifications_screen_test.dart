@@ -54,7 +54,9 @@ NotificationItem _item(String id, String type, {bool isRead = true}) =>
 Widget _buildApp(List<Override> overrides) {
   final router = GoRouter(routes: [
     GoRoute(path: '/', builder: (_, __) => const NotificationsScreen()),
-    GoRoute(path: '/posts/:id', builder: (_, __) => const Scaffold(body: SizedBox())),
+    GoRoute(
+        path: '/posts/:id',
+        builder: (_, __) => const Scaffold(body: SizedBox())),
   ]);
   return ProviderScope(
     overrides: overrides,
@@ -96,7 +98,8 @@ void main() {
 
       await tester.pumpWidget(_buildApp([
         currentUserProvider.overrideWith((ref) => _fakeUser),
-        notificationsProvider.overrideWith(() => _FixedNotificationsNotifier(fixedState)),
+        notificationsProvider
+            .overrideWith(() => _FixedNotificationsNotifier(fixedState)),
         digestPostsProvider.overrideWith((ref) => Future.value(<Post>[])),
       ]));
       await tester.pump();
@@ -125,7 +128,8 @@ void main() {
 
       await tester.pumpWidget(_buildApp([
         currentUserProvider.overrideWith((ref) => _fakeUser),
-        notificationsProvider.overrideWith(() => _FixedNotificationsNotifier(fixedState)),
+        notificationsProvider
+            .overrideWith(() => _FixedNotificationsNotifier(fixedState)),
         digestPostsProvider.overrideWith((ref) => Future.value(<Post>[])),
       ]));
       await tester.pump();
@@ -140,7 +144,7 @@ void main() {
   testWidgets(
     'NotificationsScreen: empty state shown when no notifications',
     (tester) async {
-      final fixedState = const NotificationsState(
+      const fixedState = NotificationsState(
         items: [],
         unreadCount: 0,
         isLoading: false,
@@ -148,7 +152,8 @@ void main() {
 
       await tester.pumpWidget(_buildApp([
         currentUserProvider.overrideWith((ref) => _fakeUser),
-        notificationsProvider.overrideWith(() => _FixedNotificationsNotifier(fixedState)),
+        notificationsProvider
+            .overrideWith(() => _FixedNotificationsNotifier(fixedState)),
         digestPostsProvider.overrideWith((ref) => Future.value(<Post>[])),
       ]));
       await tester.pump();

@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Karar.Api.Contracts;
 using Karar.Api.Services;
 
 namespace Karar.UnitTests.Notifications;
@@ -47,6 +48,30 @@ public sealed class NotificationPreferenceRouterTests
         NotificationPreferenceRouter.GetQuietHoursDelay("25:00", "08:00").Should().BeNull();
     }
 
+    [Theory]
+    [InlineData("mention")]
+    [InlineData("follow")]
+    public void IsCategoryEnabled_UsesMentionPreferenceForSocialNotifications(string type)
+    {
+        var disabled = EmptyPreferences() with { NotifyOnMention = false };
+        var enabled = EmptyPreferences() with { NotifyOnMention = true };
+
+        NotificationPreferenceRouter.IsCategoryEnabled(type, disabled).Should().BeFalse();
+        NotificationPreferenceRouter.IsCategoryEnabled(type, enabled).Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("trend_alert")]
+    [InlineData("follow_new_post")]
+    public void IsCategoryEnabled_UsesTrendPreferenceForDiscoveryNotifications(string type)
+    {
+        var disabled = EmptyPreferences() with { NotifyOnTrend = false };
+        var enabled = EmptyPreferences() with { NotifyOnTrend = true };
+
+        NotificationPreferenceRouter.IsCategoryEnabled(type, disabled).Should().BeFalse();
+        NotificationPreferenceRouter.IsCategoryEnabled(type, enabled).Should().BeTrue();
+    }
+
     // Local re-implementation of the deterministic logic with injectable "now".
     private static TimeSpan? ComputeDelay(string startStr, string endStr, DateTime utcNow)
     {
@@ -75,4 +100,7 @@ public sealed class NotificationPreferenceRouterTests
         return p.Length == 2 && int.TryParse(p[0], out h) && int.TryParse(p[1], out m)
             && h is >= 0 and < 24 && m is >= 0 and < 60;
     }
+
+    private static NotificationPreferencesRequest EmptyPreferences() =>
+        new(null, null, null, null, null, null, null);
 }

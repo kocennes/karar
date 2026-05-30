@@ -53,14 +53,50 @@ void main() {
       ),
     );
 
-    final posts = await repository.fetchFeed();
+    final result = await repository.fetchFeed();
 
-    expect(posts, hasLength(1));
-    expect(posts.single.id, 'post-1');
-    expect(posts.single.category.name, 'İş Hayatı');
-    expect(posts.single.myVote, VoteType.hakli);
-    expect(posts.single.voteCountHakli, 12);
-    expect(posts.single.content, isEmpty);
+    expect(result.posts, hasLength(1));
+    expect(result.posts.single.id, 'post-1');
+    expect(result.posts.single.category.name, 'İş Hayatı');
+    expect(result.posts.single.myVote, VoteType.hakli);
+    expect(result.posts.single.voteCountHakli, 12);
+    expect(result.posts.single.content, isEmpty);
+    expect(result.hasMore, isFalse);
+    expect(result.rankingLabel, isNull);
+  });
+
+  test('PostRepository parses rankingLabel from feed envelope', () async {
+    final repository = PostRepository(
+      apiClient: ApiClient(
+        dio: _mockDio({
+          'posts': [
+            {
+              'id': 'post-env',
+              'title': 'Envelope label test',
+              'imageUrl': null,
+              'category': {'id': 1, 'name': 'X', 'emoji': 'x'},
+              'voteCountHakli': 5,
+              'voteCountHaksiz': 2,
+              'commentCount': 0,
+              'myVote': null,
+              'trendScore': 7,
+              'createdAt': '2026-05-20T08:00:00Z',
+              'isOwner': false,
+            }
+          ],
+          'pagination': {'page': 1, 'limit': 20, 'total': 1, 'hasNext': true},
+          'rankingLabel': 'category_trending',
+        }),
+      ),
+    );
+
+    final result = await repository.fetchFeed(categoryId: 1);
+
+    expect(result.rankingLabel, 'category_trending',
+        reason: 'envelope-level rankingLabel must be surfaced on FeedResponse');
+    expect(result.hasMore, isTrue,
+        reason: 'hasMore must reflect pagination.hasNext from the API response');
+    expect(result.posts, hasLength(1));
   });
 
   test('PostRepository parses categories envelope from API contract', () async {
@@ -134,6 +170,121 @@ void main() {
     expect(feed.items.single.impressionToken, 'token-1');
     expect(feed.items.single.seenBefore, isFalse);
     expect(feed.nextCursor, 'cursor-2');
+  });
+
+  test('PostRepository parses ranking_reason and ranking_label from post JSON',
+      () async {
+    final postJson = {
+      'id': 'post-3',
+      'title': 'Test post',
+      'content': 'İçerik',
+      'imageUrl': null,
+      'category': {'id': 3, 'name': 'Aile', 'emoji': '👨‍👩‍👧'},
+      'voteCountHakli': 5,
+      'voteCountHaksiz': 2,
+      'commentCount': 1,
+      'myVote': null,
+      'trendScore': 3.1,
+      'createdAt': '2026-05-20T08:00:00Z',
+      'isOwner': false,
+      'ranking_reason': 'rising',
+      'ranking_label': 'trending',
+    };
+
+    final repository = PostRepository(
+      apiClient: ApiClient(
+        dio: _mockDio({
+          'posts': [postJson],
+          'pagination': {'page': 1, 'limit': 20, 'total': 1, 'hasNext': false},
+        }),
+      ),
+    );
+
+    final result = await repository.fetchFeed();
+
+    expect(result.posts.single.rankingReason, 'rising',
+        reason: 'ranking_reason (snake_case) from PostDto must be parsed into Post.rankingReason');
+    expect(result.posts.single.rankingLabel, 'trending',
+        reason: 'ranking_label (snake_case) from PostDto must be parsed into Post.rankingLabel');
+  });
+
+  test('DiscoverFeedItem rankingReason accepts all valid server values', () async {
+    const validReasons = ['rising', 'controversial', 'fresh', 'trending'];
+
+    for (final reason in validReasons) {
+      final postJson = {
+        'id': 'post-r',
+        'title': 'T',
+        'content': 'C',
+        'imageUrl': null,
+        'category': {'id': 1, 'name': 'X', 'emoji': 'x'},
+        'voteCountHakli': 1,
+        'voteCountHaksiz': 0,
+        'commentCount': 0,
+        'myVote': null,
+        'trendScore': 1.0,
+        'createdAt': '2026-05-20T08:00:00Z',
+        'isOwner': false,
+      };
+
+      final repository = PostRepository(
+        apiClient: ApiClient(
+          dio: _mockDio({
+            'items': [
+              {
+                'post': postJson,
+                'rankingReason': reason,
+                'impressionToken': 'tok',
+                'seenBefore': false,
+              }
+            ],
+            'nextCursor': null,
+          }),
+        ),
+      );
+
+      final feed = await repository.fetchDiscoverFeed();
+      expect(feed.items.single.rankingReason, reason,
+          reason: 'rankingReason "$reason" must round-trip through the parser');
+    }
+  });
+
+  test('DiscoverFeedItem rankingReason falls back to trending when absent',
+      () async {
+    final postJson = {
+      'id': 'post-fb',
+      'title': 'T',
+      'content': 'C',
+      'imageUrl': null,
+      'category': {'id': 1, 'name': 'X', 'emoji': 'x'},
+      'voteCountHakli': 1,
+      'voteCountHaksiz': 0,
+      'commentCount': 0,
+      'myVote': null,
+      'trendScore': 1.0,
+      'createdAt': '2026-05-20T08:00:00Z',
+      'isOwner': false,
+    };
+
+    final repository = PostRepository(
+      apiClient: ApiClient(
+        dio: _mockDio({
+          'items': [
+            {
+              'post': postJson,
+              // rankingReason intentionally absent
+              'impressionToken': 'tok',
+              'seenBefore': false,
+            }
+          ],
+          'nextCursor': null,
+        }),
+      ),
+    );
+
+    final feed = await repository.fetchDiscoverFeed();
+    expect(feed.items.single.rankingReason, 'trending',
+        reason: 'missing rankingReason must default to "trending"');
   });
 
   test('PostRepository sends discover event payload to API contract', () async {

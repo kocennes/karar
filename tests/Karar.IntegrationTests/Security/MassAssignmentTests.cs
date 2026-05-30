@@ -14,7 +14,7 @@ namespace Karar.IntegrationTests.Security;
 // DB gerektiren doğrulama: field'ın DB'ye yazılmadığını kontrol eden testler
 // [Trait("Category","RequiresDb")] ile işaretlenmeli ve ayrıca çalıştırılmalıdır.
 [Collection("ApiTests")]
-public class MassAssignmentTests : IClassFixture<CustomWebApplicationFactory>
+public class MassAssignmentTests
 {
     private readonly HttpClient _client;
 

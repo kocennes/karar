@@ -6,6 +6,7 @@ import '../../shared/data/sample_posts.dart';
 import '../../shared/models/post.dart';
 import 'data/notification_item.dart';
 import 'data/notification_repository.dart';
+import 'sse_notification_provider.dart';
 
 class NotificationsState {
   const NotificationsState({
@@ -40,8 +41,24 @@ class NotificationsState {
 class NotificationsNotifier extends Notifier<NotificationsState> {
   @override
   NotificationsState build() {
+    if (AppRuntime.useRemoteApi) {
+      ref.listen(sseNotificationProvider, (_, event) {
+        event.whenData(_onSseEvent);
+      });
+    }
     Future.microtask(load);
     return const NotificationsState(isLoading: true);
+  }
+
+  void _onSseEvent(Map<String, dynamic> data) {
+    final type = data['type'] as String?;
+    final unreadCount = data['unreadCount'] as int?;
+    if (unreadCount == null || type == null) return;
+    if (type == 'notification.created' ||
+        type == 'notification.read' ||
+        type == 'connected') {
+      state = state.copyWith(unreadCount: unreadCount);
+    }
   }
 
   NotificationRepository get _repo => ref.read(notificationRepositoryProvider);
@@ -180,10 +197,11 @@ final digestPostsProvider = FutureProvider.autoDispose<List<Post>>((ref) async {
     return sorted.take(3).toList();
   }
   try {
-    return await ref.read(postRepositoryProvider).fetchFeed(
+    return (await ref.read(postRepositoryProvider).fetchFeed(
           sort: 'trending',
           limit: 3,
-        );
+        ))
+        .posts;
   } catch (_) {
     return [];
   }

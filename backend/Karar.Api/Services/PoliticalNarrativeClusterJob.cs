@@ -1,24 +1,22 @@
+using Karar.Api.Data;
 using Npgsql;
 
 namespace Karar.Api.Services;
 
-// Hourly background job: detects coordinated political narrative campaigns per category.
-// Alert fires when: post rate in a 6h window is ≥3× the 30-day median AND
-// the median account age of the posting devices is <72h.
-// Also auto-throttles the affected category for 4 hours.
 public sealed class PoliticalNarrativeClusterJob(
     IConfiguration configuration,
     ILogger<PoliticalNarrativeClusterJob> logger,
     EmailService emailService,
-    CategoryThrottleService throttleService)
+    CategoryThrottleService categoryThrottle,
+    ComplianceLogService complianceLog)
     : BackgroundService
 {
-    private readonly string _connectionString = Karar.Api.Data.Db.ConvertToKeyValue(
+    private readonly string _connectionString = Db.ConvertToKeyValue(
         configuration.GetConnectionString("Postgres")
         ?? throw new InvalidOperationException("ConnectionStrings:Postgres is missing."));
 
-    private static readonly TimeSpan Interval = TimeSpan.FromHours(1);
-    private static readonly TimeSpan AutoThrottleDuration = TimeSpan.FromHours(4);
+    private static readonly TimeSpan Interval = TimeSpan.FromHours(6);
+    private static readonly TimeSpan AutoThrottleDuration = TimeSpan.FromHours(2);
     private const double SpikeMultiplier = 3.0;
     private const int YoungAccountMaxHours = 72;
 
@@ -30,7 +28,7 @@ public sealed class PoliticalNarrativeClusterJob(
         {
             try
             {
-                await CheckForNarrativeClustersAsync(stoppingToken);
+                await CheckForVoteAnomaliesAsync(stoppingToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -41,126 +39,164 @@ public sealed class PoliticalNarrativeClusterJob(
         }
     }
 
-    private async Task CheckForNarrativeClustersAsync(CancellationToken ct)
+    private async Task CheckForVoteAnomaliesAsync(CancellationToken ct)
     {
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(ct);
 
-        // Get categories with their recent and median post counts
-        await using var categoriesCmd = new NpgsqlCommand(
+        await using var command = new NpgsqlCommand(
             """
             WITH recent AS (
-                SELECT category_id, COUNT(*) AS recent_count
-                FROM posts
-                WHERE created_at >= NOW() - INTERVAL '6 hours'
-                  AND status != 'deleted'
-                GROUP BY category_id
-            ),
-            medians AS (
                 SELECT
-                    category_id,
-                    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY daily_count) / 4.0 AS median_6h
-                FROM (
-                    SELECT category_id, DATE_TRUNC('day', created_at) AS day, COUNT(*) AS daily_count
-                    FROM posts
-                    WHERE created_at >= NOW() - INTERVAL '30 days'
-                      AND status != 'deleted'
-                    GROUP BY category_id, DATE_TRUNC('day', created_at)
-                ) daily
-                GROUP BY category_id
+                    p.id,
+                    p.title,
+                    p.category_id,
+                    COUNT(v.*)::int AS recent_votes,
+                    COUNT(DISTINCT v.device_id)::int AS distinct_voters,
+                    COUNT(DISTINCT v.voter_ip_block)::int
+                        FILTER (WHERE v.voter_ip_block IS NOT NULL) AS distinct_ip_blocks,
+                    PERCENTILE_CONT(0.5) WITHIN GROUP (
+                        ORDER BY EXTRACT(EPOCH FROM (NOW() - d.created_at)) / 3600.0
+                    ) AS median_account_age_hours,
+                    COUNT(*) FILTER (
+                        WHERE d.created_at >= NOW() - INTERVAL '72 hours'
+                    )::int AS young_voters
+                FROM posts p
+                JOIN votes v ON v.post_id = p.id
+                JOIN devices d ON d.id = v.device_id
+                WHERE v.created_at >= NOW() - INTERVAL '6 hours'
+                  AND p.status = 'active'
+                GROUP BY p.id, p.title, p.category_id
+            ),
+            baseline AS (
+                SELECT
+                    p.id,
+                    COUNT(v.*)::double precision / 162.0 AS baseline_hourly
+                FROM posts p
+                LEFT JOIN votes v ON v.post_id = p.id
+                    AND v.created_at >= NOW() - INTERVAL '7 days'
+                    AND v.created_at < NOW() - INTERVAL '6 hours'
+                GROUP BY p.id
             )
-            SELECT r.category_id, r.recent_count, m.median_6h, c.name
+            SELECT
+                r.id,
+                r.title,
+                r.category_id,
+                r.recent_votes / 6.0 AS vote_rate_last_6h,
+                b.baseline_hourly,
+                r.median_account_age_hours,
+                r.distinct_voters,
+                r.distinct_ip_blocks,
+                r.young_voters
             FROM recent r
-            JOIN medians m ON m.category_id = r.category_id
-            JOIN categories c ON c.id = r.category_id
-            WHERE m.median_6h >= 1
-              AND r.recent_count >= m.median_6h * @spikeMultiplier
+            JOIN baseline b ON b.id = r.id
+            WHERE b.baseline_hourly > 0
+              AND r.recent_votes / 6.0 > b.baseline_hourly * @spikeMultiplier
+              AND r.median_account_age_hours < @youngAccountMaxHours
             """,
-            connection
-        );
-        categoriesCmd.Parameters.AddWithValue("spikeMultiplier", SpikeMultiplier);
+            connection);
+        command.Parameters.AddWithValue("spikeMultiplier", SpikeMultiplier);
+        command.Parameters.AddWithValue("youngAccountMaxHours", YoungAccountMaxHours);
 
-        var flaggedCategories = new List<(int Id, string Name, double RecentCount, double Median)>();
-        await using (var reader = await categoriesCmd.ExecuteReaderAsync(ct))
+        var anomalies = new List<VoteAnomaly>();
+        await using (var reader = await command.ExecuteReaderAsync(ct))
         {
             while (await reader.ReadAsync(ct))
             {
-                flaggedCategories.Add((
-                    reader.GetInt32(0),
-                    reader.GetString(3),
-                    Convert.ToDouble(reader.GetValue(1)),
-                    Convert.ToDouble(reader.GetValue(2))
-                ));
+                anomalies.Add(new VoteAnomaly(
+                    reader.GetGuid(0),
+                    reader.GetString(1),
+                    reader.GetInt32(2),
+                    reader.GetDouble(3),
+                    reader.GetDouble(4),
+                    Convert.ToDouble(reader.GetValue(5)),
+                    reader.GetInt32(6),
+                    reader.GetInt32(7),
+                    reader.GetInt32(8)));
             }
         }
 
-        foreach (var (categoryId, categoryName, recentCount, median) in flaggedCategories)
+        foreach (var anomaly in anomalies)
         {
-            // Check median account age of posting devices in this category
-            await using var ageCmd = new NpgsqlCommand(
-                """
-                SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (
-                    ORDER BY EXTRACT(EPOCH FROM (NOW() - d.created_at)) / 3600.0
-                )
-                FROM posts p
-                JOIN devices d ON d.id = p.device_id
-                WHERE p.created_at >= NOW() - INTERVAL '6 hours'
-                  AND p.status != 'deleted'
-                  AND p.category_id = @categoryId
-                """,
-                connection
-            );
-            ageCmd.Parameters.AddWithValue("categoryId", categoryId);
-
-            var ageResult = await ageCmd.ExecuteScalarAsync(ct);
-            if (ageResult is null or DBNull) continue;
-            var medianAccountAgeHours = Convert.ToDouble(ageResult);
-
-            if (medianAccountAgeHours > YoungAccountMaxHours) continue;
+            var reason = "brigade_detected";
+            await categoryThrottle.SetThrottledUntilAsync(
+                anomaly.CategoryId,
+                DateTime.UtcNow.Add(AutoThrottleDuration),
+                reason);
 
             logger.LogWarning(
-                "POLITICAL_NARRATIVE_ALERT: Kategori={Category}, {RecentCount} gönderi/6h " +
-                "(medyan {Median:.1f}), medyan hesap yaşı {Age:.0f}h",
-                categoryName, recentCount, median, medianAccountAgeHours
-            );
+                "POLITICAL_NARRATIVE_ALERT: PostId={PostId}, VoteRate={VoteRate:F2}/h, Baseline={Baseline:F2}/h, MedianAccountAge={Age:F0}h",
+                anomaly.PostId,
+                anomaly.VoteRateLast6h,
+                anomaly.BaselineHourly,
+                anomaly.MedianAccountAgeHours);
 
-            var alreadyThrottled = await throttleService.IsThrottledAsync(categoryId);
-            if (!alreadyThrottled)
-            {
-                var reason = $"Koordineli anlatı tespiti: {recentCount:F0} gönderi/6h (normalin {recentCount / median:F1}×'i), " +
-                             $"medyan hesap yaşı {medianAccountAgeHours:F0}h";
-                await throttleService.SetThrottledAsync(categoryId, AutoThrottleDuration, reason);
-            }
+            _ = complianceLog.LogAsync(
+                "brigade_category_throttle",
+                ip: null,
+                deviceId: null,
+                userId: null,
+                targetId: anomaly.PostId,
+                targetType: "post",
+                metadata: new
+                {
+                    category_id = anomaly.CategoryId,
+                    reason,
+                    vote_rate_last_6h = anomaly.VoteRateLast6h,
+                    baseline_hourly = anomaly.BaselineHourly,
+                    median_account_age_hours = anomaly.MedianAccountAgeHours,
+                    distinct_voters = anomaly.DistinctVoters,
+                    distinct_ip_blocks = anomaly.DistinctIpBlocks,
+                    young_voters = anomaly.YoungVoters
+                },
+                ct);
 
-            await NotifyAdminAsync(categoryName, recentCount, median, medianAccountAgeHours, ct);
+            await NotifyAdminAsync(anomaly, ct);
         }
     }
 
-    private async Task NotifyAdminAsync(
-        string categoryName, double recentCount, double median, double accountAgeHours,
-        CancellationToken ct)
+    private async Task NotifyAdminAsync(VoteAnomaly anomaly, CancellationToken ct)
     {
         try
         {
-            var subject = "[Karar] Koordineli Anlatı Uyarısı";
+            var subject = "[Karar] Brigade vote anomaly";
             var body = $"""
-                Koordineli paylaşım kampanyası tespit edildi.
+                Coordinated voting anomaly detected.
 
-                Kategori: {categoryName}
-                Son 6 saat içinde {recentCount:F0} gönderi paylaşıldı.
-                30 günlük 6 saatlik medyan: {median:F1}
-                Spike çarpanı: {recentCount / median:F1}x
-                Paylaşan cihazların medyan hesap yaşı: {accountAgeHours:F0} saat
+                post_id: {anomaly.PostId}
+                title: {anomaly.Title}
+                vote_rate_last_6h: {anomaly.VoteRateLast6h:F2}/hour
+                baseline_hourly: {anomaly.BaselineHourly:F2}/hour
+                anomaly_multiplier: {anomaly.VoteRateLast6h / anomaly.BaselineHourly:F1}x
 
-                Kategori otomatik olarak 4 saat kısıtlamaya alındı.
-                Lütfen admin panelinden moderasyon kuyruğunu kontrol edin.
+                voter_profile:
+                  distinct_voters: {anomaly.DistinctVoters}
+                  distinct_voter_ip_blocks: {anomaly.DistinctIpBlocks}
+                  median_account_age_hours: {anomaly.MedianAccountAgeHours:F0}
+                  young_voters_under_72h: {anomaly.YoungVoters}
+
+                category_throttle:
+                  category_id: {anomaly.CategoryId}
+                  until: {DateTime.UtcNow.Add(AutoThrottleDuration):O}
+                  reason: brigade_detected
                 """;
 
             await emailService.SendAdminAlertAsync(subject, body);
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Admin alert email gönderilemedi");
+            logger.LogError(ex, "Admin brigade alert email failed");
         }
     }
+
+    private sealed record VoteAnomaly(
+        Guid PostId,
+        string Title,
+        int CategoryId,
+        double VoteRateLast6h,
+        double BaselineHourly,
+        double MedianAccountAgeHours,
+        int DistinctVoters,
+        int DistinctIpBlocks,
+        int YoungVoters);
 }
