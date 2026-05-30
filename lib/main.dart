@@ -23,7 +23,15 @@ Future<void> main() async {
       options: DefaultFirebaseOptions.currentPlatform,
     );
 
-    if (!kIsWeb) {
+    if (kIsWeb) {
+      FlutterError.onError = (details) {
+        debugPrint('[Flutter Web Error] ${details.exceptionAsString()}\n${details.stack}');
+      };
+      PlatformDispatcher.instance.onError = (error, stack) {
+        debugPrint('[Flutter Web Uncaught] $error\n$stack');
+        return true;
+      };
+    } else {
       FlutterError.onError =
           FirebaseCrashlytics.instance.recordFlutterFatalError;
       PlatformDispatcher.instance.onError = (error, stack) {
