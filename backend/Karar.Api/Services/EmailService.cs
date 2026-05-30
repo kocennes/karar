@@ -140,7 +140,10 @@ public sealed class EmailService
         using var client = new SmtpClient();
         try
         {
-            await client.ConnectAsync(_smtpHost, _smtpPort, MailKit.Security.SecureSocketOptions.StartTls);
+            var socketOptions = _smtpPort == 465
+                ? MailKit.Security.SecureSocketOptions.SslOnConnect
+                : MailKit.Security.SecureSocketOptions.StartTls;
+            await client.ConnectAsync(_smtpHost, _smtpPort, socketOptions);
             await client.AuthenticateAsync(_smtpUser, _smtpPass);
             await client.SendAsync(message);
             await client.DisconnectAsync(quit: true);
