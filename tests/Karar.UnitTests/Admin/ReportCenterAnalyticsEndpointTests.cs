@@ -101,7 +101,7 @@ public sealed class ReportCenterAnalyticsEndpointTests
     [Fact]
     public void ScheduledReportsMigration_DoesNotStoreEndUserPii()
     {
-        var migration = TestRepoPaths.ReadText("backend", "migrations", "V46__admin_scheduled_reports.sql");
+        var migration = TestRepoPaths.ReadText("backend", "migrations", "V50__admin_scheduled_reports.sql");
 
         migration.Should().Contain("CREATE TABLE IF NOT EXISTS admin_scheduled_reports");
         migration.Should().Contain("filters     JSONB");

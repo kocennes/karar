@@ -420,6 +420,7 @@ app.Use(async (ctx, next) =>
 app.UseMiddleware<SubnetBanMiddleware>();
 app.UseRateLimiter();
 app.UseMiddleware<DistributedRateLimitMiddleware>();
+app.UseMiddleware<AppAttestationMiddleware>();
 app.UseMiddleware<AdminSecurityMiddleware>();
 
 app.MapHealthChecks("/health/live", new HealthCheckOptions
