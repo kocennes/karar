@@ -87,10 +87,66 @@ jobs:
           --no-restore
           --verbosity minimal
 
+  container-build:
+    name: Container Build & Security Scan
+    runs-on: ubuntu-latest
+    needs: [forbidden-files, dotnet-test]
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build container image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Karar.Api/Dockerfile
+          push: false
+          load: true
+          tags: karar-api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: karar-api:${{ github.sha }}
+          artifact-name: sbom-${{ github.sha }}.spdx.json
+          format: spdx-json
+
+      - name: Vulnerability scan — SARIF upload
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: karar-api:${{ github.sha }}
+          format: sarif
+          output: trivy-results.sarif
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
+      - name: Upload SARIF to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: container
+
+      - name: Block on CRITICAL/HIGH vulnerabilities
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: karar-api:${{ github.sha }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
   release-gate:
     name: Release Gate (SLO Budget)
     runs-on: ubuntu-latest
-    needs: [forbidden-files, flutter-test, dotnet-test]
+    needs: [forbidden-files, flutter-test, dotnet-test, container-build]
     # Only runs on actual pushes to main — not on PRs (no deploy happens on PRs).
     # When a future deploy job is added, it must declare: needs: [release-gate]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
