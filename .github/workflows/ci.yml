@@ -86,3 +86,60 @@ jobs:
           dotnet test tests/Karar.UnitTests/Karar.UnitTests.csproj
           --no-restore
           --verbosity minimal
+
+  release-gate:
+    name: Release Gate (SLO Budget)
+    runs-on: ubuntu-latest
+    needs: [forbidden-files, flutter-test, dotnet-test]
+    # Only runs on actual pushes to main — not on PRs (no deploy happens on PRs).
+    # When a future deploy job is added, it must declare: needs: [release-gate]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Detect hotfix bypass
+        id: bypass
+        run: |
+          MSG="${{ github.event.head_commit.message }}"
+          if echo "$MSG" | grep -qi '\[hotfix\]'; then
+            echo "bypass=true" >> "$GITHUB_OUTPUT"
+            echo "⚡ Hotfix bypass detected — SLO gate skipped."
+          else
+            echo "bypass=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Query SLO health endpoint
+        if: steps.bypass.outputs.bypass == 'false'
+        env:
+          API_URL: ${{ secrets.KARAR_API_URL }}
+        run: |
+          if [ -z "$API_URL" ]; then
+            echo "KARAR_API_URL secret not configured — gate skipped (fail-open until staging is live)."
+            exit 0
+          fi
+
+          RESPONSE=$(curl -sf --max-time 15 "$API_URL/health/slo") || {
+            echo "SLO endpoint unreachable ($API_URL/health/slo) — gate skipped."
+            exit 0
+          }
+
+          echo "--- SLO snapshot ---"
+          echo "$RESPONSE" | jq . 2>/dev/null || echo "$RESPONSE"
+          echo "--------------------"
+
+          FIRING=$(echo "$RESPONSE" | jq -r '
+            .burnRatePolicies[]
+            | select(.severity == "page" and .status == "alert")
+            | "  - \(.name): \(.burnRate)x (threshold=\(.threshold)x)"
+          ')
+
+          if [ -n "$FIRING" ]; then
+            echo ""
+            echo "RELEASE BLOCKED -- critical burn-rate policies are firing:"
+            echo "$FIRING"
+            echo ""
+            echo "Fix the underlying reliability issue before deploying new features."
+            echo "To deploy an emergency fix, include [hotfix] in the commit message."
+            exit 1
+          fi
+
+          STATUS=$(echo "$RESPONSE" | jq -r '.status // "unknown"')
+          echo "SLO gate passed (status=$STATUS)."
