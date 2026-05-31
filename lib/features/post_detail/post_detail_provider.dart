@@ -207,9 +207,12 @@ class PostDetailNotifier extends FamilyNotifier<PostDetailState, String> {
     }
     state = state.copyWith(isLoadingComments: true, clearError: true);
     try {
-      final comments = await ref
-          .read(postRepositoryProvider)
-          .fetchComments(_postId, sort: state.commentSort);
+      final comments = await ref.read(performanceServiceProvider).trace(
+            'comment_panel_open',
+            () => ref
+                .read(postRepositoryProvider)
+                .fetchComments(_postId, sort: state.commentSort),
+          );
       state = state.copyWith(comments: comments, isLoadingComments: false);
     } on ApiException catch (e) {
       state =
@@ -293,8 +296,10 @@ class PostDetailNotifier extends FamilyNotifier<PostDetailState, String> {
 
     try {
       final vt = VoteType.values.byName(voteType);
-      final updated =
-          await ref.read(postRepositoryProvider).vote(current.id, vt);
+      final updated = await ref.read(performanceServiceProvider).trace(
+            'vote_submit',
+            () => ref.read(postRepositoryProvider).vote(current.id, vt),
+          );
       state = state.copyWith(post: updated);
       ref.read(feedProvider.notifier).updatePost(updated);
 

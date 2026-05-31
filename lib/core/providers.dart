@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'auth/auth_service.dart';
 import 'analytics/analytics_service.dart';
+import 'analytics/performance_service.dart';
 import 'analytics/session_tracker.dart';
 import 'app_review/rating_service.dart';
 import 'notifications/notification_service.dart';
@@ -36,6 +37,10 @@ final notificationRepositoryProvider = Provider<NotificationRepository>(
 
 final analyticsServiceProvider = Provider<AnalyticsService>(
   (ref) => throw UnimplementedError('Override in ProviderScope'),
+);
+
+final performanceServiceProvider = Provider<PerformanceService>(
+  (_) => PerformanceService(),
 );
 
 final ratingServiceProvider = Provider<RatingService>(

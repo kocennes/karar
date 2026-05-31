@@ -4,13 +4,17 @@ import '../../core/app_services.dart';
 import '../../core/providers.dart';
 import '../../shared/models/post.dart';
 
+
 class DiscoverFeedNotifier extends AsyncNotifier<DiscoverFeedState> {
   @override
   Future<DiscoverFeedState> build() async {
     if (!AppRuntime.useRemoteApi) {
       return const DiscoverFeedState();
     }
-    return ref.read(postRepositoryProvider).fetchDiscoverFeed();
+    return ref.read(performanceServiceProvider).trace(
+      'discover_page_load',
+      () => ref.read(postRepositoryProvider).fetchDiscoverFeed(),
+    );
   }
 
   Future<void> loadMore() async {
@@ -42,7 +46,10 @@ class DiscoverFeedNotifier extends AsyncNotifier<DiscoverFeedState> {
       if (original.myVote == voteType) {
         updated = await repo.removeVote(postId);
       } else {
-        updated = await repo.vote(postId, voteType);
+        updated = await ref.read(performanceServiceProvider).trace(
+              'vote_submit',
+              () => repo.vote(postId, voteType),
+            );
         repo.sendDiscoverEvent(
           postId: postId,
           eventType: 'vote',

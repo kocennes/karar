@@ -95,7 +95,10 @@ class NotificationsNotifier extends Notifier<NotificationsState> {
 
     state = state.copyWith(isLoading: true, clearError: true);
     try {
-      final page = await _repo.fetchNotifications();
+      final page = await ref.read(performanceServiceProvider).trace(
+            'notification_center_load',
+            () => _repo.fetchNotifications(),
+          );
       state = state.copyWith(
         items: page.items,
         unreadCount: page.unreadCount,

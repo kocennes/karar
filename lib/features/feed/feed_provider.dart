@@ -206,11 +206,20 @@ class FeedNotifier extends Notifier<FeedState> {
         }
       }
 
-      final result = await _repo.fetchFeed(
-        page: page,
-        categoryId: effectiveCategoryId,
-        sort: effectiveSort,
-      );
+      final result = page == 1
+          ? await ref.read(performanceServiceProvider).trace(
+              'feed_load',
+              () => _repo.fetchFeed(
+                page: page,
+                categoryId: effectiveCategoryId,
+                sort: effectiveSort,
+              ),
+            )
+          : await _repo.fetchFeed(
+              page: page,
+              categoryId: effectiveCategoryId,
+              sort: effectiveSort,
+            );
 
       // Diversity pass / Impression filtering
       final history = ref.read(historyProvider.notifier);

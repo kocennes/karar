@@ -253,18 +253,21 @@ class CreatePostNotifier extends Notifier<CreatePostState> {
         );
 
     try {
-      await ref.read(postRepositoryProvider).createPost(
-            title: title,
-            content: content,
-            categoryId: categoryId,
-            images: state.images,
-            tags: state.tags,
-            pollOptions:
-                state.pollOptions.isNotEmpty ? state.pollOptions : null,
-            isUnlisted: state.isUnlisted,
-            isAnonymous: state.isAnonymous,
-            acceptedTerms: acceptedTerms,
-            acceptedCommunityGuidelines: acceptedCommunityGuidelines,
+      await ref.read(performanceServiceProvider).trace(
+            'create_post_submit',
+            () => ref.read(postRepositoryProvider).createPost(
+                  title: title,
+                  content: content,
+                  categoryId: categoryId,
+                  images: state.images,
+                  tags: state.tags,
+                  pollOptions:
+                      state.pollOptions.isNotEmpty ? state.pollOptions : null,
+                  isUnlisted: state.isUnlisted,
+                  isAnonymous: state.isAnonymous,
+                  acceptedTerms: acceptedTerms,
+                  acceptedCommunityGuidelines: acceptedCommunityGuidelines,
+                ),
           );
 
       // Log analytics
