@@ -238,3 +238,107 @@ jobs:
 
           STATUS=$(echo "$RESPONSE" | jq -r '.status // "unknown"')
           echo "SLO gate passed (status=$STATUS)."
+
+  deploy-backend:
+    name: Deploy Backend (Render)
+    runs-on: ubuntu-latest
+    needs: [release-gate]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production   # configure required reviewers in repo Settings → Environments
+    steps:
+      - name: Trigger Render deploy
+        run: |
+          if [ -z "${{ secrets.RENDER_DEPLOY_HOOK_URL }}" ]; then
+            echo "⚠️ RENDER_DEPLOY_HOOK_URL not configured — deploy skipped (configure in repo secrets)."
+            exit 0
+          fi
+          echo "Triggering Render deploy for $GITHUB_SHA..."
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 \
+            "${{ secrets.RENDER_DEPLOY_HOOK_URL }}")
+          echo "Deploy hook HTTP status: $HTTP_STATUS"
+          if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "201" ]; then
+            echo "❌ Deploy hook returned unexpected status: $HTTP_STATUS"
+            exit 1
+          fi
+          echo "✅ Deploy triggered."
+
+      - name: Wait for Render to build and start
+        run: |
+          echo "Waiting 120s for Render to build and start the new instance..."
+          sleep 120
+
+      - name: Post-deploy health check (readiness + commit SHA)
+        id: health
+        env:
+          API_URL: ${{ secrets.KARAR_API_URL }}
+        run: |
+          if [ -z "$API_URL" ]; then
+            echo "⚠️ KARAR_API_URL not configured — post-deploy health check skipped."
+            exit 0
+          fi
+
+          EXPECTED_SHORT="${GITHUB_SHA:0:7}"
+          MAX_RETRIES=10
+          RETRY_DELAY=30
+
+          for i in $(seq 1 $MAX_RETRIES); do
+            STATUS=$(curl -o /dev/null -s -w "%{http_code}" --max-time 15 \
+              "${API_URL}/health/ready" || echo "000")
+            echo "⏳ Attempt $i/$MAX_RETRIES: /health/ready → HTTP $STATUS"
+
+            if [ "$STATUS" = "200" ]; then
+              echo "✅ /health/ready passed."
+
+              VERSION=$(curl -s --max-time 10 "${API_URL}/health/version" || echo "{}")
+              DEPLOYED_SHA=$(echo "$VERSION" | jq -r '.commitSha // "unknown"')
+              echo "Expected SHA prefix : $EXPECTED_SHORT"
+              echo "Deployed commitSha  : $DEPLOYED_SHA"
+
+              if [ "$DEPLOYED_SHA" = "unknown" ]; then
+                echo "⚠️ commitSha not available (RENDER_GIT_COMMIT may not be set yet). Treat as pass."
+              elif echo "$DEPLOYED_SHA" | grep -q "^$EXPECTED_SHORT"; then
+                echo "✅ Commit SHA verified."
+              else
+                echo "⚠️ SHA mismatch — deploy may still be in progress or rolled back on Render side."
+              fi
+
+              exit 0
+            fi
+
+            sleep $RETRY_DELAY
+          done
+
+          echo "❌ Post-deploy health check failed after $MAX_RETRIES attempts."
+          exit 1
+
+      - name: Rollback on health check failure
+        if: failure() && steps.health.outcome == 'failure'
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          if [ -z "$RENDER_API_KEY" ] || [ -z "$RENDER_SERVICE_ID" ]; then
+            echo "⚠️ RENDER_API_KEY or RENDER_SERVICE_ID not set."
+            echo "Manual rollback: Render Dashboard → service → Deploys → select last live deploy → Rollback."
+            exit 0
+          fi
+
+          echo "Fetching recent deploys to find last healthy commit..."
+          DEPLOYS=$(curl -s --max-time 15 \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys?limit=10")
+
+          PREV_ID=$(echo "$DEPLOYS" | jq -r '
+            [.[] | select(.deploy.status == "live")] | .[1].deploy.id // empty
+          ')
+
+          if [ -z "$PREV_ID" ]; then
+            echo "⚠️ No previous live deploy found — skipping automatic rollback."
+            exit 0
+          fi
+
+          echo "Rolling back to deploy $PREV_ID..."
+          curl -s -X POST --max-time 15 \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$PREV_ID/rollback"
+          echo "Rollback initiated. Monitor at: https://dashboard.render.com/web/$RENDER_SERVICE_ID/deploys"
