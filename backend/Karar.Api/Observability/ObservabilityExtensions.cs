@@ -15,6 +15,9 @@ public static class ObservabilityExtensions
     {
         services.Configure<SloOptions>(configuration.GetSection("Slo"));
         services.AddSingleton<SloMetrics>();
+        services.AddSingleton<BurnRateAlertState>();
+        services.AddHttpClient("slo-alerts");
+        services.AddHostedService<BurnRateAlertWorker>();
 
         if (!IsTelemetryEnabled(configuration))
             return services;

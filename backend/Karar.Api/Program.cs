@@ -471,6 +471,18 @@ app.MapGet("/health/slo", (SloMetrics metrics) =>
     return Results.Ok(snapshot);
 });
 
+app.MapGet("/health/slo/alerts", (BurnRateAlertState alertState) =>
+{
+    var records = alertState.GetAll();
+    var firing = records.Where(r => r.IsAlerting).ToArray();
+    return Results.Ok(new
+    {
+        firing_count = firing.Length,
+        firing,
+        all = records
+    });
+});
+
 app.MapGet("/robots.txt", (IConfiguration configuration) =>
 {
     var webBaseUrl = GetWebBaseUrl(configuration);
