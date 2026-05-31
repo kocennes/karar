@@ -4,12 +4,15 @@ using Karar.Api.Observability;
 
 namespace Karar.Api.Data;
 
-public sealed class Db
+public sealed class Db : IDisposable
 {
     private const string CloudSqlLoginScope = "https://www.googleapis.com/auth/sqlservice.login";
     private readonly string _connectionString;
     private readonly bool _useIamAuth;
     private readonly string? _iamUser;
+    // Singleton data source — built once with tracing enabled for non-IAM path.
+    // IAM path rotates the password on every call so a singleton cannot be used there.
+    private readonly NpgsqlDataSource? _dataSource;
 
     public Db(IConfiguration configuration)
     {
@@ -19,28 +22,34 @@ public sealed class Db
         _connectionString = ConvertToKeyValue(raw);
         _useIamAuth = configuration.GetValue<bool>("Database:UseIamAuth");
         _iamUser = configuration["Database:IamUser"];
+
+        if (!_useIamAuth)
+        {
+            _dataSource = new NpgsqlDataSourceBuilder(_connectionString).Build();
+        }
     }
+
+    public void Dispose() => _dataSource?.Dispose();
 
     public async Task<NpgsqlConnection> OpenConnectionAsync()
     {
-        using var activity = KararTelemetry.StartActivity("postgres.open_connection");
-        activity?.SetTag("db.system", "postgresql");
-
         if (_useIamAuth)
         {
             if (string.IsNullOrWhiteSpace(_iamUser))
                 throw new InvalidOperationException("Database:IamUser is required when Database:UseIamAuth=true.");
 
             var token = await GetCloudSqlLoginTokenAsync();
-            var builder = new NpgsqlConnectionStringBuilder(_connectionString)
+            var iamCs = new NpgsqlConnectionStringBuilder(_connectionString)
             {
                 Username = _iamUser,
                 Password = token,
-            };
-            return await NpgsqlDataSource.Create(builder.ConnectionString).OpenConnectionAsync();
+            }.ConnectionString;
+            // IAM path: short-lived data source because the token rotates on every call.
+            // Npgsql holds an internal reference until the connection closes, so disposal is safe.
+            return await new NpgsqlDataSourceBuilder(iamCs).Build().OpenConnectionAsync();
         }
 
-        return await NpgsqlDataSource.Create(_connectionString).OpenConnectionAsync();
+        return await _dataSource!.OpenConnectionAsync();
     }
 
     // Neon ve benzeri sağlayıcılar postgresql:// URI formatı döner;

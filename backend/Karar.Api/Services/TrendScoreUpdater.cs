@@ -1,16 +1,15 @@
+using Karar.Api.Data;
+using Karar.Api.Observability;
 using Npgsql;
 
 namespace Karar.Api.Services;
 
 public sealed class TrendScoreUpdater(
-    IConfiguration configuration,
+    Db db,
     ILogger<TrendScoreUpdater> logger,
     RedisService redis)
     : BackgroundService
 {
-    private readonly string _connectionString = Karar.Api.Data.Db.ConvertToKeyValue(
-        configuration.GetConnectionString("Postgres")
-        ?? throw new InvalidOperationException("ConnectionStrings:Postgres is missing."));
     private static readonly TimeSpan Interval = TimeSpan.FromMinutes(2);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -42,14 +41,20 @@ public sealed class TrendScoreUpdater(
         var dirtyPostIds = await redis.GetDirtyPostsAsync(100);
         if (dirtyPostIds.Count == 0) return;
 
+        using var activity = KararTelemetry.StartActivity("trend_score_updater.refresh_dirty");
+        activity?.SetTag("db.system", "postgresql");
+        activity?.SetTag("karar.post_count", dirtyPostIds.Count);
+
         await RefreshScoresAsync(dirtyPostIds, ct);
         logger.LogDebug("{Count} adet etkileşimli postun trend skoru güncellendi", dirtyPostIds.Count);
     }
 
     private async Task UpdateAllActiveTrendScoresAsync(CancellationToken ct)
     {
-        await using var connection = new NpgsqlConnection(_connectionString);
-        await connection.OpenAsync(ct);
+        using var activity = KararTelemetry.StartActivity("trend_score_updater.refresh_all_active");
+        activity?.SetTag("db.system", "postgresql");
+
+        await using var connection = await db.OpenConnectionAsync();
 
         await using var idCmd = new NpgsqlCommand(
             "SELECT id FROM posts WHERE status = 'active'", connection);
@@ -58,6 +63,8 @@ public sealed class TrendScoreUpdater(
             while (await r.ReadAsync(ct)) allIds.Add(r.GetGuid(0));
 
         if (allIds.Count == 0) return;
+
+        activity?.SetTag("karar.post_count", allIds.Count);
         await RefreshScoresAsync(allIds, ct);
         logger.LogDebug("Tüm aktif postların ({Count}) trend skorları tazelendi", allIds.Count);
     }
@@ -67,8 +74,7 @@ public sealed class TrendScoreUpdater(
     // longer used for EWMA, only for the dirty-post queue.
     private async Task RefreshScoresAsync(List<Guid> postIds, CancellationToken ct)
     {
-        await using var connection = new NpgsqlConnection(_connectionString);
-        await connection.OpenAsync(ct);
+        await using var connection = await db.OpenConnectionAsync();
         await using var cmd = new NpgsqlCommand(
             "SELECT refresh_trend_scores(@ids)", connection);
         cmd.Parameters.AddWithValue("ids", postIds.ToArray());

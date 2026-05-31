@@ -1,4 +1,5 @@
 using Karar.Api.Data;
+using Karar.Api.Observability;
 using Npgsql;
 
 namespace Karar.Api.Services;
@@ -37,6 +38,9 @@ public sealed class ImageModerationWorker(
     {
         if (!safeSearch.IsEnabled) return;
 
+        using var activity = KararTelemetry.StartActivity("image_moderation_worker.process_batch");
+        activity?.SetTag("db.system", "postgresql");
+
         await using var connection = await db.OpenConnectionAsync();
 
         // Only check images uploaded in the last 6 hours (avoid re-checking old stuck rows)
@@ -62,6 +66,8 @@ public sealed class ImageModerationWorker(
         }
 
         if (pending.Count == 0) return;
+
+        activity?.SetTag("karar.image_count", pending.Count);
         logger.LogInformation("ImageModerationWorker: processing {Count} images.", pending.Count);
 
         foreach (var (postId, imageUrl) in pending)
