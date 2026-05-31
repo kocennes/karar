@@ -87,10 +87,49 @@ jobs:
           --no-restore
           --verbosity minimal
 
+  migration-check:
+    name: Migration Safety Check
+    runs-on: ubuntu-latest
+    needs: [forbidden-files]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect duplicate migration version numbers
+        run: |
+          # V3, V7, V30 are legacy duplicates created before this check was added.
+          # They are safe: MigrationsRunner stores the full filename as the version key,
+          # so both files ran and are recorded separately in schema_migrations.
+          KNOWN_LEGACY_DUPS="3 7 30"
+
+          DUPS=$(ls backend/migrations/V*.sql 2>/dev/null \
+            | xargs -I{} basename {} .sql \
+            | sed 's/^[Vv]\([0-9]*\)__.*/\1/' \
+            | sort | uniq -d)
+
+          NEW_DUPS=""
+          for v in $DUPS; do
+            if ! echo "$KNOWN_LEGACY_DUPS" | grep -qw "$v"; then
+              NEW_DUPS="$NEW_DUPS $v"
+            fi
+          done
+
+          if [ -n "$NEW_DUPS" ]; then
+            echo "❌ New duplicate migration version(s): $NEW_DUPS"
+            echo "Each new version number must be unique. Conflicting files:"
+            for v in $NEW_DUPS; do
+              ls backend/migrations/V${v}__*.sql 2>/dev/null
+            done
+            exit 1
+          fi
+
+          COUNT=$(ls backend/migrations/V*.sql 2>/dev/null | wc -l)
+          LEGACY_COUNT=$(echo "$DUPS" | wc -w)
+          echo "✅ Migration check passed — $COUNT files, legacy duplicates: V3/V7/V30 (grandfathered)."
+
   container-build:
     name: Container Build & Security Scan
     runs-on: ubuntu-latest
-    needs: [forbidden-files, dotnet-test]
+    needs: [forbidden-files, dotnet-test, migration-check]
     permissions:
       contents: read
       security-events: write
@@ -146,7 +185,7 @@ jobs:
   release-gate:
     name: Release Gate (SLO Budget)
     runs-on: ubuntu-latest
-    needs: [forbidden-files, flutter-test, dotnet-test, container-build]
+    needs: [forbidden-files, flutter-test, dotnet-test, migration-check, container-build]
     # Only runs on actual pushes to main — not on PRs (no deploy happens on PRs).
     # When a future deploy job is added, it must declare: needs: [release-gate]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

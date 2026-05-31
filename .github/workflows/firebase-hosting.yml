@@ -1,0 +1,73 @@
+name: Firebase Hosting
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-deploy-web:
+    name: Build & Deploy Web (Firebase)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write   # required for PR preview channel comment
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.x'
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Flutter web
+        run: flutter build web --release
+
+      # PR: deploy to an isolated preview channel (expires after 7 days)
+      - name: Deploy preview channel (PR)
+        if: github.event_name == 'pull_request'
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JUDGE_APP_KARAR }}
+          projectId: judge-app-karar
+          target: app
+          channelId: pr-${{ github.event.pull_request.number }}
+          expires: 7d
+
+      # main merge: deploy to live channel
+      - name: Deploy to production (live)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JUDGE_APP_KARAR }}
+          projectId: judge-app-karar
+          target: app
+          channelId: live
+
+      # SPA smoke test: verify the live URL returns HTTP 200 and index.html content
+      - name: SPA rewrite smoke test
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          echo "Waiting 15s for propagation..."
+          sleep 15
+          STATUS=$(curl -o /dev/null -s -w "%{http_code}" https://judge-app-karar.web.app)
+          echo "HTTP status: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "❌ SPA smoke test failed: expected 200, got $STATUS"
+            exit 1
+          fi
+          # Verify SPA rewrite is in place — root should return HTML
+          BODY=$(curl -s --max-time 10 https://judge-app-karar.web.app)
+          if ! echo "$BODY" | grep -qi "<!DOCTYPE html>"; then
+            echo "❌ Response body does not contain HTML document root"
+            exit 1
+          fi
+          echo "✅ SPA smoke test passed (HTTP 200, HTML content verified)"
