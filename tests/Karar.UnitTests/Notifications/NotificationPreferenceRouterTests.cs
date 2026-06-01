@@ -72,6 +72,19 @@ public sealed class NotificationPreferenceRouterTests
         NotificationPreferenceRouter.IsCategoryEnabled(type, enabled).Should().BeTrue();
     }
 
+    [Theory]
+    [InlineData("verdict_milestone")]
+    [InlineData("verdict_reminder")]
+    [InlineData("viral_post_owner")]
+    public void IsCategoryEnabled_UsesVerdictPreferenceForJudgmentNotifications(string type)
+    {
+        var disabled = EmptyPreferences() with { NotifyOnVerdict = false };
+        var enabled = EmptyPreferences() with { NotifyOnVerdict = true };
+
+        NotificationPreferenceRouter.IsCategoryEnabled(type, disabled).Should().BeFalse();
+        NotificationPreferenceRouter.IsCategoryEnabled(type, enabled).Should().BeTrue();
+    }
+
     // Local re-implementation of the deterministic logic with injectable "now".
     private static TimeSpan? ComputeDelay(string startStr, string endStr, DateTime utcNow)
     {

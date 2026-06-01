@@ -1,3 +1,4 @@
+using Karar.Api.Models;
 using Npgsql;
 
 namespace Karar.Api.Services;
@@ -108,16 +109,11 @@ public sealed class VerdictReminderJob(
         await using var command = new NpgsqlCommand(
             """
             INSERT INTO notifications (device_id, type, title, body, post_id)
-            VALUES (
-                @deviceId,
-                'verdict_reminder',
-                'Topluluğun karar verdi',
-                @body,
-                @postId
-            )
+            VALUES (@deviceId, @type, 'Topluluğun karar verdi', @body, @postId)
             """,
             connection);
         command.Parameters.AddWithValue("deviceId", deviceId);
+        command.Parameters.AddWithValue("type", NotificationTypes.VerdictReminder);
         command.Parameters.AddWithValue("body", $"{voteCount} kişi oyladı. %{hakliPercent} Haklı buluyor.");
         command.Parameters.AddWithValue("postId", postId);
         await command.ExecuteNonQueryAsync(ct);

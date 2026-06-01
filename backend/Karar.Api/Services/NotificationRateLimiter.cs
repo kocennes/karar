@@ -1,3 +1,4 @@
+using Karar.Api.Models;
 using StackExchange.Redis;
 
 namespace Karar.Api.Services;
@@ -81,8 +82,9 @@ public sealed class NotificationRateLimiter(
 
     public static NotificationPriority GetPriority(string type) => type switch
     {
-        "moderation_result" or "system_announcement" => NotificationPriority.Critical,
-        "reply_on_comment" or "mention" or "follow" or "verdict_milestone" or "viral_post_owner" => NotificationPriority.High,
+        NotificationTypes.ModerationResult or NotificationTypes.SystemAnnouncement => NotificationPriority.Critical,
+        NotificationTypes.ReplyOnComment or NotificationTypes.Mention or NotificationTypes.Follow
+            or NotificationTypes.VerdictMilestone or NotificationTypes.ViralPostOwner => NotificationPriority.High,
         _ => NotificationPriority.Normal,
     };
 
@@ -103,6 +105,61 @@ public sealed class NotificationRateLimiter(
     public static int GetDailyLimit(DateTimeOffset deviceCreatedAt, DateTimeOffset utcNow)
     {
         return utcNow - deviceCreatedAt < TimeSpan.FromHours(48) ? 1 : 2;
+    }
+
+    // ─── Sliding-window rate limit ───────────────────────────────────────────
+
+    private const int SlidingWindowLimitDefault = 3;
+    private static readonly TimeSpan SlidingWindowDuration = TimeSpan.FromMinutes(15);
+
+    /// Sliding-window check: max 3 pushes per device per 15 minutes.
+    /// Uses a Redis ZSET where each member is a unique score-based entry and old entries are pruned.
+    /// Returns true (allow) when the device is under the limit; false (block) when exceeded.
+    public async Task<bool> CheckSlidingWindowAsync(
+        Guid deviceId,
+        CancellationToken ct = default,
+        int limit = SlidingWindowLimitDefault)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        var key = $"notif:sliding:{deviceId:N}";
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var cutoffMs = nowMs - (long)SlidingWindowDuration.TotalMilliseconds;
+        var windowSec = (long)SlidingWindowDuration.TotalSeconds + 60; // EXPIRE buffer
+
+        const string script = """
+            local key      = KEYS[1]
+            local nowMs    = tonumber(ARGV[1])
+            local cutoffMs = tonumber(ARGV[2])
+            local limit    = tonumber(ARGV[3])
+            local expSec   = tonumber(ARGV[4])
+
+            redis.call('ZREMRANGEBYSCORE', key, '-inf', cutoffMs)
+
+            local count = redis.call('ZCARD', key)
+            if count >= limit then return 0 end
+
+            -- Use nowMs + random suffix as unique member to avoid collisions
+            local member = tostring(nowMs) .. '-' .. tostring(count)
+            redis.call('ZADD', key, nowMs, member)
+            redis.call('EXPIRE', key, expSec)
+            return 1
+            """;
+
+        try
+        {
+            var result = await redis.GetDb().ScriptEvaluateAsync(
+                script,
+                keys: new RedisKey[] { key },
+                values: new RedisValue[] { nowMs, cutoffMs, limit, windowSec });
+
+            return (int)result == 1;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Sliding-window rate limit check failed for device {DeviceId}", deviceId);
+            return true; // fail-open: don't block on Redis errors
+        }
     }
 
     private static DateTimeOffset ToTurkeyDate(DateTimeOffset utcNow)

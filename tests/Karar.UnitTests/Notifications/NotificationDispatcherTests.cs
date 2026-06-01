@@ -1,4 +1,5 @@
 using FluentAssertions;
+using FirebaseAdmin.Messaging;
 using Karar.Api.Services;
 
 namespace Karar.UnitTests.Notifications;
@@ -8,14 +9,14 @@ public sealed class NotificationDispatcherTests
     // ─── CalculateBaseDelay ──────────────────────────────────────────────────
 
     [Theory]
-    [InlineData(0,  30)]
-    [InlineData(1,  60)]
-    [InlineData(2,  120)]
-    [InlineData(3,  240)]
-    [InlineData(4,  480)]
-    [InlineData(5,  960)]
-    [InlineData(6,  1920)]
-    [InlineData(7,  3600)] // capped at max_delay
+    [InlineData(0, 30)]
+    [InlineData(1, 60)]
+    [InlineData(2, 120)]
+    [InlineData(3, 240)]
+    [InlineData(4, 480)]
+    [InlineData(5, 960)]
+    [InlineData(6, 1920)]
+    [InlineData(7, 3600)] // capped at max_delay
     [InlineData(20, 3600)] // stays capped
     public void CalculateBaseDelay_UsesCappedExponentialBackoffInSeconds(int attempt, int expectedSeconds)
     {
@@ -33,7 +34,7 @@ public sealed class NotificationDispatcherTests
     public void CalculateRetryDelay_IsBaseDelayPlusUpToTenPercentJitter(int attempt)
     {
         var baseDelay = NotificationDispatcher.CalculateBaseDelay(attempt);
-        var maxDelay  = baseDelay + TimeSpan.FromSeconds(baseDelay.TotalSeconds * 0.1);
+        var maxDelay = baseDelay + TimeSpan.FromSeconds(baseDelay.TotalSeconds * 0.1);
 
         var retryDelay = NotificationDispatcher.CalculateRetryDelay(attempt);
 
@@ -120,6 +121,19 @@ public sealed class NotificationDispatcherTests
         decision.Action.Should().Be(NotificationDispatcher.DeliveryAction.MarkFailed);
     }
 
+    [Theory]
+    [InlineData(MessagingErrorCode.Unregistered, true)]
+    [InlineData(MessagingErrorCode.SenderIdMismatch, true)]
+    [InlineData(MessagingErrorCode.Unavailable, false)]
+    [InlineData(MessagingErrorCode.Internal, false)]
+    [InlineData(MessagingErrorCode.QuotaExceeded, false)]
+    public void IsPermanentTokenFailure_OnlyTreatsNonRecoverableTokenErrorsAsCleanupCandidates(
+        MessagingErrorCode errorCode,
+        bool expected)
+    {
+        NotificationDispatcher.IsPermanentTokenFailure(errorCode).Should().Be(expected);
+    }
+
     // ─── DetermineDeliveryDecision: retry delay propagation ──────────────────
 
     [Theory]
@@ -130,9 +144,9 @@ public sealed class NotificationDispatcherTests
     [InlineData(4)]
     public void DetermineDeliveryDecision_TransientFailure_RetryDelayMatchesCalculateRetryDelay(int attemptCount)
     {
-        var result    = NotificationDispatcher.PushSendResult.TransientFailure("err");
+        var result = NotificationDispatcher.PushSendResult.TransientFailure("err");
         var baseDelay = NotificationDispatcher.CalculateBaseDelay(attemptCount + 1);
-        var maxDelay  = baseDelay + TimeSpan.FromSeconds(baseDelay.TotalSeconds * 0.1);
+        var maxDelay = baseDelay + TimeSpan.FromSeconds(baseDelay.TotalSeconds * 0.1);
 
         var decision = NotificationDispatcher.DetermineDeliveryDecision(result, attemptCount, 10);
 

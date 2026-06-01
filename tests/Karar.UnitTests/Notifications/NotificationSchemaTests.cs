@@ -1,5 +1,7 @@
+using System.Reflection;
 using System.Text.RegularExpressions;
 using FluentAssertions;
+using Karar.Api.Models;
 
 namespace Karar.UnitTests.Notifications;
 
@@ -103,6 +105,88 @@ public sealed class NotificationSchemaTests
         normalizedSql.Should().Contain("idx_notification_events_type_time");
     }
 
+    [Fact]
+    public void NotificationTypeConstants_AllPresentInLatestConstraintMigration()
+    {
+        var constants = typeof(NotificationTypes)
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.FieldType == typeof(string))
+            .Select(f => (string)f.GetRawConstantValue()!)
+            .ToArray();
+
+        var migrationPath = FindRepoFile("backend/migrations/V44__notification_follow_new_post_type.sql");
+        var migrationSql = File.ReadAllText(migrationPath);
+        var allowedTypes = Regex.Matches(migrationSql, "'([a-z_]+)'")
+            .Select(m => m.Groups[1].Value)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var missingTypes = constants
+            .Where(type => !allowedTypes.Contains(type))
+            .ToArray();
+
+        missingTypes.Should().BeEmpty(
+            because: "every NotificationTypes constant must appear in the V44 migration constraint — " +
+                     "add missing types to V44 or create a new migration that extends the CHECK constraint");
+    }
+
+    [Fact]
+    public void FcmTokenDeleteEndpoint_RemovesOnlyCurrentDeviceTokens()
+    {
+        var programPath = FindRepoFile("backend/Karar.Api/Program.cs");
+        var program = File.ReadAllText(programPath);
+        var endpointBlock = Slice(
+            program,
+            "app.MapDelete(\"/api/v1/devices/fcm-token\"",
+            "// Public moderation transparency report");
+
+        endpointBlock.Should().Contain("requestDevice.TryGetDeviceIdAsync(httpRequest)",
+            "FCM token deletion must be scoped to the caller's device token");
+        endpointBlock.Should().Contain("DELETE FROM fcm_tokens WHERE device_id = @deviceId",
+            "logout token cleanup must not delete tokens owned by other devices");
+    }
+
+    [Fact]
+    public void DispatcherFailureUpdates_DoNotDeleteInAppNotificationRows()
+    {
+        var dispatcherPath = FindRepoFile("backend/Karar.Api/Services/NotificationDispatcher.cs");
+        var dispatcher = File.ReadAllText(dispatcherPath);
+        var permanentFailureBlock = Slice(
+            dispatcher,
+            "if (decision.Action == DeliveryAction.MarkFailed)",
+            "// ScheduleRetry");
+        var retryBlock = Slice(
+            dispatcher,
+            "// ScheduleRetry",
+            "private async Task MarkDedupSuppressedAsync");
+
+        permanentFailureBlock.Should().Contain("UPDATE notifications");
+        permanentFailureBlock.Should().Contain("failed_at = NOW()");
+        permanentFailureBlock.Should().Contain("status = 'permanently_failed'");
+        permanentFailureBlock.Should().Contain("InsertDeadLetterAsync");
+        permanentFailureBlock.Should().NotContain("DELETE FROM notifications");
+
+        retryBlock.Should().Contain("UPDATE notifications");
+        retryBlock.Should().Contain("attempt_count = attempt_count + 1");
+        retryBlock.Should().Contain("next_attempt_at = NOW()");
+        retryBlock.Should().NotContain("sent_at = NOW()");
+        retryBlock.Should().NotContain("DELETE FROM notifications");
+    }
+
+    [Fact]
+    public void DispatcherDeadLetters_DistinguishPermanentFailuresFromMaxAttempts()
+    {
+        var dispatcherPath = FindRepoFile("backend/Karar.Api/Services/NotificationDispatcher.cs");
+        var dispatcher = File.ReadAllText(dispatcherPath);
+        var failureBlock = Slice(
+            dispatcher,
+            "if (decision.Action == DeliveryAction.MarkFailed)",
+            "// ScheduleRetry");
+
+        failureBlock.Should().Contain("result.Status == PushSendStatus.PermanentFailure");
+        failureBlock.Should().Contain("\"permanent_failure\"");
+        failureBlock.Should().Contain("\"max_attempts_exceeded\"");
+    }
+
     private static string FindRepoFile(string relativePath)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
@@ -119,5 +203,14 @@ public sealed class NotificationSchemaTests
         }
 
         throw new FileNotFoundException($"Could not find repository file: {relativePath}");
+    }
+
+    private static string Slice(string text, string start, string end)
+    {
+        var startIndex = text.IndexOf(start, StringComparison.Ordinal);
+        startIndex.Should().BeGreaterThanOrEqualTo(0);
+        var endIndex = text.IndexOf(end, startIndex, StringComparison.Ordinal);
+        endIndex.Should().BeGreaterThan(startIndex);
+        return text[startIndex..endIndex];
     }
 }

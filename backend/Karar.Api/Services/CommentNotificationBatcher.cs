@@ -1,3 +1,4 @@
+using Karar.Api.Models;
 using Npgsql;
 using StackExchange.Redis;
 
@@ -51,12 +52,14 @@ public sealed class CommentNotificationBatcher(
 
             if (count == 0)
             {
+                // First comment in window: notify immediately and store comment_id in payload for deep link
                 await InsertNotificationAsync(
                     ownerDeviceId.Value,
                     "Yeni yorum",
                     "Birisi postuna yorum yaptı.",
                     postId,
-                    "comment_on_post");
+                    NotificationTypes.CommentOnPost,
+                    commentId);
             }
         }
         catch (Exception ex)
@@ -68,7 +71,8 @@ public sealed class CommentNotificationBatcher(
                 "Yeni yorum",
                 "Birisi postuna yorum yaptı.",
                 postId,
-                "comment_on_post");
+                "comment_on_post",
+                commentId);
         }
     }
 
@@ -91,12 +95,14 @@ public sealed class CommentNotificationBatcher(
         if (!await db.StringSetAsync(dedupKey, "1", TimeSpan.FromDays(7), When.NotExists))
             return;
 
+        // Store replyCommentId in payload so the deep link can scroll to the reply
         await InsertNotificationAsync(
             parentAuthorDeviceId,
             "Yorum yanıtlandı",
             "Yorumuna birisi yanıt verdi.",
             postId,
-            "reply_on_comment");
+            NotificationTypes.ReplyOnComment,
+            replyCommentId);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -208,14 +214,19 @@ public sealed class CommentNotificationBatcher(
         return status == "active" && contentLength >= 5 && (authorKarma ?? 0) > -10;
     }
 
-    private async Task InsertNotificationAsync(Guid deviceId, string title, string body, Guid postId, string type = "comment_on_post")
+    private async Task InsertNotificationAsync(
+        Guid deviceId, string title, string body, Guid postId,
+        string type = "comment_on_post", Guid? commentId = null)
     {
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync();
+        var payloadJson = commentId.HasValue
+            ? $"{{\"comment_id\":\"{commentId.Value:D}\"}}"
+            : "{}";
         await using var command = new NpgsqlCommand(
             """
-            INSERT INTO notifications (device_id, type, title, body, post_id)
-            VALUES (@deviceId, @type, @title, @body, @postId)
+            INSERT INTO notifications (device_id, type, title, body, post_id, payload)
+            VALUES (@deviceId, @type, @title, @body, @postId, @payload::jsonb)
             """,
             connection);
         command.Parameters.AddWithValue("deviceId", deviceId);
@@ -223,6 +234,7 @@ public sealed class CommentNotificationBatcher(
         command.Parameters.AddWithValue("title", title);
         command.Parameters.AddWithValue("body", body);
         command.Parameters.AddWithValue("postId", postId);
+        command.Parameters.AddWithValue("payload", payloadJson);
         await command.ExecuteNonQueryAsync();
     }
 

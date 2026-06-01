@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Karar.Api.Contracts;
+using Karar.Api.Models;
 using Npgsql;
 
 namespace Karar.Api.Services;
@@ -144,15 +145,15 @@ public sealed class NotificationPreferenceRouter(ILogger<NotificationPreferenceR
 
     public static bool IsCategoryEnabled(string type, NotificationPreferencesRequest prefs) => type switch
     {
-        "comment_on_post" => prefs.NotifyOnComment ?? true,
-        "reply_on_comment" => prefs.NotifyOnReply ?? true,
-        "verdict_milestone" or "viral_post_owner" => prefs.NotifyOnVerdict ?? true,
-        "moderation_result" => prefs.NotifyOnPostStatus ?? true,
-        "mention" or "follow" => prefs.NotifyOnMention ?? true,
-        "trend_alert" => prefs.NotifyOnTrend ?? false,
-        "weekly_digest" => prefs.NotifyOnDigest ?? false,
-        "follow_new_post" => prefs.NotifyOnTrend ?? false,
-        "system_announcement" => true,
+        NotificationTypes.CommentOnPost => prefs.NotifyOnComment ?? true,
+        NotificationTypes.ReplyOnComment => prefs.NotifyOnReply ?? true,
+        NotificationTypes.VerdictMilestone or NotificationTypes.VerdictReminder or NotificationTypes.ViralPostOwner => prefs.NotifyOnVerdict ?? true,
+        NotificationTypes.ModerationResult => prefs.NotifyOnPostStatus ?? true,
+        NotificationTypes.Mention or NotificationTypes.Follow => prefs.NotifyOnMention ?? true,
+        NotificationTypes.TrendAlert => prefs.NotifyOnTrend ?? false,
+        NotificationTypes.WeeklyDigest => prefs.NotifyOnDigest ?? false,
+        NotificationTypes.FollowNewPost => prefs.NotifyOnTrend ?? false,
+        NotificationTypes.SystemAnnouncement => true,
         _ => true,
     };
 }

@@ -1,4 +1,5 @@
 using FirebaseAdmin.Messaging;
+using Karar.Api.Models;
 using Karar.Api.Observability;
 using Npgsql;
 
@@ -10,8 +11,7 @@ public sealed class NotificationDispatcher(
     IConfiguration configuration,
     ILogger<NotificationDispatcher> logger,
     IFcmSender fcmSender,
-    NotificationRateLimiter rateLimiter,
-    NotificationPreferenceRouter preferenceRouter,
+    NotificationDecisionService decisionService,
     SloMetrics sloMetrics,
     RedisService redis)
     : BackgroundService
@@ -59,6 +59,9 @@ public sealed class NotificationDispatcher(
                     CalculateRetryDelay(attemptCount + 1))
         };
 
+    public static bool IsPermanentTokenFailure(MessagingErrorCode? errorCode) =>
+        errorCode is MessagingErrorCode.Unregistered or MessagingErrorCode.SenderIdMismatch;
+
     // ─── BackgroundService ───────────────────────────────────────────────────
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -100,7 +103,7 @@ public sealed class NotificationDispatcher(
 
         await using var fetchCmd = new NpgsqlCommand(
             """
-            SELECT n.id, n.device_id, n.type, n.title, n.body, n.post_id, d.created_at, n.attempt_count, n.dedupe_key, u.id AS user_id
+            SELECT n.id, n.device_id, n.type, n.title, n.body, n.post_id, d.created_at, n.attempt_count, n.dedupe_key, u.id AS user_id, n.payload
             FROM notifications n
             JOIN devices d ON d.id = n.device_id
             LEFT JOIN users u ON u.device_id = n.device_id AND u.deleted_at IS NULL
@@ -132,7 +135,8 @@ public sealed class NotificationDispatcher(
                         reader.GetFieldValue<DateTimeOffset>(6),
                         reader.GetInt32(7),
                         reader.IsDBNull(8) ? null : reader.GetString(8),
-                        reader.IsDBNull(9) ? null : reader.GetGuid(9)));
+                        reader.IsDBNull(9) ? null : reader.GetGuid(9),
+                        reader.IsDBNull(10) ? null : reader.GetString(10)));
                 }
             }
 
@@ -148,34 +152,29 @@ public sealed class NotificationDispatcher(
             {
                 var priority = NotificationRateLimiter.GetPriority(notification.Type);
 
-                var decision = await preferenceRouter.CanPushAsync(
+                var decision = await decisionService.EvaluateAsync(
+                    notification.Id,
                     notification.DeviceId,
+                    notification.DeviceCreatedAt,
+                    notification.UserId,
                     notification.Type,
                     priority,
                     connection,
                     ct);
 
-                if (!decision.Allowed)
+                if (decision.ShouldSend)
                 {
-                    deferred.Add((notification.Id, decision.SuggestedRetryDelay));
-                    await LogEventAsync(connection, notification.Id, notification.DeviceId, "suppressed",
-                        decision.SuggestedRetryDelay.HasValue
-                            ? $"{{\"reason\":\"preference_blocked\",\"retry_in_seconds\":{(int)decision.SuggestedRetryDelay.Value.TotalSeconds}}}"
-                            : "{\"reason\":\"preference_blocked\"}",
-                        ct);
-                    continue;
-                }
-
-                var canSend = await rateLimiter.CanSendAsync(
-                    notification.DeviceId,
-                    priority,
-                    notification.DeviceCreatedAt,
-                    ct);
-
-                if (canSend)
                     sendable.Add(notification.Id);
+                }
+                else if (decision.IsDeferred)
+                {
+                    deferred.Add((notification.Id, decision.DeferDelay));
+                }
                 else
-                    deferred.Add((notification.Id, null));
+                {
+                    // Suppressed — still update next_attempt_at to avoid re-evaluation loops
+                    deferred.Add((notification.Id, RateLimitDelay));
+                }
             }
 
             if (deferred.Count > 0)
@@ -219,6 +218,7 @@ public sealed class NotificationDispatcher(
             await LogEventAsync(connection, notification.Id, notification.DeviceId, "send_attempt", ct: ct);
 
             var badgeCount = await GetUnreadCountAsync(connection, notification.DeviceId, ct);
+            var commentId = ExtractCommentId(notification.Payload);
             var result = await SendPushAsync(
                 connection,
                 notification.DeviceId,
@@ -226,6 +226,7 @@ public sealed class NotificationDispatcher(
                 notification.Body,
                 notification.Type,
                 notification.PostId,
+                commentId,
                 badgeCount,
                 ct);
 
@@ -256,6 +257,7 @@ public sealed class NotificationDispatcher(
         string body,
         string type,
         Guid? postId,
+        string? commentId,
         int badgeCount,
         CancellationToken ct)
     {
@@ -275,18 +277,22 @@ public sealed class NotificationDispatcher(
         {
             try
             {
-                var deepLink = BuildDeepLink(type, postId);
+                var deepLink = BuildDeepLink(type, postId, commentId);
+                var data = new Dictionary<string, string>
+                {
+                    ["type"] = type,
+                    ["referenceId"] = postId?.ToString() ?? string.Empty,
+                    ["deepLink"] = deepLink,
+                    ["click_action"] = "FLUTTER_NOTIFICATION_CLICK",
+                };
+                if (commentId is not null)
+                    data["commentId"] = commentId;
+
                 var message = new Message
                 {
                     Token = token,
                     Notification = new Notification { Title = title, Body = body },
-                    Data = new Dictionary<string, string>
-                    {
-                        ["type"] = type,
-                        ["referenceId"] = postId?.ToString() ?? string.Empty,
-                        ["deepLink"] = deepLink,
-                        ["click_action"] = "FLUTTER_NOTIFICATION_CLICK",
-                    },
+                    Data = data,
                     Android = new AndroidConfig
                     {
                         Priority = Priority.High,
@@ -310,8 +316,7 @@ public sealed class NotificationDispatcher(
 
                 providerMessageId ??= await fcmSender.SendAsync(message, ct);
             }
-            catch (FirebaseMessagingException ex) when
-                (ex.MessagingErrorCode == MessagingErrorCode.Unregistered)
+            catch (FirebaseMessagingException ex) when (IsPermanentTokenFailure(ex.MessagingErrorCode))
             {
                 staleTokens.Add(token);
             }
@@ -469,7 +474,10 @@ public sealed class NotificationDispatcher(
             cmd.Parameters.AddWithValue("id", notification.Id);
             cmd.Parameters.AddWithValue("lastError", decision.Error!);
             await cmd.ExecuteNonQueryAsync(ct);
-            await InsertDeadLetterAsync(connection, notification, decision.Error!, ct);
+            var deadLetterReason = result.Status == PushSendStatus.PermanentFailure
+                ? "permanent_failure"
+                : "max_attempts_exceeded";
+            await InsertDeadLetterAsync(connection, notification, decision.Error!, deadLetterReason, ct);
             await LogEventAsync(connection, notification.Id, notification.DeviceId, "failed",
                 $"{{\"error\":\"{decision.Error}\"}}", ct);
             sloMetrics.RecordNotificationDelivery("failed", notification.Type);
@@ -524,6 +532,7 @@ public sealed class NotificationDispatcher(
         NpgsqlConnection connection,
         PendingNotification notification,
         string error,
+        string reason,
         CancellationToken ct)
     {
         try
@@ -544,7 +553,7 @@ public sealed class NotificationDispatcher(
             cmd.Parameters.AddWithValue("postId", notification.PostId.HasValue ? (object)notification.PostId.Value : DBNull.Value);
             cmd.Parameters.AddWithValue("attemptCount", notification.AttemptCount + 1);
             cmd.Parameters.AddWithValue("lastError", (object?)error ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("reason", "max_attempts_exceeded");
+            cmd.Parameters.AddWithValue("reason", reason);
             await cmd.ExecuteNonQueryAsync(ct);
         }
         catch (Exception ex)
@@ -583,39 +592,61 @@ public sealed class NotificationDispatcher(
 
     public static string GetAndroidChannelId(string type) => type switch
     {
-        "comment_on_post" => "comments",
-        "reply_on_comment" or "mention" or "follow" => "mentions",
-        "verdict_milestone" or "viral_post_owner" => "milestones",
-        "trend_alert" or "follow_new_post" => "viral",
-        "weekly_digest" => "digest",
+        NotificationTypes.CommentOnPost => "comments",
+        NotificationTypes.ReplyOnComment or NotificationTypes.Mention or NotificationTypes.Follow => "mentions",
+        NotificationTypes.VerdictMilestone or NotificationTypes.ViralPostOwner => "milestones",
+        NotificationTypes.TrendAlert or NotificationTypes.FollowNewPost => "viral",
+        NotificationTypes.WeeklyDigest => "digest",
         _ => "system",
     };
 
     public static string GetApnsCategory(string type) => type switch
     {
-        "comment_on_post" => "COMMENT",
-        "reply_on_comment" => "REPLY",
-        "mention" => "MENTION",
-        "follow" => "FOLLOW",
-        "verdict_milestone" or "viral_post_owner" => "MILESTONE",
-        "trend_alert" or "follow_new_post" => "TREND",
-        "weekly_digest" => "DIGEST",
-        "moderation_result" => "MODERATION",
-        "system_announcement" => "SYSTEM",
+        NotificationTypes.CommentOnPost => "COMMENT",
+        NotificationTypes.ReplyOnComment => "REPLY",
+        NotificationTypes.Mention => "MENTION",
+        NotificationTypes.Follow => "FOLLOW",
+        NotificationTypes.VerdictMilestone or NotificationTypes.ViralPostOwner => "MILESTONE",
+        NotificationTypes.TrendAlert or NotificationTypes.FollowNewPost => "TREND",
+        NotificationTypes.WeeklyDigest => "DIGEST",
+        NotificationTypes.ModerationResult => "MODERATION",
+        NotificationTypes.SystemAnnouncement => "SYSTEM",
         _ => "GENERAL",
     };
 
-    public static string BuildDeepLink(string type, Guid? postId) => type switch
+    public static string BuildDeepLink(string type, Guid? postId, string? commentId = null)
     {
-        "comment_on_post" or "reply_on_comment" or "mention"
-            or "verdict_milestone" or "viral_post_owner"
-            or "trend_alert" or "follow_new_post"
-            when postId.HasValue => $"/posts/{postId}",
-        "weekly_digest" => "/notifications",
-        "moderation_result" => "/profile",
-        "system_announcement" => "/notifications",
-        _ => "/notifications",
-    };
+        var basePath = type switch
+        {
+            NotificationTypes.CommentOnPost or NotificationTypes.ReplyOnComment or NotificationTypes.Mention
+                or NotificationTypes.VerdictMilestone or NotificationTypes.ViralPostOwner
+                or NotificationTypes.TrendAlert or NotificationTypes.FollowNewPost
+                when postId.HasValue => $"/posts/{postId}",
+            NotificationTypes.WeeklyDigest => "/notifications",
+            NotificationTypes.ModerationResult => "/profile",
+            NotificationTypes.SystemAnnouncement => "/notifications",
+            _ => "/notifications",
+        };
+
+        if (commentId is not null && basePath.StartsWith("/posts/"))
+            return $"{basePath}?commentId={commentId}";
+
+        return basePath;
+    }
+
+    private static string? ExtractCommentId(string? payloadJson)
+    {
+        if (string.IsNullOrEmpty(payloadJson) || payloadJson == "{}") return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(payloadJson);
+            return doc.RootElement.TryGetProperty("comment_id", out var prop) ? prop.GetString() : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     private static string TokenSuffix(string token) =>
         token.Length <= 6 ? token : token[^6..];
@@ -632,7 +663,8 @@ public sealed class NotificationDispatcher(
         DateTimeOffset DeviceCreatedAt,
         int AttemptCount,
         string? DedupeKey,
-        Guid? UserId);
+        Guid? UserId,
+        string? Payload);
 
     public enum PushSendStatus { Success, TransientFailure, PermanentFailure }
 
