@@ -14,6 +14,8 @@ import '../post_detail/post_detail_provider.dart';
 import '../post_detail/share_picker_sheet.dart';
 import '../post_detail/vote_bar.dart';
 import 'discover_feed_provider.dart';
+import 'discover_provider.dart';
+import 'post_card.dart';
 
 class DiscoverScreen extends ConsumerStatefulWidget {
   const DiscoverScreen({super.key});
@@ -30,6 +32,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen>
   bool _firstImpressionSent = false;
   String? _activePostId;
   int _snapDepthMilestoneFired = 0;
+  bool _showSections = false;
 
   static const _snapMilestones = [3, 7, 15, 30];
 
@@ -84,6 +87,21 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen>
             );
         break;
       }
+    }
+  }
+
+  void _toggleSections() {
+    if (!_showSections) {
+      final items = ref.read(discoverFeedProvider).valueOrNull?.items ?? [];
+      _handlePageLeave(_currentIndex, items);
+    }
+    setState(() => _showSections = !_showSections);
+    if (!_showSections) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final items = ref.read(discoverFeedProvider).valueOrNull?.items ?? [];
+        _handlePageEnter(_currentIndex, items);
+      });
     }
   }
 
@@ -161,12 +179,14 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen>
       }
     });
 
+    final theme = Theme.of(context);
     return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      extendBodyBehindAppBar: true,
+      backgroundColor: theme.colorScheme.surface,
+      extendBodyBehindAppBar: !_showSections,
       appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
+        backgroundColor:
+            _showSections ? theme.colorScheme.surface : Colors.transparent,
+        elevation: _showSections ? null : 0,
         leadingWidth: 160,
         leading: InkWell(
           onTap: () => context.go('/'),
@@ -180,8 +200,21 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen>
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
         centerTitle: true,
+        actions: [
+          IconButton(
+            icon: Icon(
+              _showSections
+                  ? Icons.explore_rounded
+                  : Icons.dashboard_rounded,
+            ),
+            tooltip: _showSections ? 'Akış' : 'Bölümler',
+            onPressed: _toggleSections,
+          ),
+        ],
       ),
-      body: feedAsync.when(
+      body: _showSections
+          ? const _DiscoverSectionsView()
+          : feedAsync.when(
         data: (state) {
           if (state.items.isEmpty) {
             return Center(
@@ -261,7 +294,12 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen>
                         position: index,
                         rankingReason: item.rankingReason,
                       );
-                  _showCommentsSheet(context, item.post);
+                  _showCommentsSheet(
+                    context,
+                    item.post,
+                    impressionToken: item.impressionToken,
+                    rankingReason: item.rankingReason,
+                  );
                 },
                 onShare: () {
                   ref.read(postRepositoryProvider).sendDiscoverEvent(
@@ -305,12 +343,21 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen>
     );
   }
 
-  void _showCommentsSheet(BuildContext context, Post post) {
+  void _showCommentsSheet(
+    BuildContext context,
+    Post post, {
+    required String impressionToken,
+    required String rankingReason,
+  }) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _DiscoverCommentsSheet(post: post),
+      builder: (_) => _DiscoverCommentsSheet(
+        post: post,
+        impressionToken: impressionToken,
+        rankingReason: rankingReason,
+      ),
     );
   }
 }
@@ -761,6 +808,8 @@ class _RankingBadge extends StatelessWidget {
           AppColors.primary
         ),
       'fresh' => (Icons.fiber_new_rounded, 'Yeni', AppColors.haksiz),
+      'serendipity' => (Icons.shuffle_rounded, 'Farklı Bir Şey', Colors.teal),
+      'ucb_explore' => (Icons.explore_rounded, 'Keşif', Colors.deepPurple),
       _ => (Icons.local_fire_department_rounded, 'Trend', Colors.orange),
     };
 
@@ -792,9 +841,15 @@ class _RankingBadge extends StatelessWidget {
 // ─── Comments bottom sheet ───────────────────────────────────────────────────
 
 class _DiscoverCommentsSheet extends ConsumerWidget {
-  const _DiscoverCommentsSheet({required this.post});
+  const _DiscoverCommentsSheet({
+    required this.post,
+    required this.impressionToken,
+    required this.rankingReason,
+  });
 
   final Post post;
+  final String impressionToken;
+  final String rankingReason;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -857,11 +912,17 @@ class _DiscoverCommentsSheet extends ConsumerWidget {
                   postId: post.id,
                   isPostOwner: post.isOwner,
                   scrollController: scrollController,
+                  impressionToken: impressionToken,
+                  rankingReason: rankingReason,
                 ),
               ),
 
               // Comment input
-              _DiscoverCommentInput(postId: post.id),
+              _DiscoverCommentInput(
+                postId: post.id,
+                impressionToken: impressionToken,
+                rankingReason: rankingReason,
+              ),
             ],
           ),
         );
@@ -875,11 +936,15 @@ class _CommentsBody extends ConsumerWidget {
     required this.postId,
     required this.isPostOwner,
     required this.scrollController,
+    required this.impressionToken,
+    required this.rankingReason,
   });
 
   final String postId;
   final bool isPostOwner;
   final ScrollController scrollController;
+  final String impressionToken;
+  final String rankingReason;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -912,10 +977,24 @@ class _CommentsBody extends ConsumerWidget {
       shrinkWrap: false,
       padding: const EdgeInsets.symmetric(horizontal: 12),
       isPostOwner: isPostOwner,
-      onUpvote: (c) =>
-          ref.read(postDetailProvider(postId).notifier).upvoteComment(c),
-      onDownvote: (c) =>
-          ref.read(postDetailProvider(postId).notifier).downvoteComment(c),
+      onUpvote: (c) {
+        ref.read(postDetailProvider(postId).notifier).upvoteComment(c);
+        ref.read(postRepositoryProvider).sendDiscoverEvent(
+              postId: postId,
+              eventType: 'comment_like',
+              impressionToken: impressionToken,
+              rankingReason: rankingReason,
+            );
+      },
+      onDownvote: (c) {
+        ref.read(postDetailProvider(postId).notifier).downvoteComment(c);
+        ref.read(postRepositoryProvider).sendDiscoverEvent(
+              postId: postId,
+              eventType: 'comment_dislike',
+              impressionToken: impressionToken,
+              rankingReason: rankingReason,
+            );
+      },
       onDelete: (c) =>
           ref.read(postDetailProvider(postId).notifier).deleteComment(c),
       onReply: (c) =>
@@ -925,9 +1004,15 @@ class _CommentsBody extends ConsumerWidget {
 }
 
 class _DiscoverCommentInput extends ConsumerStatefulWidget {
-  const _DiscoverCommentInput({required this.postId});
+  const _DiscoverCommentInput({
+    required this.postId,
+    required this.impressionToken,
+    required this.rankingReason,
+  });
 
   final String postId;
+  final String impressionToken;
+  final String rankingReason;
 
   @override
   ConsumerState<_DiscoverCommentInput> createState() =>
@@ -949,11 +1034,20 @@ class _DiscoverCommentInputState extends ConsumerState<_DiscoverCommentInput> {
   Future<void> _submit() async {
     final text = _ctrl.text.trim();
     if (text.isEmpty || _loading) return;
+    final isReply =
+        ref.read(postDetailProvider(widget.postId)).replyingToComment != null;
     setState(() => _loading = true);
     try {
       await ref
           .read(postDetailProvider(widget.postId).notifier)
           .submitComment(text);
+      if (!mounted) return;
+      ref.read(postRepositoryProvider).sendDiscoverEvent(
+            postId: widget.postId,
+            eventType: isReply ? 'comment_reply' : 'comment_open',
+            impressionToken: widget.impressionToken,
+            rankingReason: widget.rankingReason,
+          );
       _ctrl.clear();
       ref.read(postDetailProvider(widget.postId).notifier).cancelReply();
     } catch (_) {
@@ -998,7 +1092,7 @@ class _DiscoverCommentInputState extends ConsumerState<_DiscoverCommentInput> {
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.reply_rounded,
+                    const Icon(Icons.reply_rounded,
                         size: 14, color: AppColors.primary),
                     const SizedBox(width: 6),
                     Expanded(
@@ -1063,6 +1157,158 @@ class _DiscoverCommentInputState extends ConsumerState<_DiscoverCommentInput> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ─── Sections view ────────────────────────────────────────────────────────────
+
+class _DiscoverSectionsView extends ConsumerWidget {
+  const _DiscoverSectionsView();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final sectionsAsync = ref.watch(discoverProvider);
+    return sectionsAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (_, __) => Center(
+        child: ErrorView(
+          message: 'Bölümler yüklenemedi',
+          onRetry: () => ref.invalidate(discoverProvider),
+        ),
+      ),
+      data: (data) {
+        final sections = <(String, IconData, Color, String, List<Post>)>[
+          (
+            'Yükselenler',
+            Icons.trending_up_rounded,
+            AppColors.hakli,
+            'Hızla oy alıyor',
+            data.rising,
+          ),
+          (
+            'İkiye Bölenler',
+            Icons.balance_rounded,
+            AppColors.primary,
+            'Topluluk ikiye bölündü',
+            data.controversial,
+          ),
+          (
+            'Yeni Karar Bekleyenler',
+            Icons.fiber_new_rounded,
+            AppColors.haksiz,
+            'Az oylı, yeni tartışmalar',
+            data.fresh,
+          ),
+          if (data.cityTrending.isNotEmpty && data.city != null)
+            (
+              '${data.city!}\'da Trend',
+              Icons.location_on_rounded,
+              Colors.orange,
+              'Şehrinde öne çıkıyor',
+              data.cityTrending,
+            ),
+          if (data.serendipity.isNotEmpty)
+            (
+              'Farklı Bir Şey',
+              Icons.shuffle_rounded,
+              Colors.teal,
+              'Henüz keşfetmediğin kategorilerden',
+              data.serendipity,
+            ),
+        ];
+
+        final allEmpty = sections.every((s) => s.$5.isEmpty);
+        if (allEmpty) {
+          return Center(
+            child: EmptyState(
+              message: 'Şu an bölümlerde içerik yok.\nBiraz sonra tekrar dene.',
+              icon: Icons.dashboard_outlined,
+              action: () => ref.invalidate(discoverProvider),
+              actionLabel: 'Yenile',
+            ),
+          );
+        }
+
+        final items = <Widget>[];
+        for (final (label, icon, color, subtitle, posts) in sections) {
+          if (posts.isEmpty) continue;
+          items.add(_SectionHeader(
+            label: label,
+            icon: icon,
+            color: color,
+            subtitle: subtitle,
+          ));
+          for (final post in posts.take(5)) {
+            items.add(Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: PostCard(
+                post: post,
+                onTap: () => context.push('/posts/${post.id}', extra: post),
+              ),
+            ));
+          }
+        }
+
+        return ListView(
+          padding: const EdgeInsets.only(bottom: 24),
+          children: items,
+        );
+      },
+    );
+  }
+}
+
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.subtitle,
+  });
+
+  final String label;
+  final IconData icon;
+  final Color color;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 4),
+      child: Row(
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, size: 18, color: color),
+          ),
+          const SizedBox(width: 10),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: theme.colorScheme.onSurface,
+                ),
+              ),
+              Text(
+                subtitle,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
