@@ -13,7 +13,7 @@ class NotificationsPage {
 
 class NotificationRepository {
   const NotificationRepository({required ApiClient apiClient})
-    : _apiClient = apiClient;
+      : _apiClient = apiClient;
 
   final ApiClient _apiClient;
 
@@ -39,8 +39,22 @@ class NotificationRepository {
     await _apiClient.putJson<void>('/api/v1/notifications/read-all');
   }
 
+  Future<int> fetchUnreadCount() async {
+    final json = await _apiClient.getJson<Map<String, Object?>>(
+      '/api/v1/notifications/unread-count',
+    );
+    return json['unreadCount'] as int? ?? 0;
+  }
+
   Future<void> markRead(String id) async {
     await _apiClient.putJson<void>('/api/v1/notifications/$id/read');
+  }
+
+  Future<void> markOpened(String id) async {
+    await _apiClient.postJson<void>(
+      '/api/v1/notifications/$id/opened',
+      body: {},
+    );
   }
 
   Future<void> dismiss(String id) async {
@@ -66,6 +80,8 @@ class NotificationRepository {
       postId: json['postId'] as String?,
       isRead: json['isRead'] as bool? ?? false,
       createdAt: DateTime.parse(json['createdAt'] as String),
+      deepLink: json['deepLink'] as String?,
+      ruleViolated: json['ruleViolated'] as String?,
     );
   }
 }

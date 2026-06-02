@@ -3664,10 +3664,12 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
             trustDecision.ShouldQuarantineVote,
             voterRegion
         );
-        (hakli, haksiz) = await UpdateVoteCountersReturningAsync(connection, transaction, id, oldVote, request.VoteType);
+        hakli = 0;
+        haksiz = 0;
         // Inline brigade guard: if ≥5 votes from same /24 IP block or fingerprint cluster
         // within 10 min, quarantine the entire cluster (suppressed status).
         brigadeResult = await brigadeGuard.CheckAndSuppressAsync(connection, transaction, id, voterIpBlock);
+        (hakli, haksiz) = await UpdateVoteCountersReturningAsync(connection, transaction, id, oldVote, request.VoteType);
     }
     else
     {
@@ -3679,9 +3681,10 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
     await CheckPostVoteMilestoneAsync(connection, transaction, id, oldTotal, newTotal);
     await transaction.CommitAsync();
 
+    var voteIsSuppressed = brigadeResult.Detected;
     var voteIp = httpRequest.HttpContext.Connection.RemoteIpAddress?.ToString();
     _ = complianceLog.LogAsync("vote", voteIp, effectiveDeviceId, userId, id, "post",
-        new { vote_type = request.VoteType, quarantined = trustDecision.ShouldQuarantineVote });
+        new { vote_type = request.VoteType, quarantined = trustDecision.ShouldQuarantineVote, suppressed = voteIsSuppressed });
     if (trustDecision.ShouldQuarantineVote)
     {
         _ = complianceLog.LogAsync("brigade_quarantine", voteIp, effectiveDeviceId, userId, id, "post",
@@ -3703,9 +3706,9 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
             });
     }
 
-    if (userId is not null && categoryId > 0)
+    if (!voteIsSuppressed && userId is not null && categoryId > 0)
         _ = affinity.RecordVoteAsync(userId.Value, categoryId);
-    else if (deviceId is not null && categoryId > 0)
+    else if (!voteIsSuppressed && deviceId is not null && categoryId > 0)
         _ = affinity.RecordVoteByDeviceAsync(deviceId.Value, categoryId);
 
     // Quarantined (suspicious) votes are excluded from trend_score by the SQL filter.
@@ -3717,7 +3720,7 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
 
     // City-level trending: fire-and-forget update
     var city = geo.GetCity(voterIp);
-    if (city is not null && !trustDecision.ShouldQuarantineVote)
+    if (city is not null && !trustDecision.ShouldQuarantineVote && !voteIsSuppressed)
         _ = redis.UpdateCityTrendingAsync(city, id, newTotal);
 
     sseManager.Broadcast(id, "vote_update", new
@@ -4903,6 +4906,7 @@ app.MapGet("/api/v1/notifications", async (
         var payloadJson = reader.IsDBNull(7) ? null : reader.GetString(7);
         var commentId = ExtractCommentIdFromPayload(payloadJson);
         var deepLink = NotificationDispatcher.BuildDeepLink(notifType, postId, commentId);
+        var ruleViolated = ExtractRuleViolatedFromPayload(payloadJson, notifType);
         notifications.Add(new NotificationDto(
             reader.GetGuid(0),
             notifType,
@@ -4911,7 +4915,8 @@ app.MapGet("/api/v1/notifications", async (
             postId,
             reader.GetBoolean(5),
             reader.GetFieldValue<DateTimeOffset>(6),
-            deepLink
+            deepLink,
+            ruleViolated
         ));
     }
 
@@ -4922,6 +4927,18 @@ app.MapGet("/api/v1/notifications", async (
         {
             using var doc = System.Text.Json.JsonDocument.Parse(payloadJson);
             return doc.RootElement.TryGetProperty("comment_id", out var prop) ? prop.GetString() : null;
+        }
+        catch { return null; }
+    }
+
+    static string? ExtractRuleViolatedFromPayload(string? payloadJson, string type)
+    {
+        if (type != NotificationTypes.ModerationResult) return null;
+        if (string.IsNullOrEmpty(payloadJson) || payloadJson == "{}") return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(payloadJson);
+            return doc.RootElement.TryGetProperty("rule_violated", out var prop) ? prop.GetString() : null;
         }
         catch { return null; }
     }
@@ -6818,6 +6835,7 @@ app.MapPost("/api/v1/admin/moderation/{targetType}/{targetId:guid}/notify", asyn
         target_type = targetType,
         target_id = targetId,
         rule_violated = ruleViolated,
+        message = message,
         appeal_path = "/settings/moderation-history"
     });
 
@@ -6837,6 +6855,15 @@ app.MapPost("/api/v1/admin/moderation/{targetType}/{targetId:guid}/notify", asyn
     notifyCmd.Parameters.AddWithValue("postId", targetType == "post" ? (object)targetId : DBNull.Value);
     notifyCmd.Parameters.AddWithValue("payload", notificationPayload);
     await notifyCmd.ExecuteNonQueryAsync();
+
+    await using var updateReasonCmd = new NpgsqlCommand(
+        $"UPDATE {table} SET moderation_reason = @reason WHERE id = @targetId",
+        connection,
+        transaction
+    );
+    updateReasonCmd.Parameters.AddWithValue("reason", ruleViolated);
+    updateReasonCmd.Parameters.AddWithValue("targetId", targetId);
+    await updateReasonCmd.ExecuteNonQueryAsync();
 
     await LogAdminActionAsync(connection, transaction, adminEmail, "notify_user", targetType, targetId, $"{ruleViolated}: {message}");
     await transaction.CommitAsync();
@@ -14134,19 +14161,30 @@ static async Task<(int Hakli, int Haksiz)> UpdateVoteCountersReturningAsync(
     string? newVote
 )
 {
-    var hakliDelta = (newVote == "hakli" ? 1 : 0) - (oldVote == "hakli" ? 1 : 0);
-    var haksizDelta = (newVote == "haksiz" ? 1 : 0) - (oldVote == "haksiz" ? 1 : 0);
-
     await using var command = new NpgsqlCommand(
         """
         UPDATE posts
-        SET vote_count_hakli = vote_count_hakli + @hakliDelta,
-            vote_count_haksiz = vote_count_haksiz + @haksizDelta,
+        SET vote_count_hakli = (
+                SELECT COUNT(*)::int
+                FROM votes v
+                WHERE v.post_id = posts.id
+                  AND v.vote_type = 'hakli'
+                  AND v.is_suppressed = FALSE
+            ),
+            vote_count_haksiz = (
+                SELECT COUNT(*)::int
+                FROM votes v
+                WHERE v.post_id = posts.id
+                  AND v.vote_type = 'haksiz'
+                  AND v.is_suppressed = FALSE
+            ),
             trend_score = (
                 (
                     SELECT COUNT(*)
                     FROM votes v
-                    WHERE v.post_id = posts.id AND v.is_quarantined = FALSE
+                    WHERE v.post_id = posts.id
+                      AND v.is_quarantined = FALSE
+                      AND v.is_suppressed = FALSE
                 ) + (comment_count * 3)
             )
                 / POWER(EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600 + 2, 1.5),
@@ -14158,8 +14196,6 @@ static async Task<(int Hakli, int Haksiz)> UpdateVoteCountersReturningAsync(
         transaction
     );
     command.Parameters.AddWithValue("postId", postId);
-    command.Parameters.AddWithValue("hakliDelta", hakliDelta);
-    command.Parameters.AddWithValue("haksizDelta", haksizDelta);
     await using var reader = await command.ExecuteReaderAsync();
     if (!await reader.ReadAsync()) throw new InvalidOperationException("Post not found after vote mutation.");
     return (reader.GetInt32(0), reader.GetInt32(1));
@@ -14178,14 +14214,17 @@ static async Task UpsertVoteAsync(
 {
     await using var command = new NpgsqlCommand(
         """
-        INSERT INTO votes (post_id, device_id, vote_type, voter_ip_block, is_quarantined, voter_region)
-        VALUES (@postId, @deviceId, @voteType, @ipBlock, @isQuarantined, @voterRegion)
+        INSERT INTO votes (post_id, device_id, vote_type, voter_ip_block, is_quarantined, voter_region, is_suppressed)
+        VALUES (@postId, @deviceId, @voteType, @ipBlock, @isQuarantined, @voterRegion, FALSE)
         ON CONFLICT (post_id, device_id)
         DO UPDATE SET
             vote_type = @voteType,
             voter_ip_block = COALESCE(@ipBlock, votes.voter_ip_block),
             voter_region = COALESCE(@voterRegion, votes.voter_region),
             is_quarantined = @isQuarantined,
+            is_suppressed = FALSE,
+            suppression_reason = NULL,
+            suppressed_at = NULL,
             updated_at = NOW()
         """,
         connection,
@@ -14208,19 +14247,30 @@ static async Task UpdateVoteCountersAsync(
     string? newVote
 )
 {
-    var hakliDelta = (newVote == "hakli" ? 1 : 0) - (oldVote == "hakli" ? 1 : 0);
-    var haksizDelta = (newVote == "haksiz" ? 1 : 0) - (oldVote == "haksiz" ? 1 : 0);
-
     await using var command = new NpgsqlCommand(
         """
         UPDATE posts
-        SET vote_count_hakli = vote_count_hakli + @hakliDelta,
-            vote_count_haksiz = vote_count_haksiz + @haksizDelta,
+        SET vote_count_hakli = (
+                SELECT COUNT(*)::int
+                FROM votes v
+                WHERE v.post_id = posts.id
+                  AND v.vote_type = 'hakli'
+                  AND v.is_suppressed = FALSE
+            ),
+            vote_count_haksiz = (
+                SELECT COUNT(*)::int
+                FROM votes v
+                WHERE v.post_id = posts.id
+                  AND v.vote_type = 'haksiz'
+                  AND v.is_suppressed = FALSE
+            ),
             trend_score = (
                 (
                     SELECT COUNT(*)
                     FROM votes v
-                    WHERE v.post_id = posts.id AND v.is_quarantined = FALSE
+                    WHERE v.post_id = posts.id
+                      AND v.is_quarantined = FALSE
+                      AND v.is_suppressed = FALSE
                 ) + (comment_count * 3)
             )
                 / POWER(EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600 + 2, 1.5),
@@ -14231,8 +14281,6 @@ static async Task UpdateVoteCountersAsync(
         transaction
     );
     command.Parameters.AddWithValue("postId", postId);
-    command.Parameters.AddWithValue("hakliDelta", hakliDelta);
-    command.Parameters.AddWithValue("haksizDelta", haksizDelta);
     await command.ExecuteNonQueryAsync();
 }
 

@@ -7,6 +7,8 @@ class NotificationItem {
     required this.isRead,
     required this.createdAt,
     this.postId,
+    this.deepLink,
+    this.ruleViolated,
   });
 
   final String id;
@@ -16,6 +18,8 @@ class NotificationItem {
   final bool isRead;
   final DateTime createdAt;
   final String? postId;
+  final String? deepLink;
+  final String? ruleViolated;
 
   NotificationItem copyWith({bool? isRead}) => NotificationItem(
         id: id,
@@ -25,5 +29,7 @@ class NotificationItem {
         isRead: isRead ?? this.isRead,
         createdAt: createdAt,
         postId: postId,
+        deepLink: deepLink,
+        ruleViolated: ruleViolated,
       );
 }

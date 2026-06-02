@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/providers.dart';
+import '../../core/theme/app_colors.dart';
 import '../../shared/models/post.dart';
 import '../../shared/widgets/centered_content.dart';
 import '../../shared/widgets/empty_state.dart';
@@ -428,7 +429,13 @@ class _NotificationTile extends ConsumerWidget {
         color: colorScheme.errorContainer,
         child: Icon(Icons.delete_outline, color: colorScheme.onErrorContainer),
       ),
-      onDismissed: (_) => notifier.dismiss(item.id),
+      onDismissed: (_) {
+        ref.read(analyticsServiceProvider).logNotificationDismissed(
+              notificationId: item.id,
+              type: item.type,
+            );
+        notifier.dismiss(item.id);
+      },
       child: ListTile(
         tileColor: item.isRead
             ? null
@@ -446,12 +453,23 @@ class _NotificationTile extends ConsumerWidget {
             fontWeight: item.isRead ? FontWeight.normal : FontWeight.w700,
           ),
         ),
-        subtitle: Text(item.body, maxLines: 2, overflow: TextOverflow.ellipsis),
+        subtitle: _NotificationSubtitle(item: item),
         trailing: !item.isRead
             ? Icon(Icons.circle, size: 8, color: colorScheme.primary)
             : null,
         onTap: () {
-          if (!item.isRead) notifier.markRead(item.id);
+          ref.read(analyticsServiceProvider).logNotificationOpened(
+                notificationId: item.id,
+                type: item.type,
+              );
+          notifier.markOpened(item.id);
+          if (!item.isRead) {
+            ref.read(analyticsServiceProvider).logNotificationMarkedRead(
+                  notificationId: item.id,
+                  type: item.type,
+                );
+            notifier.markRead(item.id);
+          }
           _navigate(context, item);
         },
       ),
@@ -459,9 +477,25 @@ class _NotificationTile extends ConsumerWidget {
   }
 
   void _navigate(BuildContext context, NotificationItem item) {
-    if (item.postId != null) {
-      context.push('/posts/${item.postId}');
+    if (item.deepLink != null && item.deepLink!.isNotEmpty) {
+      context.push(_withNotificationSource(item.deepLink!));
+      return;
     }
+    if (item.postId != null) {
+      context.push('/posts/${item.postId}?source=notification');
+    }
+  }
+
+  String _withNotificationSource(String link) {
+    final uri = Uri.tryParse(link);
+    if (uri == null ||
+        uri.pathSegments.isEmpty ||
+        uri.pathSegments.first != 'posts') {
+      return link;
+    }
+    final query = Map<String, String>.from(uri.queryParameters);
+    query.putIfAbsent('source', () => 'notification');
+    return uri.replace(queryParameters: query).toString();
   }
 
   IconData _iconForType(String type) => switch (type) {
@@ -477,4 +511,62 @@ class _NotificationTile extends ConsumerWidget {
         'weekly_digest' => Icons.summarize_outlined,
         _ => Icons.notifications_none_outlined,
       };
+}
+
+class _NotificationSubtitle extends StatelessWidget {
+  const _NotificationSubtitle({required this.item});
+  final NotificationItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    if (item.type != 'moderation_result') {
+      return Text(item.body, maxLines: 2, overflow: TextOverflow.ellipsis);
+    }
+
+    final displayBody = _extractAdminMessage();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (item.ruleViolated != null) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: AppColors.haksiz.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              'İhlal: ${item.ruleViolated}',
+              style: const TextStyle(
+                fontSize: 11,
+                color: AppColors.haksiz,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+        ],
+        Text(displayBody, maxLines: 2, overflow: TextOverflow.ellipsis),
+        const SizedBox(height: 6),
+        TextButton.icon(
+          onPressed: () => context.push('/settings/moderation-history'),
+          icon: const Icon(Icons.gavel_outlined, size: 16),
+          label: const Text('İtiraz Et'),
+          style: TextButton.styleFrom(
+            padding: EdgeInsets.zero,
+            minimumSize: const Size(44, 32),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            visualDensity: VisualDensity.compact,
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _extractAdminMessage() {
+    if (item.ruleViolated == null) return item.body;
+    final prefix = 'Kural ihlali: ${item.ruleViolated}\n\n';
+    if (item.body.startsWith(prefix)) return item.body.substring(prefix.length);
+    return item.body;
+  }
 }

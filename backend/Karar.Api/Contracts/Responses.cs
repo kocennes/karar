@@ -27,7 +27,8 @@ public sealed record DiscoverResponse(
     IReadOnlyList<PostDto> Controversial,
     IReadOnlyList<PostDto> Fresh,
     IReadOnlyList<PostDto>? CityTrending = null,
-    string? City = null
+    string? City = null,
+    IReadOnlyList<PostDto>? Serendipity = null
 );
 
 public sealed record DiscoverFeedItem(
@@ -92,7 +93,9 @@ public sealed record NotificationDto(
     string Body,
     Guid? PostId,
     bool IsRead,
-    DateTimeOffset CreatedAt
+    DateTimeOffset CreatedAt,
+    string? DeepLink = null,
+    string? RuleViolated = null
 );
 
 public sealed record ModerationQueueItem(
@@ -240,6 +243,31 @@ public sealed record AdminSuspiciousDeviceDto(
 );
 
 
+public sealed record DeviceTrustHistoryDto(
+    double Score,
+    string? Reason,
+    DateTimeOffset RecordedAt
+);
+
+public sealed record AdminAlertDto(
+    long Id,
+    string Type,
+    object Payload,
+    bool IsResolved,
+    DateTimeOffset CreatedAt
+);
+
+public sealed record EnforcementActionDto(
+    long Id,
+    string TargetType,
+    string TargetId,
+    string Action,
+    string? Reason,
+    DateTimeOffset? ExpiresAt,
+    string? CreatedByAdminId,
+    DateTimeOffset CreatedAt
+);
+
 public sealed record AdminOverviewResponse(
     AdminOverviewStats Stats
 );
@@ -338,4 +366,10 @@ public sealed record WeeklyStatsDto(
     int PostsCreated,
     int CommentsPosted,
     int Streak
+);
+
+public sealed record PolicyStatusResponse(
+    bool NeedsAcceptance,
+    int CurrentTermsVersion,
+    int CurrentPrivacyVersion
 );
