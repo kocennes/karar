@@ -15,6 +15,11 @@ final moderationHistoryProvider =
   return ref.watch(authServiceProvider).fetchModerationHistory();
 });
 
+final reportHistoryProvider =
+    FutureProvider.autoDispose<ReportHistoryPage>((ref) async {
+  return ref.watch(authServiceProvider).fetchReportHistory();
+});
+
 // ── Screen ───────────────────────────────────────────────────────────────────
 
 class ModerationHistoryScreen extends ConsumerWidget {
@@ -23,6 +28,7 @@ class ModerationHistoryScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final summaryAsync = ref.watch(moderationHistoryProvider);
+    final reportsAsync = ref.watch(reportHistoryProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -32,12 +38,23 @@ class ModerationHistoryScreen extends ConsumerWidget {
       body: CenteredContent(
         child: summaryAsync.when(
           data: (summary) {
-            if (summary.events.isEmpty &&
-                summary.removedPosts == 0 &&
-                summary.warnings == 0) {
-              return _EmptyState(summary: summary);
-            }
-            return _HistoryList(summary: summary);
+            return reportsAsync.when(
+              data: (reports) {
+                if (summary.events.isEmpty &&
+                    summary.removedPosts == 0 &&
+                    summary.warnings == 0 &&
+                    reports.reports.isEmpty) {
+                  return _EmptyState(summary: summary);
+                }
+                return _HistoryList(summary: summary, reports: reports);
+              },
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (_, __) => _HistoryList(
+                summary: summary,
+                reports: const ReportHistoryPage(reports: []),
+                reportsError: true,
+              ),
+            );
           },
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (e, __) => Center(
@@ -66,7 +83,6 @@ class ModerationHistoryScreen extends ConsumerWidget {
     );
   }
 }
-
 
 // ── Sub-widgets ───────────────────────────────────────────────────────────────
 
@@ -105,8 +121,14 @@ class _EmptyState extends StatelessWidget {
 }
 
 class _HistoryList extends StatelessWidget {
-  const _HistoryList({required this.summary});
+  const _HistoryList({
+    required this.summary,
+    required this.reports,
+    this.reportsError = false,
+  });
   final ModerationSummary summary;
+  final ReportHistoryPage reports;
+  final bool reportsError;
 
   @override
   Widget build(BuildContext context) {
@@ -133,6 +155,34 @@ class _HistoryList extends StatelessWidget {
             );
           }),
         ],
+        const SizedBox(height: 20),
+        Text(
+          'RaporlarÄ±m',
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                color: AppColors.textSecondary,
+                fontWeight: FontWeight.w700,
+              ),
+        ),
+        const SizedBox(height: 8),
+        if (reportsError)
+          const Text(
+            'Rapor durumlarÄ± yÃ¼klenemedi.',
+            style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+          )
+        else if (reports.reports.isEmpty)
+          const Text(
+            'HenÃ¼z gÃ¶nderdiÄŸin bir rapor yok.',
+            style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+          )
+        else
+          ...List.generate(reports.reports.length, (i) {
+            return Column(
+              children: [
+                _ReportTile(report: reports.reports[i]),
+                if (i < reports.reports.length - 1) const Divider(height: 1),
+              ],
+            );
+          }),
       ],
     );
   }
@@ -225,6 +275,138 @@ class _StatCard extends StatelessWidget {
   }
 }
 
+class _ReportTile extends StatelessWidget {
+  const _ReportTile({required this.report});
+  final ReportHistoryItem report;
+
+  @override
+  Widget build(BuildContext context) {
+    final (color, icon) = _statusStyle(report.status);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CircleAvatar(
+            radius: 20,
+            backgroundColor: color.withValues(alpha: 0.12),
+            child: Icon(Icons.flag_outlined, color: color, size: 18),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      _targetLabel(report.targetType),
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const Spacer(),
+                    Text(
+                      _formatDate(report.createdAt),
+                      style: const TextStyle(
+                          color: AppColors.textTertiary, fontSize: 12),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(icon, size: 12, color: color),
+                      const SizedBox(width: 4),
+                      Text(
+                        report.publicStatus,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: color,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Sebep: ${_reasonLabel(report.reason)}',
+                  style: const TextStyle(
+                      color: AppColors.textSecondary, fontSize: 13),
+                ),
+                if (report.publicReason != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    report.publicReason!,
+                    style: const TextStyle(
+                        color: AppColors.textSecondary, fontSize: 13),
+                  ),
+                ],
+                if (report.targetPreview != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    '"${report.targetPreview}"',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        color: AppColors.textTertiary, fontSize: 13),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  (Color, IconData) _statusStyle(String status) => switch (status) {
+        'actioned' => (AppColors.hakli, Icons.check_circle_outline),
+        'dismissed' => (AppColors.haksiz, Icons.cancel_outlined),
+        'under_review' => (Colors.blue, Icons.manage_search_outlined),
+        _ => (Colors.orange, Icons.hourglass_empty_outlined),
+      };
+
+  String _targetLabel(String targetType) =>
+      targetType == 'comment' ? 'Yorum Raporu' : 'Gönderi Raporu';
+
+  String _reasonLabel(String reason) => switch (reason) {
+        'hate_speech' => 'Nefret söylemi',
+        'harassment' => 'Taciz / zorbalık',
+        'personal_info' => 'Kişisel bilgi',
+        'misinformation' => 'Yanlış bilgi',
+        'spam' => 'Spam',
+        'self_harm' => 'Kendine zarar',
+        'illegal' => 'Yasadışı içerik',
+        _ => 'Diğer',
+      };
+
+  String _formatDate(DateTime dt) {
+    const months = [
+      'Oca',
+      'Şub',
+      'Mar',
+      'Nis',
+      'May',
+      'Haz',
+      'Tem',
+      'Ağu',
+      'Eyl',
+      'Eki',
+      'Kas',
+      'Ara',
+    ];
+    return '${dt.day} ${months[dt.month - 1]}';
+  }
+}
+
 class _EventTile extends ConsumerStatefulWidget {
   const _EventTile({required this.event});
   final ModerationEvent event;
@@ -248,14 +430,7 @@ class _EventTileState extends ConsumerState<_EventTile> {
       _ => (Icons.info_outline, AppColors.textSecondary),
     };
 
-    final actionLabel = switch (event.action) {
-      'review' => 'Incelemede',
-      'removed' => 'İçerik Kaldırıldı',
-      'warning' => 'Uyarı',
-      'strike' => 'Strike',
-      'ban' => 'Hesap Askıya Alındı',
-      _ => 'Moderasyon',
-    };
+    final actionLabel = _decisionLabel(event.action);
 
     final appealLabel = switch (event.appealStatus) {
       'pending' => 'İtiraz İnceleniyor',
@@ -282,7 +457,7 @@ class _EventTileState extends ConsumerState<_EventTile> {
                 Row(
                   children: [
                     Text(
-                      actionLabel,
+                      _targetLabel(event.targetType),
                       style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
                     const Spacer(),
@@ -303,6 +478,15 @@ class _EventTileState extends ConsumerState<_EventTile> {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ],
+                const SizedBox(height: 4),
+                Text(
+                  'Karar: $actionLabel',
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
                 const SizedBox(height: 4),
                 Text(
                   'Neden: ${event.reason}',
@@ -361,6 +545,21 @@ class _EventTileState extends ConsumerState<_EventTile> {
         'approved' => AppColors.hakli,
         'rejected' => AppColors.haksiz,
         _ => Colors.orange,
+      };
+
+  String _decisionLabel(String action) => switch (action) {
+        'review' => 'Incelemede',
+        'removed' => 'İçerik Kaldırıldı',
+        'warning' => 'Uyarı',
+        'strike' => 'Strike',
+        'ban' => 'Hesap Askıya Alındı',
+        _ => 'Moderasyon',
+      };
+
+  String _targetLabel(String targetType) => switch (targetType) {
+        'comment' => 'Yorum',
+        'user' => 'Hesap',
+        _ => 'Gönderi',
       };
 
   String _formatDate(DateTime dt) {

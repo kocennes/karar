@@ -10,11 +10,11 @@ import '../../shared/widgets/rate_limit_ui.dart';
 const _reasons = [
   ('hate_speech', 'Nefret Söylemi'),
   ('harassment', 'Taciz / Zorbalık'),
-  ('doxxing', 'Kişisel Bilgi Paylaşımı (Doxxing)'),
-  ('fake_story', 'Sahte / Uydurma İçerik'),
+  ('personal_info', 'Kişisel Bilgi Paylaşımı'),
+  ('misinformation', 'Yanlış Bilgi'),
   ('spam', 'Spam'),
   ('self_harm', 'Kendine Zarar Verme'),
-  ('illegal_content', 'Yasadışı İçerik'),
+  ('illegal', 'Yasadışı İçerik'),
   ('other', 'Diğer'),
 ];
 
@@ -80,10 +80,16 @@ class _ReportBottomSheetState extends ConsumerState<ReportBottomSheet> {
           );
 
       if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
+      final router = GoRouter.of(context);
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Şikayetiniz alındı. Teşekkürler.'),
+      messenger.showSnackBar(
+        SnackBar(
+          content: const Text('Şikayetiniz alındı. Teşekkürler.'),
+          action: SnackBarAction(
+            label: 'Durumunu Görüntüle',
+            onPressed: () => router.push('/settings/moderation-history'),
+          ),
         ),
       );
     } on ApiException catch (e) {

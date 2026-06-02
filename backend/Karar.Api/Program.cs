@@ -9346,9 +9346,10 @@ app.MapGet("/api/v1/users/me/reports", async (
                    WHEN r.target_type = 'comment' THEN LEFT(c.content, 140)
                END AS target_preview,
                CASE r.status
-                   WHEN 'pending' THEN 'inceleniyor'
-                   WHEN 'actioned' THEN 'işlem yapıldı'
-                   WHEN 'dismissed' THEN 'reddedildi'
+                   WHEN 'pending'      THEN 'alındı'
+                   WHEN 'under_review' THEN 'inceleniyor'
+                   WHEN 'actioned'     THEN 'işlem yapıldı'
+                   WHEN 'dismissed'    THEN 'reddedildi'
                    ELSE 'alındı'
                END AS public_status,
                CASE r.status
