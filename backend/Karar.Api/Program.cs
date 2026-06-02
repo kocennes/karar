@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
@@ -128,6 +128,7 @@ builder.Services.AddSingleton<ReportAbuseProtectionService>();
 builder.Services.AddSingleton<RedisService>();
 builder.Services.AddSingleton<NotificationRateLimiter>();
 builder.Services.AddSingleton<NotificationPreferenceRouter>();
+builder.Services.AddSingleton<NotificationDecisionService>();
 builder.Services.AddSingleton<BruteForceService>();
 builder.Services.AddSingleton<AdminAuthService>();
 builder.Services.AddSingleton<JwtService>();
@@ -143,8 +144,10 @@ if (hostedServicesEnabled)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<CommentNotificationBatcher>());
     builder.Services.AddHostedService<VerdictReminderJob>();
     builder.Services.AddHostedService<ViralNotificationJob>();
+    builder.Services.AddHostedService<DeferredNotificationFlushJob>();
     builder.Services.AddHostedService<DataRetentionService>();
     builder.Services.AddHostedService<PoliticalNarrativeClusterJob>();
+    builder.Services.AddHostedService<BrigadeCoordinatedDetectorJob>();
     builder.Services.AddHostedService<PostDistributionJob>();
     builder.Services.AddHostedService<AuditLogExportJob>();
 }
@@ -159,6 +162,7 @@ builder.Services.AddSingleton<ComplianceLogService>();
 builder.Services.AddSingleton<BusinessMetricsService>();
 builder.Services.AddKararObservability(builder.Configuration, builder.Environment);
 builder.Services.AddSingleton<SubnetBanService>();
+builder.Services.AddSingleton<VoteBrigadeGuard>();
 builder.Services.AddScoped<RequestDevice>();
 builder.Services.AddRateLimiter(options =>
 {
@@ -270,7 +274,7 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("flutter-app", policy =>
     {
-        if (builder.Environment.IsDevelopment() || builder.Environment.IsEnvironment("Testing"))
+        if (builder.Environment.IsDevelopment() || builder.Environment.IsEnvironment("Testing") || builder.Environment.IsStaging())
         {
             policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
         }
@@ -987,6 +991,29 @@ app.MapPut("/api/v1/devices/fcm-token", async (
     return Results.NoContent();
 });
 
+app.MapDelete("/api/v1/devices/fcm-token", async (
+    HttpRequest httpRequest,
+    Db db,
+    RequestDevice requestDevice
+) =>
+{
+    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    if (deviceId is null)
+    {
+        return Unauthorized();
+    }
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var command = new NpgsqlCommand(
+        "DELETE FROM fcm_tokens WHERE device_id = @deviceId",
+        connection
+    );
+    command.Parameters.AddWithValue("deviceId", deviceId.Value);
+    await command.ExecuteNonQueryAsync();
+
+    return Results.NoContent();
+});
+
 // Public moderation transparency report — cached 6h, no auth required.
 app.MapGet("/api/v1/moderation/transparency", async (Db db, RedisService redis) =>
 {
@@ -1385,11 +1412,14 @@ app.MapGet("/api/v1/posts", async (
     }
     else
     {
-        // For trending sort with a logged-in user, apply affinity multiplier to trend score
+        // For trending sort apply affinity multiplier: user_category_affinity for authenticated
+        // users, device_category_affinity for anonymous devices.
         var affinityJoin = sort == "trending" && userId is not null
             ? "LEFT JOIN user_category_affinity uca ON uca.user_id = @userId AND uca.category_id = p.category_id"
-            : "";
-        var affinityScore = sort == "trending" && userId is not null
+            : sort == "trending" && deviceId is not null
+                ? "LEFT JOIN device_category_affinity uca ON uca.device_id = @deviceId AND uca.category_id = p.category_id"
+                : "";
+        var affinityScore = sort == "trending" && (userId is not null || deviceId is not null)
             ? "p.trend_score * (1.0 + 0.5 * COALESCE(uca.score / 10.0, 0))"
             : "p.trend_score";
         var affinityOrderBy = sort == "trending"
@@ -1666,7 +1696,7 @@ app.MapGet("/api/v1/posts/discover", async (
     controversialCmd.Parameters.AddWithValue("userId", userParam);
     var controversial = LabelPosts(await ReadPostsAsync(controversialCmd), "controversial", "Topluluk ikiye bölündü");
 
-    // Fresh: stage >= 2, < 12h old, 0-10 votes — new posts awaiting judgment
+    // Fresh: stage >= 2, < 2h old, 0-10 votes — new posts awaiting judgment
     await using var freshCmd = new NpgsqlCommand(
         """
         SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
@@ -1689,7 +1719,7 @@ app.MapGet("/api/v1/posts/discover", async (
               )
           )
           AND p.distribution_stage >= 2
-          AND p.created_at >= NOW() - INTERVAL '12 hours'
+          AND p.created_at >= NOW() - INTERVAL '2 hours'
           AND (p.vote_count_hakli + p.vote_count_haksiz) BETWEEN 0 AND 10
         ORDER BY p.created_at DESC
         LIMIT 10
@@ -1742,13 +1772,57 @@ app.MapGet("/api/v1/posts/discover", async (
         }
     }
 
-    return Results.Ok(new DiscoverResponse(rising, controversial, fresh, cityTrending, city));
+    // Serendipity: posts from categories the user/device hasn't interacted with in the past 7 days.
+    // Exposes users to new categories — "Farklı Bir Şey" section in the Keşfet view.
+    await using var serendipityCmd = new NpgsqlCommand(
+        """
+        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+               p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
+               v.vote_type, p.trend_score, p.created_at,
+               (p.device_id = @deviceId OR p.user_id = @userId),
+               p.is_unlisted, p.is_anonymous, p.tags
+        FROM posts p
+        JOIN categories c ON c.id = p.category_id
+        LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
+        WHERE p.status = 'active' AND p.is_unlisted = FALSE
+          AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
+          AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
+          AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+          AND (
+              @userId = '00000000-0000-0000-0000-000000000000'::uuid
+              OR (
+                  NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
+                  AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
+              )
+          )
+          AND p.distribution_stage >= 2
+          AND p.category_id NOT IN (
+              SELECT uca.category_id
+              FROM user_category_affinity uca
+              WHERE uca.user_id = @userId
+                AND uca.updated_at >= NOW() - INTERVAL '7 days'
+              UNION
+              SELECT dca.category_id
+              FROM device_category_affinity dca
+              WHERE dca.device_id = @deviceId
+                AND dca.updated_at >= NOW() - INTERVAL '7 days'
+          )
+        ORDER BY p.trend_score DESC
+        LIMIT 10
+        """,
+        connection
+    );
+    serendipityCmd.Parameters.AddWithValue("deviceId", deviceParam);
+    serendipityCmd.Parameters.AddWithValue("userId", userParam);
+    var serendipity = LabelPosts(await ReadPostsAsync(serendipityCmd), "serendipity", "Farklı bir şey");
+
+    return Results.Ok(new DiscoverResponse(rising, controversial, fresh, cityTrending, city, serendipity));
 });
 
 // Cursor-based immersive discover feed (Reels-style vertical scroll).
 // UCB Stage 1 slots: 10% of feed reserved for new/unproven posts (exploration).
 // Diversity pass: max 3 per category, max 2 consecutive same category, no consecutive same author.
-// Safety guardrails per 10 items: ≥1 fresh slot, ≥1 controversial-but-safe slot.
+// Fresh slot: target max(1, 20% of mainSlots) posts <2h old, stage>=2. Safety guardrail: ≥1 controversial-but-safe per 10 items.
 // not_interested categories suppressed for 7 days (Redis).
 app.MapGet("/api/v1/posts/discover/feed", async (
     HttpRequest httpRequest,
@@ -1757,7 +1831,8 @@ app.MapGet("/api/v1/posts/discover/feed", async (
     JwtService jwtService,
     RedisService redis,
     string? cursor = null,
-    int limit = 10
+    int limit = 10,
+    string? seenPostIds = null
 ) =>
 {
     limit = Math.Clamp(limit, 1, 20);
@@ -1774,16 +1849,27 @@ app.MapGet("/api/v1/posts/discover/feed", async (
     var cursorScore = cursorDecoded?.TrendScore ?? 0.0;
     var cursorId = cursorDecoded?.Id ?? Guid.Empty;
 
-    // Suppressed post IDs (not_interested 30d + skip 24h) and category IDs (7d)
+    // Suppressed post IDs (not_interested 30d + skip 24h + client-sent seenPostIds) ve category IDs (7d)
     HashSet<Guid> suppressedPostIds = [];
     HashSet<int> suppressedCategoryIds = [];
     if (deviceId is not null)
     {
         var notInterested = await redis.GetNotInterestedPostsAsync(deviceId.Value);
         var skipSuppressed = await redis.GetSkipSuppressedPostsAsync(deviceId.Value);
+        var seenInSession = await redis.GetSeenDiscoverPostIdsAsync(deviceId.Value);
         suppressedPostIds = notInterested;
         suppressedPostIds.UnionWith(skipSuppressed);
+        suppressedPostIds.UnionWith(seenInSession);
         suppressedCategoryIds = await redis.GetNotInterestedCategoriesAsync(deviceId.Value);
+    }
+    // Client tarafından gönderilen seen_post_ids (aynı oturumda görülenler, max 100)
+    if (!string.IsNullOrEmpty(seenPostIds))
+    {
+        foreach (var idStr in seenPostIds.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Take(100))
+        {
+            if (Guid.TryParse(idStr, out var seenId))
+                suppressedPostIds.Add(seenId);
+        }
     }
     var hasSuppressedPosts = suppressedPostIds.Count > 0;
     var hasSuppressedCategories = suppressedCategoryIds.Count > 0;
@@ -1802,6 +1888,7 @@ app.MapGet("/api/v1/posts/discover/feed", async (
                    v.vote_type, p.trend_score, p.created_at,
                    (p.device_id = @deviceId OR p.user_id = @userId) AS is_owner,
                    p.is_unlisted, p.is_anonymous, p.tags,
+                   COALESCE(p.user_id, p.device_id) AS ranking_author_key,
                    ROW_NUMBER() OVER (
                        PARTITION BY COALESCE(p.user_id::text, p.device_id::text)
                        ORDER BY p.trend_score DESC, p.id DESC
@@ -1850,7 +1937,7 @@ app.MapGet("/api/v1/posts/discover/feed", async (
                c_id, c_name, emoji,
                vote_count_hakli, vote_count_haksiz, comment_count,
                vote_type, trend_score, created_at,
-               is_owner, is_unlisted, is_anonymous, tags
+               is_owner, is_unlisted, is_anonymous, tags, ranking_author_key
         FROM candidate
         WHERE author_rank <= 2
         ORDER BY trend_score DESC, id DESC
@@ -1906,7 +1993,8 @@ app.MapGet("/api/v1/posts/discover/feed", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId) AS is_owner,
-               p.is_unlisted, p.is_anonymous, p.tags
+               p.is_unlisted, p.is_anonymous, p.tags,
+               COALESCE(p.user_id, p.device_id) AS ranking_author_key
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -1958,12 +2046,12 @@ app.MapGet("/api/v1/posts/discover/feed", async (
         var balance = total > 0 ? (double)Math.Abs(p.VoteCountHakli - p.VoteCountHaksiz) / total : 1.0;
         if (age < TimeSpan.FromHours(6) && total >= 15) return "rising";
         if (total > 40 && balance < 0.2) return "controversial";
-        if (age < TimeSpan.FromHours(12) && total <= 10) return "fresh";
+        if (age < TimeSpan.FromHours(2) && total <= 10) return "fresh";
         return "trending";
     }
 
     bool IsFreshPost(PostDto p)
-        => DateTimeOffset.UtcNow - p.CreatedAt < TimeSpan.FromHours(12)
+        => DateTimeOffset.UtcNow - p.CreatedAt < TimeSpan.FromHours(2)
            && p.VoteCountHakli + p.VoteCountHaksiz <= 10;
 
     bool IsControversialSafePost(PostDto p)
@@ -1979,7 +2067,7 @@ app.MapGet("/api/v1/posts/discover/feed", async (
     var categoryCounts = new Dictionary<int, int>();
     int? prevCategoryId = null;
     int streak = 0;
-    Guid? prevAuthorId = null;
+    Guid? prevRankingAuthorKey = null;
 
     foreach (var post in pool)
     {
@@ -1999,35 +2087,46 @@ app.MapGet("/api/v1/posts/discover/feed", async (
             streak = 1;
         }
 
-        if (!post.IsAnonymous && post.AuthorId is not null && post.AuthorId == prevAuthorId)
+        if (post.RankingAuthorKey is not null && post.RankingAuthorKey == prevRankingAuthorKey)
             continue;
 
         categoryCounts[post.Category.Id] = catCount + 1;
-        prevAuthorId = post.IsAnonymous ? null : post.AuthorId;
+        prevRankingAuthorKey = post.RankingAuthorKey;
         result.Add(post with { RankingReason = RankingReasonFor(post) });
     }
 
     // Capture cursor anchor before guardrail swaps modify result
     var cursorAnchor = result.Count == mainSlots ? result[^1] : null;
 
-    // Safety guardrails per 10 items: ≥1 fresh, ≥1 controversial-but-safe (best-effort swap)
+    // Fresh slot: target max(1, ceil(mainSlots * 0.20)) posts labelled 'fresh' (best-effort swap from pool).
+    var freshSlotTarget = Math.Max(1, (int)Math.Ceiling(mainSlots * 0.20));
     var usedIds = result.Select(p => p.Id).ToHashSet();
+    var freshDeficit = freshSlotTarget - result.Count(IsFreshPost);
+    if (freshDeficit > 0)
+    {
+        var freshCandidates = pool
+            .Where(p => !usedIds.Contains(p.Id) && IsFreshPost(p))
+            .Take(freshDeficit)
+            .ToList();
+        var step = freshCandidates.Count > 0 ? Math.Max(1, result.Count / freshCandidates.Count) : 0;
+        for (int i = 0; i < freshCandidates.Count; i++)
+        {
+            var swapIdx = Math.Min(step * (i + 1) - 1, result.Count - 1 - i);
+            if (swapIdx >= 0 && !IsFreshPost(result[swapIdx]))
+            {
+                usedIds.Remove(result[swapIdx].Id);
+                result[swapIdx] = freshCandidates[i] with { RankingReason = "fresh" };
+                usedIds.Add(freshCandidates[i].Id);
+            }
+        }
+    }
+
+    // Safety guardrail: ≥1 controversial-but-safe per 10 items (best-effort swap).
     var chunkCount = (result.Count + 9) / 10;
     for (var chunk = 0; chunk < chunkCount; chunk++)
     {
         var start = chunk * 10;
         var end = Math.Min(start + 10, result.Count);
-
-        if (!result.GetRange(start, end - start).Any(IsFreshPost))
-        {
-            var freshCand = pool.FirstOrDefault(p => !usedIds.Contains(p.Id) && IsFreshPost(p));
-            if (freshCand is not null)
-            {
-                usedIds.Remove(result[end - 1].Id);
-                result[end - 1] = freshCand with { RankingReason = "fresh" };
-                usedIds.Add(freshCand.Id);
-            }
-        }
 
         if (!result.GetRange(start, end - start).Any(IsControversialSafePost))
         {
@@ -2042,14 +2141,120 @@ app.MapGet("/api/v1/posts/discover/feed", async (
         }
     }
 
-    // Append UCB Stage 1 exploration posts (10% of feed)
+    // Serendipity: every 10 posts, inject a safe post from a category with no interaction in the last 7 days.
+    if (limit >= 10 && result.Count > 0 && (userId is not null || deviceId is not null))
+    {
+        var serendipitySlots = Math.Min(Math.Clamp(limit / 10, 1, 2), result.Count);
+        var affinityExclusion = userId is not null
+            ? """
+              AND NOT EXISTS (
+                  SELECT 1 FROM user_category_affinity uca
+                  WHERE uca.user_id = @userId
+                    AND uca.category_id = p.category_id
+                    AND uca.updated_at >= NOW() - INTERVAL '7 days'
+              )
+              """
+            : """
+              AND NOT EXISTS (
+                  SELECT 1 FROM device_category_affinity dca
+                  WHERE dca.device_id = @deviceId
+                    AND dca.category_id = p.category_id
+                    AND dca.updated_at >= NOW() - INTERVAL '7 days'
+              )
+              """;
+
+        await using var serendipityCmd = new NpgsqlCommand(
+            $"""
+            SELECT p.id, p.title, p.content, p.image_url,
+                   c.id AS c_id, c.name AS c_name, c.emoji,
+                   p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
+                   v.vote_type, p.trend_score, p.created_at,
+                   (p.device_id = @deviceId OR p.user_id = @userId) AS is_owner,
+                   p.is_unlisted, p.is_anonymous, p.tags,
+                   COALESCE(p.user_id, p.device_id) AS ranking_author_key
+            FROM posts p
+            JOIN categories c ON c.id = p.category_id
+            LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
+            WHERE p.status = 'active'
+              AND p.is_unlisted = FALSE
+              AND p.distribution_stage >= 2
+              AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
+              AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
+              AND (
+                  SELECT COUNT(*) FROM reports r
+                  WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending'
+              ) < 3
+              AND p.id != ALL(@usedIds)
+              AND (
+                  @deviceId = '00000000-0000-0000-0000-000000000000'::uuid
+                  OR NOT EXISTS (
+                      SELECT 1 FROM post_views pv
+                      WHERE pv.post_id = p.id AND pv.device_id = @deviceId
+                  )
+              )
+              AND (
+                  @userId = '00000000-0000-0000-0000-000000000000'::uuid
+                  OR (
+                      NOT EXISTS (
+                          SELECT 1 FROM blocked_users bu
+                          WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM muted_categories mc
+                          WHERE mc.user_id = @userId AND mc.category_id = p.category_id
+                      )
+                  )
+              )
+              {affinityExclusion}
+              {suppressedPostsWhere}
+              {suppressedCategoriesWhere}
+            ORDER BY RANDOM()
+            LIMIT @serendipitySlots
+            """,
+            connection
+        );
+        serendipityCmd.Parameters.AddWithValue("deviceId", deviceParam);
+        serendipityCmd.Parameters.AddWithValue("userId", userParam);
+        serendipityCmd.Parameters.AddWithValue("usedIds", usedIds.ToArray());
+        serendipityCmd.Parameters.AddWithValue("serendipitySlots", serendipitySlots);
+        if (hasSuppressedPosts) serendipityCmd.Parameters.AddWithValue("suppressedIds", suppressedPostIds.ToArray());
+        if (hasSuppressedCategories) serendipityCmd.Parameters.AddWithValue("suppressedCategoryIds", suppressedCategoryIds.ToArray());
+
+        var serendipityPosts = await ReadPostsAsync(serendipityCmd);
+        for (var i = 0; i < serendipityPosts.Count; i++)
+        {
+            var serendipityPost = serendipityPosts[i] with { RankingReason = "serendipity" };
+            var replaceAt = Math.Min(10 * (i + 1) - 1, result.Count - 1);
+            usedIds.Remove(result[replaceAt].Id);
+            result[replaceAt] = serendipityPost;
+            usedIds.Add(serendipityPost.Id);
+        }
+    }
+
+    // Append UCB Stage 1 exploration posts (10% of feed) — "ucb_explore" etiketi ile
     foreach (var ucbPost in ucbPosts)
     {
         if (!usedIds.Contains(ucbPost.Id))
         {
-            result.Add(ucbPost with { RankingReason = "fresh" });
+            result.Add(ucbPost with { RankingReason = "ucb_explore" });
             usedIds.Add(ucbPost.Id);
         }
+    }
+
+    // UCB skorlarını Redis'e cache'le (TTL=1h), bir sonraki istekte SQL yükünü azalt
+    if (ucbPosts.Count > 0 && deviceId is not null)
+    {
+        _ = Task.Run(async () =>
+        {
+            foreach (var ucbPost in ucbPosts)
+            {
+                var cachedScore = UcbScoreCalculator.Compute(
+                    ucbPost.VoteCountHakli + ucbPost.VoteCountHaksiz,
+                    Math.Max(1, ucbPost.VoteCountHakli + ucbPost.VoteCountHaksiz),
+                    (int)totalStage1Exposures);
+                await redis.SetUcbScoreAsync(ucbPost.Id, cachedScore);
+            }
+        });
     }
 
     var nextCursor = cursorAnchor is not null
@@ -2065,7 +2270,12 @@ app.MapGet("/api/v1/posts/discover/feed", async (
         .ToList();
 
     if (deviceId is not null && result.Count > 0)
-        _ = redis.RecordImpressionsAsync(deviceId.Value, result.Select(p => p.Id));
+    {
+        var shownIds = result.Select(p => p.Id).ToList();
+        _ = redis.RecordImpressionsAsync(deviceId.Value, shownIds);
+        // Görülen post'ları 7 günlük sliding window'a ekle (dedup için)
+        _ = redis.AddSeenDiscoverPostsAsync(deviceId.Value, shownIds);
+    }
 
     return Results.Ok(new DiscoverFeedResponse(items, nextCursor));
 });
@@ -2505,7 +2715,8 @@ app.MapPost("/api/v1/posts", async (
             distribution_stage,
             is_unlisted,
             is_anonymous,
-            tags
+            tags,
+            crisis_flagged
         )
         VALUES (
             @id,
@@ -2526,7 +2737,8 @@ app.MapPost("/api/v1/posts", async (
             1,
             @isUnlisted,
             @isAnonymous,
-            @tags
+            @tags,
+            @crisisFlagged
         )
         RETURNING status, created_at
         """,
@@ -2561,6 +2773,7 @@ app.MapPost("/api/v1/posts", async (
     command.Parameters.AddWithValue("slug", postSlug);
     command.Parameters.AddWithValue("isUnlisted", request.IsUnlisted);
     command.Parameters.AddWithValue("isAnonymous", request.IsAnonymous && userId != null);
+    command.Parameters.AddWithValue("crisisFlagged", moderation.IsCrisisFlagged);
     var normalizedTags = (request.Tags ?? [])
         .Select(t => t.TrimStart('#').ToLowerInvariant().Trim())
         .Where(t => t.Length is >= 1 and <= 32)
@@ -2585,6 +2798,13 @@ app.MapPost("/api/v1/posts", async (
             CacheKeys.FeedTrending(1), CacheKeys.FeedTrending(2),
             CacheKeys.FeedNew(1), CacheKeys.FeedNew(2)
         );
+    }
+
+    // Kriz sinyali: icerik sahibine destek bildirimi gonder (182 hatti + imece.org).
+    // Bu bildirim cezalandirici degil; sakin, destek odakli bir mesajdir.
+    if (moderation.IsCrisisFlagged)
+    {
+        await InsertCrisisSupportNotificationForContentAsync(connection, effectiveDeviceId.Value, newPostId);
     }
 
     var postIp = httpRequest.HttpContext.Connection.RemoteIpAddress?.ToString();
@@ -2631,6 +2851,14 @@ app.MapGet("/api/v1/posts/{id:guid}", async (
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
         WHERE p.id = @id AND p.status = 'active'
+          AND (
+              @userId = '00000000-0000-0000-0000-000000000000'::uuid
+              OR NOT EXISTS (
+                  SELECT 1 FROM blocked_users bu
+                  WHERE bu.blocker_user_id = @userId
+                    AND bu.blocked_user_id = p.user_id
+              )
+          )
         """,
         connection
     );
@@ -2751,6 +2979,14 @@ app.MapPost("/api/v1/posts/{id:guid}/ai-summary", async (
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
         WHERE p.id = @id AND p.status = 'active'
+          AND (
+              @userId = '00000000-0000-0000-0000-000000000000'::uuid
+              OR NOT EXISTS (
+                  SELECT 1 FROM blocked_users bu
+                  WHERE bu.blocker_user_id = @userId
+                    AND bu.blocked_user_id = p.user_id
+              )
+          )
         """,
         connection);
     postCmd.Parameters.AddWithValue("id", id);
@@ -3050,6 +3286,8 @@ app.MapPost("/api/v1/posts/discover/events", async (
         "dwell" or
         "skip" or
         "vote" or
+        "vote_hakli" or
+        "vote_haksiz" or
         "comment_open" or
         "comment_reply" or
         "comment_like" or
@@ -3145,6 +3383,19 @@ app.MapPost("/api/v1/posts/discover/events", async (
         var catIdObj = await catLookupCmd.ExecuteScalarAsync();
         if (catIdObj is int catId)
             await redis.MarkNotInterestedCategoryAsync(deviceId.Value, catId);
+
+        // post_not_interested analitik eventi: discover_events tablosuna ayrı kayıt
+        await using var analyticsCmd = new NpgsqlCommand(
+            """
+            INSERT INTO discover_events (post_id, device_id, user_id, event_type, metadata)
+            VALUES (@postId, @deviceId, @userId, 'post_not_interested', '{}')
+            """,
+            connection
+        );
+        analyticsCmd.Parameters.AddWithValue("postId", request.PostId);
+        analyticsCmd.Parameters.Add("deviceId", NpgsqlTypes.NpgsqlDbType.Uuid).Value = (object?)deviceId ?? DBNull.Value;
+        analyticsCmd.Parameters.Add("userId", NpgsqlTypes.NpgsqlDbType.Uuid).Value = (object?)userId ?? DBNull.Value;
+        _ = analyticsCmd.ExecuteNonQueryAsync();
     }
 
     if (deviceId is not null && request.EventType == "skip")
@@ -3219,6 +3470,14 @@ app.MapGet("/api/v1/search", async (
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
         WHERE p.status = 'active' AND p.is_unlisted = FALSE
+          AND (
+              @userId = '00000000-0000-0000-0000-000000000000'::uuid
+              OR NOT EXISTS (
+                  SELECT 1 FROM blocked_users bu
+                  WHERE bu.blocker_user_id = @userId
+                    AND bu.blocked_user_id = p.user_id
+              )
+          )
           AND to_tsvector('simple', coalesce(p.title, '') || ' ' || coalesce(p.content, '')) @@ plainto_tsquery('simple', @query)
           {categoryFilter}
           {dateFilter}
@@ -3248,7 +3507,9 @@ app.MapGet("/api/v1/search", async (
 
 app.MapGet("/api/v1/search/users", async (
     string q,
+    HttpRequest httpRequest,
     Db db,
+    JwtService jwtService,
     int limit = 20
 ) =>
 {
@@ -3262,6 +3523,8 @@ app.MapGet("/api/v1/search/users", async (
     }
 
     await using var connection = await db.OpenConnectionAsync();
+    var userId = GetOptionalUserId(httpRequest, jwtService);
+    var userParam = userId ?? Guid.Empty;
     await using var command = new NpgsqlCommand(
         """
         SELECT u.username,
@@ -3270,6 +3533,14 @@ app.MapGet("/api/v1/search/users", async (
         FROM users u
         WHERE u.deleted_at IS NULL
           AND u.is_banned = FALSE
+          AND (
+              @userId = '00000000-0000-0000-0000-000000000000'::uuid
+              OR NOT EXISTS (
+                  SELECT 1 FROM blocked_users bu
+                  WHERE bu.blocker_user_id = @userId
+                    AND bu.blocked_user_id = u.id
+              )
+          )
           AND lower(u.username) LIKE lower(@query) || '%'
         ORDER BY
           CASE WHEN lower(u.username) = lower(@query) THEN 0 ELSE 1 END,
@@ -3280,6 +3551,7 @@ app.MapGet("/api/v1/search/users", async (
         connection
     );
     command.CommandTimeout = 5;
+    command.Parameters.AddWithValue("userId", userParam);
     command.Parameters.AddWithValue("query", q);
     command.Parameters.AddWithValue("limit", limit);
 
@@ -3312,7 +3584,8 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
     GeoService geo,
     DeviceTrustService deviceTrust,
     ComplianceLogService complianceLog,
-    AppAttestationService appAttestation
+    AppAttestationService appAttestation,
+    VoteBrigadeGuard brigadeGuard
 ) =>
 {
     await AddVoteTimingJitterAsync(httpRequest.HttpContext.RequestAborted);
@@ -3378,6 +3651,7 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
     var trustDecision = await deviceTrust.EvaluateForVoteAsync(connection, transaction, effectiveDeviceId.Value);
 
     int hakli, haksiz;
+    var brigadeResult = BrigadeGuardResult.None;
     if (oldVote != request.VoteType)
     {
         await UpsertVoteAsync(
@@ -3391,6 +3665,9 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
             voterRegion
         );
         (hakli, haksiz) = await UpdateVoteCountersReturningAsync(connection, transaction, id, oldVote, request.VoteType);
+        // Inline brigade guard: if ≥5 votes from same /24 IP block or fingerprint cluster
+        // within 10 min, quarantine the entire cluster (suppressed status).
+        brigadeResult = await brigadeGuard.CheckAndSuppressAsync(connection, transaction, id, voterIpBlock);
     }
     else
     {
@@ -3415,14 +3692,27 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
                 reason = trustDecision.Reason ?? "low_trust_score"
             });
     }
+    if (brigadeResult.Detected)
+    {
+        _ = complianceLog.LogAsync("brigade_inline_suppressed", voteIp, effectiveDeviceId, userId, id, "post",
+            new
+            {
+                device_count = brigadeResult.DeviceCount,
+                ip_concentration = brigadeResult.IpConcentration,
+                alert_id = brigadeResult.AlertId
+            });
+    }
 
     if (userId is not null && categoryId > 0)
         _ = affinity.RecordVoteAsync(userId.Value, categoryId);
+    else if (deviceId is not null && categoryId > 0)
+        _ = affinity.RecordVoteByDeviceAsync(deviceId.Value, categoryId);
 
     // Quarantined (suspicious) votes are excluded from trend_score by the SQL filter.
     // Delay trend propagation: only mark dirty for trusted votes so the
     // TrendScoreUpdater picks up quarantined ones on its next scheduled run.
-    if (!trustDecision.ShouldQuarantineVote)
+    // Brigade-suppressed clusters also skip dirty-marking since all their votes are quarantined.
+    if (!trustDecision.ShouldQuarantineVote && !brigadeResult.Detected)
         await redis.MarkPostDirtyAsync(id);
 
     // City-level trending: fire-and-forget update
@@ -3613,10 +3903,25 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
 
     await using var connection = await db.OpenConnectionAsync();
     await using var countCommand = new NpgsqlCommand(
-        "SELECT COUNT(*) FROM comments WHERE post_id = @postId AND status = 'active' AND parent_id IS NULL",
+        """
+        SELECT COUNT(*)
+        FROM comments cm
+        WHERE cm.post_id = @postId
+          AND cm.status = 'active'
+          AND cm.parent_id IS NULL
+          AND (
+              @userId = '00000000-0000-0000-0000-000000000000'::uuid
+              OR NOT EXISTS (
+                  SELECT 1 FROM blocked_users bu
+                  WHERE bu.blocker_user_id = @userId
+                    AND bu.blocked_user_id = cm.user_id
+              )
+          )
+        """,
         connection
     );
     countCommand.Parameters.AddWithValue("postId", id);
+    countCommand.Parameters.AddWithValue("userId", userParam);
     var total = Convert.ToInt32(await countCommand.ExecuteScalarAsync());
 
     const string commentSelectColumns = """
@@ -3676,6 +3981,14 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
         LEFT JOIN comment_downvotes cd ON cd.comment_id = cm.id AND cd.device_id = @deviceId
         LEFT JOIN users u ON u.id = cm.user_id
         WHERE cm.post_id = @postId AND cm.status = 'active' AND cm.parent_id IS NULL
+          AND (
+              @userId = '00000000-0000-0000-0000-000000000000'::uuid
+              OR NOT EXISTS (
+                  SELECT 1 FROM blocked_users bu
+                  WHERE bu.blocker_user_id = @userId
+                    AND bu.blocked_user_id = cm.user_id
+              )
+          )
         ORDER BY cm.is_pinned DESC, {orderBy}
         LIMIT @limit OFFSET @offset
         """,
@@ -3709,6 +4022,14 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
                 LEFT JOIN comment_downvotes cd ON cd.comment_id = cm.id AND cd.device_id = @deviceId
                 LEFT JOIN users u ON u.id = cm.user_id
                 WHERE cm.parent_id = ANY(@parentIds) AND cm.status = 'active'
+                  AND (
+                      @userId = '00000000-0000-0000-0000-000000000000'::uuid
+                      OR NOT EXISTS (
+                          SELECT 1 FROM blocked_users bu
+                          WHERE bu.blocker_user_id = @userId
+                            AND bu.blocked_user_id = cm.user_id
+                      )
+                  )
 
                 UNION ALL
 
@@ -3720,6 +4041,14 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
                 LEFT JOIN comment_downvotes cd ON cd.comment_id = cm.id AND cd.device_id = @deviceId
                 LEFT JOIN users u ON u.id = cm.user_id
                 WHERE cm.status = 'active'
+                  AND (
+                      @userId = '00000000-0000-0000-0000-000000000000'::uuid
+                      OR NOT EXISTS (
+                          SELECT 1 FROM blocked_users bu
+                          WHERE bu.blocker_user_id = @userId
+                            AND bu.blocked_user_id = cm.user_id
+                      )
+                  )
             )
             SELECT * FROM descendants
             """,
@@ -3778,6 +4107,17 @@ app.MapPost("/api/v1/posts/{id:guid}/comments", async (
         return Unauthorized();
     }
 
+    // Per-device hourly comment cap: 30 comments/hour
+    if (deviceId is not null)
+    {
+        var commentAllowed = await redis.IsAllowedAsync(
+            "comment-create", deviceId.Value.ToString("N"), limit: 30, window: TimeSpan.FromHours(1));
+        if (!commentAllowed)
+        {
+            return TooManyRequests("RATE_LIMIT_COMMENTS", "Çok fazla yorum yaptın. Biraz sonra tekrar dene.");
+        }
+    }
+
     var moderationStarted = TimeProvider.System.GetTimestamp();
     var moderation = moderationService.Analyze(request.Content);
     sloMetrics.RecordModeration(
@@ -3806,7 +4146,8 @@ app.MapPost("/api/v1/posts/{id:guid}/comments", async (
             content,
             status,
             moderation_reason,
-            moderation_checked_at
+            moderation_checked_at,
+            crisis_flagged
         )
         VALUES (
             @postId,
@@ -3816,7 +4157,8 @@ app.MapPost("/api/v1/posts/{id:guid}/comments", async (
             @content,
             @status,
             @moderationReason,
-            NOW()
+            NOW(),
+            @crisisFlagged
         )
         RETURNING id, status, created_at
         """,
@@ -3830,6 +4172,7 @@ app.MapPost("/api/v1/posts/{id:guid}/comments", async (
     command.Parameters.AddWithValue("content", request.Content);
     command.Parameters.AddWithValue("status", moderation.Status);
     command.Parameters.AddWithValue("moderationReason", moderation.Message);
+    command.Parameters.AddWithValue("crisisFlagged", moderation.IsCrisisFlagged);
 
     await using var reader = await command.ExecuteReaderAsync();
     if (!await reader.ReadAsync())
@@ -3879,8 +4222,18 @@ app.MapPost("/api/v1/posts/{id:guid}/comments", async (
             );
             catCmd.Parameters.AddWithValue("postId", id);
             if (await catCmd.ExecuteScalarAsync() is int catId)
+            {
                 _ = affinity.RecordCommentAsync(userId.Value, catId);
+                if (deviceId is not null)
+                    _ = affinity.RecordCommentByDeviceAsync(deviceId.Value, catId);
+            }
         }
+    }
+
+    // Kriz sinyali: yorum sahibine destek bildirimi gonder (182 hatti + imece.org).
+    if (moderation.IsCrisisFlagged)
+    {
+        await InsertCrisisSupportNotificationForContentAsync(connection, effectiveDeviceId.Value, id);
     }
 
     var commentIp = httpRequest.HttpContext.Connection.RemoteIpAddress?.ToString();
@@ -4115,7 +4468,7 @@ app.MapPost("/api/v1/reports", async (
         return BadRequest("INVALID_TARGET_TYPE", "Hedef tipi post veya comment olmalı.");
     }
 
-    if (request.Reason is not ("hate_speech" or "harassment" or "personal_info" or "spam" or "self_harm" or "illegal" or "other"))
+    if (request.Reason is not ("hate_speech" or "harassment" or "personal_info" or "misinformation" or "spam" or "self_harm" or "illegal" or "other"))
     {
         return BadRequest("INVALID_REPORT_REASON", "Geçersiz rapor sebebi.");
     }
@@ -4236,6 +4589,10 @@ app.MapPost("/api/v1/reports", async (
                 source = "weighted_report_count"
             });
     }
+
+    // Yeni hesap yüksek rapor kontrolü: ilk 24 saatte ≥10 rapor alan cihazı bayrakla
+    _ = CheckAndFlagNewAccountHighReportAsync(db, request.TargetType, request.TargetId);
+
     return Results.Created($"/api/v1/reports/{reportId}", new ReportResponse(reportId, "Åikayetiniz alÄ±ndÄ±. Ä°ncelenecek."));
 });
 
@@ -4431,18 +4788,43 @@ app.MapGet("/api/v1/notifications", async (
     var offset = (page - 1) * limit;
 
     await using var connection = await db.OpenConnectionAsync();
+    await using var notificationUserCommand = new NpgsqlCommand(
+        "SELECT id FROM users WHERE device_id = @deviceId AND deleted_at IS NULL LIMIT 1",
+        connection
+    );
+    notificationUserCommand.Parameters.AddWithValue("deviceId", deviceId.Value);
+    var notificationUserResult = await notificationUserCommand.ExecuteScalarAsync();
+    var notificationUserId = notificationUserResult is Guid id ? id : Guid.Empty;
+
     await using var countCommand = new NpgsqlCommand(
         """
         SELECT COUNT(*)
         FROM notifications n
         LEFT JOIN posts p ON p.id = n.post_id
+        LEFT JOIN comments nc ON nc.id = NULLIF(n.payload->>'comment_id', '')::uuid
         WHERE n.device_id = @deviceId
           AND n.dismissed_at IS NULL
           AND (n.post_id IS NULL OR p.status = 'active')
+          AND (
+              @userId = '00000000-0000-0000-0000-000000000000'::uuid
+              OR (
+                  NOT EXISTS (
+                      SELECT 1 FROM blocked_users bu
+                      WHERE bu.blocker_user_id = @userId
+                        AND bu.blocked_user_id = p.user_id
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM blocked_users bu
+                      WHERE bu.blocker_user_id = @userId
+                        AND bu.blocked_user_id = nc.user_id
+                  )
+              )
+          )
         """,
         connection
     );
     countCommand.Parameters.AddWithValue("deviceId", deviceId.Value);
+    countCommand.Parameters.AddWithValue("userId", notificationUserId);
     var total = Convert.ToInt32(await countCommand.ExecuteScalarAsync());
 
     await using var unreadCommand = new NpgsqlCommand(
@@ -4450,30 +4832,65 @@ app.MapGet("/api/v1/notifications", async (
         SELECT COUNT(*)
         FROM notifications n
         LEFT JOIN posts p ON p.id = n.post_id
+        LEFT JOIN comments nc ON nc.id = NULLIF(n.payload->>'comment_id', '')::uuid
         WHERE n.device_id = @deviceId
           AND n.is_read = FALSE
           AND n.dismissed_at IS NULL
           AND (n.post_id IS NULL OR p.status = 'active')
+          AND (
+              @userId = '00000000-0000-0000-0000-000000000000'::uuid
+              OR (
+                  NOT EXISTS (
+                      SELECT 1 FROM blocked_users bu
+                      WHERE bu.blocker_user_id = @userId
+                        AND bu.blocked_user_id = p.user_id
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM blocked_users bu
+                      WHERE bu.blocker_user_id = @userId
+                        AND bu.blocked_user_id = nc.user_id
+                  )
+              )
+          )
         """,
         connection
     );
     unreadCommand.Parameters.AddWithValue("deviceId", deviceId.Value);
+    unreadCommand.Parameters.AddWithValue("userId", notificationUserId);
     var unreadCount = Convert.ToInt32(await unreadCommand.ExecuteScalarAsync());
 
     await using var command = new NpgsqlCommand(
         """
-        SELECT n.id, n.type, n.title, n.body, n.post_id, n.is_read, n.created_at
+        SELECT n.id, n.type, n.title, n.body, n.post_id, n.is_read, n.created_at,
+               n.payload::text
         FROM notifications n
         LEFT JOIN posts p ON p.id = n.post_id
+        LEFT JOIN comments nc ON nc.id = NULLIF(n.payload->>'comment_id', '')::uuid
         WHERE n.device_id = @deviceId
           AND n.dismissed_at IS NULL
           AND (n.post_id IS NULL OR p.status = 'active')
+          AND (
+              @userId = '00000000-0000-0000-0000-000000000000'::uuid
+              OR (
+                  NOT EXISTS (
+                      SELECT 1 FROM blocked_users bu
+                      WHERE bu.blocker_user_id = @userId
+                        AND bu.blocked_user_id = p.user_id
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM blocked_users bu
+                      WHERE bu.blocker_user_id = @userId
+                        AND bu.blocked_user_id = nc.user_id
+                  )
+              )
+          )
         ORDER BY n.created_at DESC
         LIMIT @limit OFFSET @offset
         """,
         connection
     );
     command.Parameters.AddWithValue("deviceId", deviceId.Value);
+    command.Parameters.AddWithValue("userId", notificationUserId);
     command.Parameters.AddWithValue("limit", limit);
     command.Parameters.AddWithValue("offset", offset);
 
@@ -4481,15 +4898,32 @@ app.MapGet("/api/v1/notifications", async (
     await using var reader = await command.ExecuteReaderAsync();
     while (await reader.ReadAsync())
     {
+        var notifType = reader.GetString(1);
+        var postId = reader.IsDBNull(4) ? (Guid?)null : reader.GetGuid(4);
+        var payloadJson = reader.IsDBNull(7) ? null : reader.GetString(7);
+        var commentId = ExtractCommentIdFromPayload(payloadJson);
+        var deepLink = NotificationDispatcher.BuildDeepLink(notifType, postId, commentId);
         notifications.Add(new NotificationDto(
             reader.GetGuid(0),
-            reader.GetString(1),
+            notifType,
             reader.GetString(2),
             reader.GetString(3),
-            reader.IsDBNull(4) ? null : reader.GetGuid(4),
+            postId,
             reader.GetBoolean(5),
-            reader.GetFieldValue<DateTimeOffset>(6)
+            reader.GetFieldValue<DateTimeOffset>(6),
+            deepLink
         ));
+    }
+
+    static string? ExtractCommentIdFromPayload(string? payloadJson)
+    {
+        if (string.IsNullOrEmpty(payloadJson) || payloadJson == "{}") return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(payloadJson);
+            return doc.RootElement.TryGetProperty("comment_id", out var prop) ? prop.GetString() : null;
+        }
+        catch { return null; }
     }
 
     return Results.Ok(new NotificationsResponse(
@@ -4594,6 +5028,36 @@ app.MapPut("/api/v1/notifications/{id:guid}/read", async (
 
     await PublishNotificationReadEventAsync(redis, connection, deviceId.Value, notificationId: id);
 
+    return Results.NoContent();
+});
+
+app.MapPost("/api/v1/notifications/{id:guid}/opened", async (
+    Guid id,
+    HttpRequest httpRequest,
+    Db db,
+    RequestDevice requestDevice
+) =>
+{
+    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    if (deviceId is null) return Unauthorized();
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var command = new NpgsqlCommand(
+        """
+        WITH matched AS (
+            SELECT id, device_id
+            FROM notifications
+            WHERE id = @id AND device_id = @deviceId AND dismissed_at IS NULL
+        )
+        INSERT INTO notification_events (notification_id, device_id, event_type)
+        SELECT id, device_id, 'opened'
+        FROM matched
+        """,
+        connection
+    );
+    command.Parameters.AddWithValue("id", id);
+    command.Parameters.AddWithValue("deviceId", deviceId.Value);
+    await command.ExecuteNonQueryAsync();
     return Results.NoContent();
 });
 
@@ -6346,23 +6810,35 @@ app.MapPost("/api/v1/admin/moderation/{targetType}/{targetId:guid}/notify", asyn
     var userId = findReader.IsDBNull(1) ? (Guid?)null : findReader.GetGuid(1);
     await findReader.CloseAsync();
 
+    var ruleViolated = request.RuleViolated.Trim();
+    var message = request.Message.Trim();
+    var notificationBody = $"Kural ihlali: {ruleViolated}\n\n{message}";
+    var notificationPayload = JsonSerializer.Serialize(new
+    {
+        target_type = targetType,
+        target_id = targetId,
+        rule_violated = ruleViolated,
+        appeal_path = "/settings/moderation-history"
+    });
+
     await using var transaction = await connection.BeginTransactionAsync();
 
     await using var notifyCmd = new NpgsqlCommand(
         """
-        INSERT INTO notifications (device_id, type, title, body, post_id)
-        VALUES (@deviceId, 'moderation_result', @title, @body, @postId)
+        INSERT INTO notifications (device_id, type, title, body, post_id, payload)
+        VALUES (@deviceId, 'moderation_result', @title, @body, @postId, @payload::jsonb)
         """,
         connection,
         transaction
     );
     notifyCmd.Parameters.AddWithValue("deviceId", deviceId);
-    notifyCmd.Parameters.AddWithValue("title", "İçeriğiniz Hakkında");
-    notifyCmd.Parameters.AddWithValue("body", request.Message);
+    notifyCmd.Parameters.AddWithValue("title", "Moderasyon Kararı");
+    notifyCmd.Parameters.AddWithValue("body", notificationBody);
     notifyCmd.Parameters.AddWithValue("postId", targetType == "post" ? (object)targetId : DBNull.Value);
+    notifyCmd.Parameters.AddWithValue("payload", notificationPayload);
     await notifyCmd.ExecuteNonQueryAsync();
 
-    await LogAdminActionAsync(connection, transaction, adminEmail, "notify_user", targetType, targetId, request.Message);
+    await LogAdminActionAsync(connection, transaction, adminEmail, "notify_user", targetType, targetId, $"{ruleViolated}: {message}");
     await transaction.CommitAsync();
 
     return Results.NoContent();
@@ -6727,6 +7203,51 @@ app.MapPost("/api/v1/admin/posts/{id:guid}/feature", async (
     return Results.Ok(new { IsFeatured = isFeatured });
 });
 
+app.MapPost("/api/v1/admin/posts/{id:guid}/hide", async (
+    Guid id,
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth
+) =>
+{
+    var adminEmail = adminAuth.TryGetAdminEmail(httpRequest);
+    if (adminEmail is null) return Unauthorized();
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var transaction = await connection.BeginTransactionAsync();
+
+    // Toggle: active/under_review → auto_hidden, auto_hidden → active
+    await using var cmd = new NpgsqlCommand(
+        """
+        UPDATE posts
+        SET status = CASE
+                WHEN status = 'auto_hidden' THEN 'active'
+                ELSE 'auto_hidden'
+            END,
+            updated_at = NOW()
+        WHERE id = @id AND status != 'deleted'
+        RETURNING status
+        """,
+        connection,
+        transaction
+    );
+    cmd.Parameters.AddWithValue("id", id);
+
+    var result = await cmd.ExecuteScalarAsync();
+    if (result is null)
+    {
+        await transaction.RollbackAsync();
+        return NotFound("POST_NOT_FOUND", "Post bulunamadı veya silinmiş.");
+    }
+
+    var newStatus = (string)result;
+    var action = newStatus == "auto_hidden" ? "hide_post" : "unhide_post";
+    await LogAdminActionAsync(connection, transaction, adminEmail, action, "post", id, null);
+    await transaction.CommitAsync();
+
+    return Results.Ok(new { Status = newStatus });
+});
+
 // ── ADMIN DEVICES SUSPICIOUS ─────────────────────────────────────────────
 
 app.MapGet("/api/v1/admin/devices/suspicious", async (
@@ -6794,6 +7315,385 @@ app.MapGet("/api/v1/admin/devices/suspicious", async (
         devices,
         new PagedPagination(page, limit, total, offset + devices.Count < total)
     ));
+});
+
+// ── ADMIN TRUST SCORE HISTORY ────────────────────────────────────────────
+
+app.MapGet("/api/v1/admin/devices/{deviceId}/trust-history", async (
+    string deviceId,
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth
+) =>
+{
+    if (RequireAdmin(httpRequest, adminAuth) is { } unauthorized) return unauthorized;
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var cmd = new NpgsqlCommand(
+        """
+        SELECT score, reason, recorded_at
+        FROM device_trust_score_history
+        WHERE device_id = @deviceId
+          AND recorded_at >= NOW() - INTERVAL '90 days'
+        ORDER BY recorded_at DESC
+        LIMIT 500
+        """,
+        connection
+    );
+    cmd.Parameters.AddWithValue("deviceId", deviceId);
+
+    var history = new List<DeviceTrustHistoryDto>();
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        history.Add(new DeviceTrustHistoryDto(
+            reader.GetDouble(0),
+            reader.IsDBNull(1) ? null : reader.GetString(1),
+            reader.GetFieldValue<DateTimeOffset>(2)
+        ));
+    }
+
+    return Results.Ok(history);
+});
+
+// ── ADMIN ENFORCEMENT ────────────────────────────────────────────────────
+
+app.MapPost("/api/v1/admin/enforcement", async (
+    ApplyEnforcementRequest request,
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth
+) =>
+{
+    var adminEmail = adminAuth.TryGetAdminEmail(httpRequest);
+    if (adminEmail is null) return Unauthorized();
+    if (ValidateRequest(request) is { } ve) return ve;
+
+    if (request.TargetType is not ("device" or "user"))
+        return BadRequest("INVALID_TARGET_TYPE", "target_type 'device' veya 'user' olmalı.");
+
+    if (request.Action is not ("warning" or "strike" or "temp_ban" or "perm_ban"))
+        return BadRequest("INVALID_ACTION", "Geçerli aksiyonlar: warning, strike, temp_ban, perm_ban.");
+
+    if (request.Action is "temp_ban" && request.ExpiresAt is null)
+        return BadRequest("MISSING_EXPIRES_AT", "temp_ban için expires_at zorunludur.");
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var transaction = await connection.BeginTransactionAsync();
+
+    // Insert enforcement record
+    await using var insertCmd = new NpgsqlCommand(
+        """
+        INSERT INTO enforcement_actions (target_type, target_id, action, reason, expires_at, created_by_admin_id)
+        VALUES (@targetType, @targetId, @action, @reason, @expiresAt, @adminId)
+        RETURNING id
+        """,
+        connection,
+        transaction
+    );
+    insertCmd.Parameters.AddWithValue("targetType", request.TargetType);
+    insertCmd.Parameters.AddWithValue("targetId", request.TargetId);
+    insertCmd.Parameters.AddWithValue("action", request.Action);
+    insertCmd.Parameters.AddWithValue("reason", (object?)request.Reason ?? DBNull.Value);
+    insertCmd.Parameters.AddWithValue("expiresAt", (object?)request.ExpiresAt ?? DBNull.Value);
+    insertCmd.Parameters.AddWithValue("adminId", adminEmail);
+    var actionId = (long)(await insertCmd.ExecuteScalarAsync() ?? throw new InvalidOperationException("INSERT enforcement_actions failed"));
+
+    // Yaptırım merdiveni: uyarı sayısını say; 3. uyarıda otomatik strike
+    if (request.Action is "warning" && request.TargetType is "device")
+    {
+        await using var countCmd = new NpgsqlCommand(
+            """
+            SELECT COUNT(*) FROM enforcement_actions
+            WHERE target_type = 'device' AND target_id = @targetId AND action = 'warning'
+            """,
+            connection,
+            transaction
+        );
+        countCmd.Parameters.AddWithValue("targetId", request.TargetId);
+        var warningCount = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
+
+        if (warningCount >= 3)
+        {
+            // Auto-strike on 3rd warning
+            await using var strikeCmd = new NpgsqlCommand(
+                """
+                INSERT INTO enforcement_actions (target_type, target_id, action, reason, created_by_admin_id)
+                VALUES ('device', @targetId, 'strike', 'auto_strike_after_3_warnings', @adminId)
+                """,
+                connection,
+                transaction
+            );
+            strikeCmd.Parameters.AddWithValue("targetId", request.TargetId);
+            strikeCmd.Parameters.AddWithValue("adminId", adminEmail);
+            await strikeCmd.ExecuteNonQueryAsync();
+
+            // Increment strike_count on device
+            if (Guid.TryParse(request.TargetId, out var deviceGuid))
+            {
+                await using var incrCmd = new NpgsqlCommand(
+                    "UPDATE devices SET strike_count = strike_count + 1 WHERE id = @id",
+                    connection,
+                    transaction
+                );
+                incrCmd.Parameters.AddWithValue("id", deviceGuid);
+                await incrCmd.ExecuteNonQueryAsync();
+            }
+        }
+    }
+
+    if (request.Action is "strike" && request.TargetType is "device"
+        && Guid.TryParse(request.TargetId, out var strikeDeviceGuid))
+    {
+        await using var incrCmd = new NpgsqlCommand(
+            "UPDATE devices SET strike_count = strike_count + 1 WHERE id = @id",
+            connection,
+            transaction
+        );
+        incrCmd.Parameters.AddWithValue("id", strikeDeviceGuid);
+        await incrCmd.ExecuteNonQueryAsync();
+    }
+
+    await LogAdminActionAsync(connection, transaction, adminEmail, $"enforcement_{request.Action}", request.TargetType, null, request.Reason);
+    await transaction.CommitAsync();
+
+    return Results.Ok(new { id = actionId });
+});
+
+app.MapGet("/api/v1/admin/enforcement/{targetId}", async (
+    string targetId,
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth,
+    string? targetType = null
+) =>
+{
+    if (RequireAdmin(httpRequest, adminAuth) is { } unauthorized) return unauthorized;
+
+    await using var connection = await db.OpenConnectionAsync();
+    var typeFilter = string.IsNullOrWhiteSpace(targetType) ? "" : "AND target_type = @targetType";
+
+    await using var cmd = new NpgsqlCommand(
+        $"""
+        SELECT id, target_type, target_id, action, reason, expires_at, created_by_admin_id, created_at
+        FROM enforcement_actions
+        WHERE target_id = @targetId {typeFilter}
+        ORDER BY created_at DESC
+        LIMIT 200
+        """,
+        connection
+    );
+    cmd.Parameters.AddWithValue("targetId", targetId);
+    if (!string.IsNullOrWhiteSpace(targetType))
+        cmd.Parameters.AddWithValue("targetType", targetType);
+
+    var actions = new List<EnforcementActionDto>();
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        actions.Add(new EnforcementActionDto(
+            reader.GetInt64(0),
+            reader.GetString(1),
+            reader.GetString(2),
+            reader.GetString(3),
+            reader.IsDBNull(4) ? null : reader.GetString(4),
+            reader.IsDBNull(5) ? null : reader.GetFieldValue<DateTimeOffset>(5),
+            reader.IsDBNull(6) ? null : reader.GetString(6),
+            reader.GetFieldValue<DateTimeOffset>(7)
+        ));
+    }
+
+    return Results.Ok(actions);
+});
+
+// ── ADMIN ALERTS ─────────────────────────────────────────────────────────
+
+app.MapGet("/api/v1/admin/alerts", async (
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth,
+    bool resolved = false,
+    int page = 1,
+    int limit = 30
+) =>
+{
+    if (RequireAdmin(httpRequest, adminAuth) is { } unauthorized) return unauthorized;
+
+    page = Math.Max(1, page);
+    limit = Math.Clamp(limit, 1, 100);
+    var offset = (page - 1) * limit;
+
+    await using var connection = await db.OpenConnectionAsync();
+
+    await using var countAlertCmd = new NpgsqlCommand(
+        "SELECT COUNT(*) FROM admin_alerts WHERE is_resolved = @resolved",
+        connection
+    );
+    countAlertCmd.Parameters.AddWithValue("resolved", resolved);
+    var total = Convert.ToInt32(await countAlertCmd.ExecuteScalarAsync());
+
+    await using var cmd = new NpgsqlCommand(
+        """
+        SELECT id, type, payload, is_resolved, created_at
+        FROM admin_alerts
+        WHERE is_resolved = @resolved
+        ORDER BY created_at DESC
+        LIMIT @limit OFFSET @offset
+        """,
+        connection
+    );
+    cmd.Parameters.AddWithValue("resolved", resolved);
+    cmd.Parameters.AddWithValue("limit", limit);
+    cmd.Parameters.AddWithValue("offset", offset);
+
+    var alerts = new List<AdminAlertDto>();
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        alerts.Add(new AdminAlertDto(
+            reader.GetInt64(0),
+            reader.GetString(1),
+            reader.GetFieldValue<System.Text.Json.JsonElement>(2),
+            reader.GetBoolean(3),
+            reader.GetFieldValue<DateTimeOffset>(4)
+        ));
+    }
+
+    return Results.Ok(new PagedResponse<AdminAlertDto>(
+        alerts,
+        new PagedPagination(page, limit, total, offset + alerts.Count < total)
+    ));
+});
+
+app.MapPost("/api/v1/admin/alerts/{id:long}/resolve", async (
+    long id,
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth
+) =>
+{
+    var adminEmail = adminAuth.TryGetAdminEmail(httpRequest);
+    if (adminEmail is null) return Unauthorized();
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var cmd = new NpgsqlCommand(
+        """
+        UPDATE admin_alerts
+        SET is_resolved = TRUE, resolved_by = @adminEmail, resolved_at = NOW()
+        WHERE id = @id AND is_resolved = FALSE
+        """,
+        connection
+    );
+    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue("adminEmail", adminEmail);
+    var rows = await cmd.ExecuteNonQueryAsync();
+    return rows == 0 ? NotFound("ALERT_NOT_FOUND", "Alert bulunamadı veya zaten çözümlendi.") : Results.NoContent();
+});
+
+// ── ADMIN BRIGADE ALERTS ──────────────────────────────────────────────────
+
+app.MapGet("/api/v1/admin/brigade/alerts", async (
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth,
+    string status = "open",
+    int limit = 30
+) =>
+{
+    if (RequireAdmin(httpRequest, adminAuth) is { } unauthorized) return unauthorized;
+
+    limit = Math.Clamp(limit, 1, 100);
+
+    await using var connection = await db.OpenConnectionAsync();
+
+    var resolvedFilter = status switch
+    {
+        "open" => "AND a.is_resolved = FALSE",
+        "reviewed" => "AND a.is_resolved = TRUE",
+        _ => ""
+    };
+
+    await using var countCmd = new NpgsqlCommand(
+        $"""
+        SELECT COUNT(*)
+        FROM admin_alerts a
+        WHERE a.type = 'brigade_suspected'
+        {resolvedFilter}
+        """,
+        connection);
+    var total = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
+
+    await using var cmd = new NpgsqlCommand(
+        $"""
+        SELECT
+            a.id,
+            (a.payload->>'post_id')::uuid                      AS post_id,
+            COALESCE(p.title, '[Silinmiş Post]')               AS post_title,
+            (a.payload->>'device_count')::int                  AS device_count,
+            COALESCE((a.payload->>'ip_concentration')::float, 0) AS ip_concentration,
+            a.is_resolved,
+            a.created_at
+        FROM admin_alerts a
+        LEFT JOIN posts p ON p.id = (a.payload->>'post_id')::uuid
+        WHERE a.type = 'brigade_suspected'
+        {resolvedFilter}
+        ORDER BY a.created_at DESC
+        LIMIT @limit
+        """,
+        connection);
+    cmd.Parameters.AddWithValue("limit", limit);
+
+    var alerts = new List<object>();
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        var deviceCount = reader.IsDBNull(3) ? 0 : reader.GetInt32(3);
+        var ipConc = reader.IsDBNull(4) ? 0.0 : reader.GetDouble(4);
+        var isResolved = reader.GetBoolean(5);
+
+        var severity = ipConc >= 0.8 ? "high" : ipConc >= 0.65 ? "medium" : "low";
+        var alertStatus = isResolved ? "reviewed" : "open";
+
+        alerts.Add(new
+        {
+            id = reader.GetInt64(0).ToString(),
+            postId = reader.IsDBNull(1) ? null : reader.GetGuid(1).ToString(),
+            postTitle = reader.GetString(2),
+            detectedAt = reader.GetFieldValue<DateTimeOffset>(6).ToString("O"),
+            suspiciousUserCount = deviceCount,
+            suspiciousVoteCount = deviceCount,
+            severity,
+            status = alertStatus,
+        });
+    }
+
+    return Results.Ok(new { alerts, total });
+});
+
+app.MapPost("/api/v1/admin/brigade/alerts/{id:long}/resolve", async (
+    long id,
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth
+) =>
+{
+    var adminEmail = adminAuth.TryGetAdminEmail(httpRequest);
+    if (adminEmail is null) return Unauthorized();
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var cmd = new NpgsqlCommand(
+        """
+        UPDATE admin_alerts
+        SET is_resolved = TRUE, resolved_by = @adminEmail, resolved_at = NOW()
+        WHERE id = @id AND type = 'brigade_suspected' AND is_resolved = FALSE
+        """,
+        connection);
+    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue("adminEmail", adminEmail);
+    var rows = await cmd.ExecuteNonQueryAsync();
+    return rows == 0
+        ? NotFound("ALERT_NOT_FOUND", "Alert bulunamadı veya zaten çözümlendi.")
+        : Results.NoContent();
 });
 
 // ── ADMIN DEVICES BAN SUBNET ─────────────────────────────────────────────
@@ -8069,6 +8969,71 @@ app.MapGet("/api/v1/users/me/notification-preferences", async (
     return Results.Ok(preferences);
 });
 
+// Politika versiyonu sabitleri — büyük politika değişikliklerinde bu değerler artırılır.
+const int CurrentTermsVersion = 1;
+const int CurrentPrivacyVersion = 1;
+
+app.MapGet("/api/v1/users/me/policy-status", async (
+    HttpRequest httpRequest,
+    Db db,
+    JwtService jwtService
+) =>
+{
+    var principal = GetJwtPrincipal(httpRequest, jwtService);
+    if (principal is null) return Unauthorized();
+    var userId = GetUserId(principal);
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var cmd = new NpgsqlCommand(
+        "SELECT terms_version_accepted, privacy_version_accepted FROM users WHERE id = @id AND deleted_at IS NULL",
+        connection
+    );
+    cmd.Parameters.AddWithValue("id", userId);
+
+    await using var reader = await cmd.ExecuteReaderAsync();
+    if (!await reader.ReadAsync()) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
+
+    var termsAccepted = (int)reader.GetInt16(0);
+    var privacyAccepted = (int)reader.GetInt16(1);
+    var needsAcceptance = termsAccepted < CurrentTermsVersion || privacyAccepted < CurrentPrivacyVersion;
+
+    return Results.Ok(new PolicyStatusResponse(needsAcceptance, CurrentTermsVersion, CurrentPrivacyVersion));
+});
+
+app.MapPost("/api/v1/users/me/accept-policy", async (
+    HttpRequest httpRequest,
+    Db db,
+    JwtService jwtService,
+    AcceptPolicyRequest req
+) =>
+{
+    var principal = GetJwtPrincipal(httpRequest, jwtService);
+    if (principal is null) return Unauthorized();
+    var userId = GetUserId(principal);
+
+    if (req.TermsVersion < CurrentTermsVersion || req.PrivacyVersion < CurrentPrivacyVersion)
+        return BadRequest("INVALID_POLICY_VERSION", "Geçerli politika versiyonunu kabul etmeniz gerekmektedir.");
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var cmd = new NpgsqlCommand(
+        """
+        UPDATE users
+           SET terms_version_accepted   = @tv,
+               privacy_version_accepted = @pv
+         WHERE id = @id AND deleted_at IS NULL
+        """,
+        connection
+    );
+    cmd.Parameters.AddWithValue("id", userId);
+    cmd.Parameters.AddWithValue("tv", (short)req.TermsVersion);
+    cmd.Parameters.AddWithValue("pv", (short)req.PrivacyVersion);
+
+    var rows = await cmd.ExecuteNonQueryAsync();
+    if (rows == 0) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
+
+    return Results.Ok(new MessageResponse("Politika kabulü kaydedildi."));
+});
+
 app.MapGet("/api/v1/users/me/data-export", async (
     HttpRequest httpRequest,
     Db db,
@@ -8304,6 +9269,101 @@ app.MapGet("/api/v1/users/me/moderation-history", async (
         removedPosts,
         warnings,
         events
+    });
+});
+
+app.MapGet("/api/v1/users/me/reports", async (
+    HttpRequest httpRequest,
+    Db db,
+    RequestDevice requestDevice,
+    JwtService jwtService,
+    int page = 1,
+    int limit = 20
+) =>
+{
+    var principal = GetJwtPrincipal(httpRequest, jwtService);
+    if (principal is null) return Unauthorized();
+    var userId = GetUserId(principal);
+    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+
+    page = Math.Max(1, page);
+    limit = Math.Clamp(limit, 1, 50);
+    var offset = (page - 1) * limit;
+
+    await using var connection = await db.OpenConnectionAsync();
+    var effectiveDeviceId = deviceId ?? await GetUserDeviceIdAsync(connection, userId);
+    if (effectiveDeviceId is null) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
+
+    await using var countCmd = new NpgsqlCommand(
+        """
+        SELECT COUNT(*)
+        FROM reports r
+        WHERE r.reporter_user_id = @userId OR r.reporter_device_id = @deviceId
+        """,
+        connection
+    );
+    countCmd.Parameters.AddWithValue("userId", userId);
+    countCmd.Parameters.AddWithValue("deviceId", effectiveDeviceId.Value);
+    var total = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
+
+    await using var command = new NpgsqlCommand(
+        """
+        SELECT r.id,
+               r.target_type,
+               r.target_id,
+               r.reason,
+               r.status,
+               r.created_at,
+               CASE
+                   WHEN r.target_type = 'post' THEN LEFT(COALESCE(p.title, p.content), 140)
+                   WHEN r.target_type = 'comment' THEN LEFT(c.content, 140)
+               END AS target_preview,
+               CASE r.status
+                   WHEN 'pending' THEN 'inceleniyor'
+                   WHEN 'actioned' THEN 'işlem yapıldı'
+                   WHEN 'dismissed' THEN 'reddedildi'
+                   ELSE 'alındı'
+               END AS public_status,
+               CASE r.status
+                   WHEN 'dismissed' THEN 'İnceleme sonunda bu içerikte işlem gerektiren bir ihlal bulunmadı.'
+                   ELSE NULL
+               END AS public_reason
+        FROM reports r
+        LEFT JOIN posts p ON r.target_type = 'post' AND p.id = r.target_id
+        LEFT JOIN comments c ON r.target_type = 'comment' AND c.id = r.target_id
+        WHERE r.reporter_user_id = @userId OR r.reporter_device_id = @deviceId
+        ORDER BY r.created_at DESC
+        LIMIT @limit OFFSET @offset
+        """,
+        connection
+    );
+    command.Parameters.AddWithValue("userId", userId);
+    command.Parameters.AddWithValue("deviceId", effectiveDeviceId.Value);
+    command.Parameters.AddWithValue("limit", limit);
+    command.Parameters.AddWithValue("offset", offset);
+
+    var reports = new List<object>();
+    await using var reader = await command.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        reports.Add(new
+        {
+            id = reader.GetGuid(0),
+            targetType = reader.GetString(1),
+            targetId = reader.GetGuid(2),
+            reason = reader.GetString(3),
+            status = reader.GetString(4),
+            createdAt = reader.GetFieldValue<DateTimeOffset>(5),
+            targetPreview = reader.IsDBNull(6) ? null : reader.GetString(6),
+            publicStatus = reader.GetString(7),
+            publicReason = reader.IsDBNull(8) ? null : reader.GetString(8)
+        });
+    }
+
+    return Results.Ok(new
+    {
+        reports,
+        pagination = new Pagination(page, limit, total, offset + reports.Count < total)
     });
 });
 
@@ -8946,7 +10006,12 @@ app.MapGet("/api/v1/users/{username}/comments", async (
         return Forbid("PRIVATE_PROFILE", "Bu profil gizli.");
 
     await using var countCmd = new NpgsqlCommand(
-        "SELECT COUNT(*) FROM comments WHERE user_id = @userId AND status = 'active'",
+        """
+        SELECT COUNT(*)
+        FROM comments cm
+        JOIN posts p ON p.id = cm.post_id
+        WHERE cm.user_id = @userId AND cm.status = 'active' AND p.status = 'active'
+        """,
         connection
     );
     countCmd.Parameters.AddWithValue("userId", targetUserId);
@@ -8959,7 +10024,7 @@ app.MapGet("/api/v1/users/{username}/comments", async (
                cm.created_at, p.id, p.title
         FROM comments cm
         JOIN posts p ON p.id = cm.post_id
-        WHERE cm.user_id = @userId AND cm.status = 'active'
+        WHERE cm.user_id = @userId AND cm.status = 'active' AND p.status = 'active'
         ORDER BY cm.created_at DESC
         LIMIT @limit OFFSET @offset
         """,
@@ -9733,7 +10798,8 @@ app.MapGet("/api/v1/admin/analytics/trends", async (
 app.MapGet("/api/v1/admin/analytics/categories", async (
     HttpRequest httpRequest,
     Db db,
-    AdminAuthService adminAuth
+    AdminAuthService adminAuth,
+    int days = 30
 ) =>
 {
     if (RequireAdmin(httpRequest, adminAuth) is { } unauthorized)
@@ -9741,23 +10807,40 @@ app.MapGet("/api/v1/admin/analytics/categories", async (
         return unauthorized;
     }
 
+    days = Math.Clamp(days, 1, 90);
     await using var connection = await db.OpenConnectionAsync();
     await using var command = new NpgsqlCommand(
         """
-        SELECT c.name, COUNT(p.id) as post_count
+        SELECT c.name,
+               COUNT(DISTINCT p.id) AS post_count,
+               MAX(COALESCE(imp.impressions, 0)) AS impressions
         FROM categories c
         LEFT JOIN posts p ON p.category_id = c.id AND p.status != 'deleted'
+        LEFT JOIN (
+            SELECT dp.category_id, COUNT(*) AS impressions
+            FROM discover_events de
+            JOIN posts dp ON dp.id = de.post_id
+            WHERE de.event_type = 'impression'
+              AND de.created_at >= NOW() - (@days * INTERVAL '1 day')
+            GROUP BY dp.category_id
+        ) imp ON imp.category_id = c.id
         GROUP BY c.id, c.name
         ORDER BY post_count DESC
         """,
         connection
     );
+    command.Parameters.AddWithValue("days", days);
 
     var data = new List<object>();
     await using var reader = await command.ExecuteReaderAsync();
     while (await reader.ReadAsync())
     {
-        data.Add(new { name = reader.GetString(0), value = Convert.ToInt32(reader.GetInt64(1)) });
+        data.Add(new
+        {
+            name       = reader.GetString(0),
+            value      = Convert.ToInt64(reader.GetValue(1)),
+            impressions = Convert.ToInt64(reader.GetValue(2)),
+        });
     }
 
     return Results.Ok(data);
@@ -10813,6 +11896,24 @@ app.MapGet("/api/v1/admin/analytics/activity", async (
     var current = await ReadSummaryAsync(range.Value.From, range.Value.To);
     var previous = await ReadSummaryAsync(range.Value.PreviousFrom, range.Value.PreviousTo);
 
+    await using var dauMauCmd = new NpgsqlCommand(
+        """
+        SELECT
+            COUNT(DISTINCT CASE WHEN last_seen_at >= CURRENT_DATE THEN id END) AS dau_today,
+            COUNT(DISTINCT CASE WHEN last_seen_at >= DATE_TRUNC('month', NOW()) THEN id END) AS mau_this_month
+        FROM devices
+        WHERE (@platform IS NULL OR platform = @platform)
+        """,
+        connection);
+    dauMauCmd.Parameters.Add("platform", NpgsqlDbType.Text).Value =
+        string.IsNullOrWhiteSpace(platform) ? DBNull.Value : (object)platform;
+    await using var dauMauReader = await dauMauCmd.ExecuteReaderAsync();
+    await dauMauReader.ReadAsync();
+    var dauToday      = Convert.ToInt64(dauMauReader.GetValue(0));
+    var mauThisMonth  = Convert.ToInt64(dauMauReader.GetValue(1));
+    var dauToMauRatio = mauThisMonth == 0 ? 0.0 : Math.Round(dauToday * 100.0 / mauThisMonth, 1);
+    await dauMauReader.CloseAsync();
+
     await using var seriesCmd = new NpgsqlCommand(
         $"""
         WITH buckets AS (
@@ -10865,7 +11966,10 @@ app.MapGet("/api/v1/admin/analytics/activity", async (
         from = range.Value.From,
         to = range.Value.To,
         groupBy = range.Value.GroupBy,
-        filters = new { platform, userType, source, categoryId },
+        filters     = new { platform, userType, source, categoryId },
+        dauToday,
+        mauThisMonth,
+        dauToMauRatio,
         current,
         previous,
         series,
@@ -10897,6 +12001,9 @@ app.MapGet("/api/v1/admin/analytics/funnels", async (
 
     await using var connection = await db.OpenConnectionAsync();
     var steps = new List<object>();
+    double? publishRate = null;
+    double? holdRate = null;
+    double? dropoutRate = null;
 
     if (type is "judgment")
     {
@@ -10919,9 +12026,9 @@ app.MapGet("/api/v1/admin/analytics/funnels", async (
         AddAnalyticsParameters(cmd, range.Value.From, range.Value.To, platform, null, source, categoryId);
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
-        steps.Add(new { key = "impression", label = "Impressions", count = Convert.ToInt64(reader.GetValue(0)) });
-        steps.Add(new { key = "dwell", label = "Meaningful dwell", count = Convert.ToInt64(reader.GetValue(1)) });
-        steps.Add(new { key = "vote", label = "Votes", count = Convert.ToInt64(reader.GetValue(2)) });
+        steps.Add(new { key = "impression",     label = "Impressions",        count = Convert.ToInt64(reader.GetValue(0)) });
+        steps.Add(new { key = "dwell",          label = "Meaningful dwell",   count = Convert.ToInt64(reader.GetValue(1)) });
+        steps.Add(new { key = "vote",           label = "Votes",              count = Convert.ToInt64(reader.GetValue(2)) });
         steps.Add(new { key = "verdict_viewed", label = "Verdict viewed proxy", count = Convert.ToInt64(reader.GetValue(3)) });
     }
     else if (type is "creation")
@@ -10944,11 +12051,14 @@ app.MapGet("/api/v1/admin/analytics/funnels", async (
         await reader.ReadAsync();
         var submitted = Convert.ToInt64(reader.GetValue(0));
         var published = Convert.ToInt64(reader.GetValue(1));
-        var held = Convert.ToInt64(reader.GetValue(2));
+        var held      = Convert.ToInt64(reader.GetValue(2));
+        publishRate = submitted == 0 ? 0.0 : Math.Round(published * 100.0 / submitted, 1);
+        holdRate    = submitted == 0 ? 0.0 : Math.Round(held      * 100.0 / submitted, 1);
+        dropoutRate = submitted == 0 ? 0.0 : Math.Round((submitted - published - held) * 100.0 / submitted, 1);
         steps.Add(new { key = "create_post_started", label = "Create started proxy", count = submitted });
-        steps.Add(new { key = "submitted", label = "Submitted", count = submitted });
-        steps.Add(new { key = "published", label = "Published", count = published });
-        steps.Add(new { key = "held_for_review", label = "Held for review", count = held });
+        steps.Add(new { key = "submitted",            label = "Submitted",           count = submitted });
+        steps.Add(new { key = "published",            label = "Published",           count = published });
+        steps.Add(new { key = "held_for_review",      label = "Held for review",     count = held });
     }
     else
     {
@@ -10968,10 +12078,10 @@ app.MapGet("/api/v1/admin/analytics/funnels", async (
         AddAnalyticsParameters(cmd, range.Value.From, range.Value.To, platform, null, source, categoryId);
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
-        steps.Add(new { key = "share_landing_opened", label = "Share landing opened", count = Convert.ToInt64(reader.GetValue(0)) });
-        steps.Add(new { key = "share_landing_vote_attempt", label = "Vote attempted", count = Convert.ToInt64(reader.GetValue(1)) });
-        steps.Add(new { key = "share_landing_completed_judgment", label = "Completed judgment", count = Convert.ToInt64(reader.GetValue(2)) });
-        steps.Add(new { key = "share_to_install", label = "Install", count = Convert.ToInt64(reader.GetValue(3)) });
+        steps.Add(new { key = "share_landing_opened",              label = "Share landing opened", count = Convert.ToInt64(reader.GetValue(0)) });
+        steps.Add(new { key = "share_landing_vote_attempt",        label = "Vote attempted",       count = Convert.ToInt64(reader.GetValue(1)) });
+        steps.Add(new { key = "share_landing_completed_judgment",  label = "Completed judgment",   count = Convert.ToInt64(reader.GetValue(2)) });
+        steps.Add(new { key = "share_to_install",                  label = "Install",              count = Convert.ToInt64(reader.GetValue(3)) });
     }
 
     return Results.Ok(new
@@ -10979,8 +12089,11 @@ app.MapGet("/api/v1/admin/analytics/funnels", async (
         type,
         from = range.Value.From,
         to = range.Value.To,
-        filters = new { platform, source, categoryId },
+        filters    = new { platform, source, categoryId },
         steps,
+        publishRate,
+        holdRate,
+        dropoutRate,
     });
 });
 
@@ -11294,6 +12407,96 @@ app.MapPost("/api/v1/admin/analytics/scheduled-reports", async (
     });
 }).RequireRateLimiting("admin-analytics-export");
 
+app.MapGet("/api/v1/admin/analytics/scheduled-reports", async (
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth
+) =>
+{
+    if (RequireAdmin(httpRequest, adminAuth) is { } unauthorized)
+        return unauthorized;
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var cmd = new NpgsqlCommand(
+        """
+        SELECT id, name, report, frequency, format, timezone, filters, created_by, created_at, is_active
+        FROM admin_scheduled_reports
+        WHERE is_active = TRUE
+        ORDER BY created_at DESC
+        LIMIT 100
+        """,
+        connection);
+
+    var items = new List<object>();
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        items.Add(new
+        {
+            id = reader.GetGuid(0),
+            name = reader.IsDBNull(1) ? null : reader.GetString(1),
+            report = reader.GetString(2),
+            frequency = reader.GetString(3),
+            format = reader.GetString(4),
+            timezone = reader.GetString(5),
+            filters = reader.GetString(6),
+            createdBy = reader.GetString(7),
+            createdAt = reader.GetFieldValue<DateTimeOffset>(8),
+            isActive = reader.GetBoolean(9),
+        });
+    }
+
+    return Results.Ok(new { items });
+});
+
+app.MapDelete("/api/v1/admin/analytics/scheduled-reports/{id:guid}", async (
+    Guid id,
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth
+) =>
+{
+    if (RequireAdmin(httpRequest, adminAuth) is { } unauthorized)
+        return unauthorized;
+
+    var adminEmail = adminAuth.TryGetAdminEmail(httpRequest);
+    if (adminEmail is null)
+        return Unauthorized();
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var transaction = await connection.BeginTransactionAsync();
+    await using var cmd = new NpgsqlCommand(
+        """
+        UPDATE admin_scheduled_reports
+        SET is_active = FALSE
+        WHERE id = @id AND is_active = TRUE
+        RETURNING id
+        """,
+        connection,
+        transaction);
+    cmd.Parameters.AddWithValue("id", id);
+
+    await using var reader = await cmd.ExecuteReaderAsync();
+    if (!await reader.ReadAsync())
+    {
+        await transaction.RollbackAsync();
+        return Results.NotFound(new { error = "REPORT_NOT_FOUND", message = "Scheduled report bulunamadı." });
+    }
+    await reader.CloseAsync();
+
+    await LogAdminActionAsync(
+        connection,
+        transaction,
+        adminEmail,
+        "analytics_scheduled_report_deleted",
+        "analytics",
+        id,
+        $"id={id}");
+    await transaction.CommitAsync();
+
+    return Results.NoContent();
+});
+
 // ── GROWTH EVENTS INGESTION ──────────────────────────────────────────────────
 
 app.MapPost("/api/v1/growth-events", async (
@@ -11342,6 +12545,41 @@ app.MapPost("/api/v1/growth-events", async (
     command.Parameters.Add("source", NpgsqlDbType.Text).Value = (object?)request.Source ?? DBNull.Value;
     command.Parameters.Add("platform", NpgsqlDbType.Text).Value = (object?)request.Platform ?? DBNull.Value;
     command.Parameters.Add("referrerCode", NpgsqlDbType.Text).Value = (object?)request.ReferrerCode ?? DBNull.Value;
+    await command.ExecuteNonQueryAsync();
+
+    return Results.NoContent();
+}).RequireRateLimiting("growth-events");
+
+// ── NORTH-STAR: COMPLETED JUDGMENT LOOP ─────────────────────────────────────
+
+app.MapPost("/api/v1/analytics/loop-completed", async (
+    LoopCompletedRequest request,
+    HttpRequest httpRequest,
+    Db db,
+    RequestDevice requestDevice
+) =>
+{
+    if (ValidateRequest(request) is { } validationError)
+        return validationError;
+
+    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var command = new NpgsqlCommand(
+        """
+        INSERT INTO judgment_loop_events (
+            device_id, post_id, source, loop_duration_seconds, dwell_seconds
+        ) VALUES (
+            @deviceId, @postId, @source, @loopDurationSeconds, @dwellSeconds
+        )
+        """,
+        connection
+    );
+    command.Parameters.Add("deviceId", NpgsqlDbType.Text).Value = (object?)deviceId?.ToString() ?? DBNull.Value;
+    command.Parameters.AddWithValue("postId", request.PostId);
+    command.Parameters.AddWithValue("source", request.Source);
+    command.Parameters.AddWithValue("loopDurationSeconds", request.LoopDurationSeconds);
+    command.Parameters.AddWithValue("dwellSeconds", request.DwellSeconds);
     await command.ExecuteNonQueryAsync();
 
     return Results.NoContent();
@@ -11609,6 +12847,98 @@ app.MapGet("/api/v1/admin/analytics/north-star", async (
             firebaseVerdictViewedExportRequired = true,
             meaningfulDwellThresholdSeconds = 15,
             sourcesTracked = new[] { "feed", "discover", "share_landing", "notification", "search" },
+        },
+    });
+});
+
+// ── Admin Analytics — Operations ─────────────────────────────────────────────
+
+app.MapGet("/api/v1/admin/analytics/operations", async (
+    HttpRequest httpRequest,
+    AdminAuthService adminAuth,
+    SloMetrics sloMetrics,
+    RedisService redis,
+    IConfiguration configuration,
+    IHostEnvironment environment
+) =>
+{
+    if (RequireAdmin(httpRequest, adminAuth) is { } unauthorized)
+        return unauthorized;
+
+    var sloSnapshot = sloMetrics.GetSnapshot();
+
+    var (cacheHits, cacheMisses) = await redis.GetCacheMetricsAsync();
+    var cacheTotal = cacheHits + cacheMisses;
+    var cacheHitRate = cacheTotal == 0 ? 0.0 : Math.Round(cacheHits * 100.0 / cacheTotal, 1);
+
+    var commitSha =
+        configuration["Build:CommitSha"] ??
+        Environment.GetEnvironmentVariable("GIT_COMMIT_SHA") ??
+        Environment.GetEnvironmentVariable("RENDER_GIT_COMMIT") ??
+        Environment.GetEnvironmentVariable("VERCEL_GIT_COMMIT_SHA") ??
+        Environment.GetEnvironmentVariable("SOURCE_VERSION") ??
+        Environment.GetEnvironmentVariable("COMMIT_SHA") ??
+        "unknown";
+    var deployedAt =
+        configuration["Build:DeployedAt"] ??
+        Environment.GetEnvironmentVariable("DEPLOYED_AT") ??
+        "unknown";
+
+    return Results.Ok(new
+    {
+        slo = new
+        {
+            status = sloSnapshot.Status,
+            windowSeconds = (int)sloSnapshot.Window.TotalSeconds,
+            checks = sloSnapshot.Checks.Select(c => new
+            {
+                name = c.Name,
+                status = c.Status,
+                value = c.Value,
+                target = c.Target,
+                unit = c.Unit,
+                sampleCount = c.SampleCount,
+            }),
+            burnRates = sloSnapshot.BurnRatePolicies.Select(b => new
+            {
+                name = b.Name,
+                severity = b.Severity,
+                status = b.Status,
+                burnRate = Math.Round(b.BurnRate, 3),
+                threshold = b.Threshold,
+                sampleCount = b.SampleCount,
+            }),
+        },
+        cache = new
+        {
+            hits = cacheHits,
+            misses = cacheMisses,
+            total = cacheTotal,
+            hitRatePercent = cacheHitRate,
+            targetPercent = 85.0,
+            isHealthy = cacheTotal < 100 || cacheHitRate >= 85.0,
+        },
+        deploy = new
+        {
+            commitSha,
+            deployedAt,
+            environment = environment.EnvironmentName,
+            version = typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown",
+        },
+        backgroundJobs = new[]
+        {
+            "TrendScoreUpdater",
+            "NotificationDispatcher",
+            "PostDistributionJob",
+            "CommentNotificationBatcher",
+            "ViralNotificationJob",
+            "DataRetentionService",
+            "ImageModerationWorker",
+            "VerdictReminderJob",
+            "BrigadeCoordinatedDetectorJob",
+            "AuditLogExportJob",
+            "DeferredNotificationFlushJob",
+            "BurnRateAlertWorker",
         },
     });
 });
@@ -12309,6 +13639,103 @@ static async Task MarkReportsForTargetAsync(
     await command.ExecuteNonQueryAsync();
 }
 
+static async Task InsertCrisisSupportNotificationForContentAsync(
+    NpgsqlConnection connection,
+    Guid deviceId,
+    Guid postId)
+{
+    await using var command = new NpgsqlCommand(
+        """
+        INSERT INTO notifications (device_id, type, title, body, post_id, payload)
+        VALUES (
+            @deviceId,
+            'crisis_support',
+            'Destek alabilirsin',
+            'Zor bir an yaşıyorsan yalnız değilsin. 182 hattını arayabilir veya imece.org üzerinden destek kaynaklarına ulaşabilirsin.',
+            @postId,
+            @payload::jsonb
+        )
+        """,
+        connection
+    );
+    command.Parameters.AddWithValue("deviceId", deviceId);
+    command.Parameters.AddWithValue("postId", postId);
+    command.Parameters.AddWithValue("payload", JsonSerializer.Serialize(new
+    {
+        support_phone = "182",
+        support_url = "https://www.imece.org"
+    }));
+    await command.ExecuteNonQueryAsync();
+}
+
+// İlk 24 saatte ≥10 rapor alan cihazı bayrakla (fire-and-forget)
+static async Task CheckAndFlagNewAccountHighReportAsync(Db db, string targetType, Guid targetId)
+{
+    try
+    {
+        await using var connection = await db.OpenConnectionAsync();
+
+        var table = targetType == "post" ? "posts" : "comments";
+        await using var deviceCmd = new NpgsqlCommand(
+            $"""
+            SELECT d.id, d.created_at,
+                   (SELECT COUNT(*) FROM reports r2
+                    JOIN {table} t2 ON t2.id = r2.target_id AND r2.target_type = @targetType
+                    WHERE t2.device_id = d.id) AS report_count
+            FROM {table} t
+            JOIN devices d ON d.id = t.device_id
+            WHERE t.id = @targetId
+              AND d.created_at >= NOW() - INTERVAL '24 hours'
+            """,
+            connection
+        );
+        deviceCmd.Parameters.AddWithValue("targetId", targetId);
+        deviceCmd.Parameters.AddWithValue("targetType", targetType);
+
+        await using var reader = await deviceCmd.ExecuteReaderAsync();
+        if (!await reader.ReadAsync()) return;
+
+        var contentDeviceId = reader.GetGuid(0);
+        var reportCount = Convert.ToInt32(reader.GetInt64(2));
+        await reader.CloseAsync();
+
+        if (reportCount < 10) return;
+
+        // Flag device
+        await using var flagCmd = new NpgsqlCommand(
+            """
+            UPDATE devices
+            SET flags = flags || '{"new_account_high_report": true}'::jsonb
+            WHERE id = @deviceId
+              AND NOT (flags ? 'new_account_high_report')
+            """,
+            connection
+        );
+        flagCmd.Parameters.AddWithValue("deviceId", contentDeviceId);
+        var updated = await flagCmd.ExecuteNonQueryAsync();
+
+        if (updated > 0)
+        {
+            await using var alertCmd = new NpgsqlCommand(
+                """
+                INSERT INTO admin_alerts (type, payload)
+                VALUES ('new_account_high_report',
+                        jsonb_build_object(
+                            'device_id', @deviceId::text,
+                            'report_count', @reportCount,
+                            'detected_at', NOW()
+                        ))
+                """,
+                connection
+            );
+            alertCmd.Parameters.AddWithValue("deviceId", contentDeviceId);
+            alertCmd.Parameters.AddWithValue("reportCount", reportCount);
+            await alertCmd.ExecuteNonQueryAsync();
+        }
+    }
+    catch { }
+}
+
 static async Task LogAdminActionAsync(
     NpgsqlConnection connection,
     NpgsqlTransaction transaction,
@@ -12560,7 +13987,8 @@ static async Task<IReadOnlyList<PostDto>> ReadPostsAsync(NpgsqlCommand command)
             IsAnonymous: isAnonymous,
             IsClosed: isClosed,
             Tags: tags,
-            AiSummary: aiSummary
+            AiSummary: aiSummary,
+            RankingAuthorKey: ReadGuid("ranking_author_key")
         ));
 
         bool? ReadBool(string name)

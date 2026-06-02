@@ -118,6 +118,49 @@ public sealed class ResourceBudgetTests
         requestsText.Should().Contain("StringLength(1500, MinimumLength = 50)");
     }
 
+    // ── Comment ────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void CreateCommentEndpoint_EnforcesPerDeviceHourlyRateLimit()
+    {
+        var programText = ReadProgram();
+        var commentBlock = SliceEndpointBlock(
+            programText,
+            "app.MapPost(\"/api/v1/posts/{id:guid}/comments\"",
+            "app.MapDelete(\"/api/v1/comments/{id:guid}\"");
+
+        // Redis sliding-window rate limit (30 comments / device / hour)
+        commentBlock.Should().Contain("redis.IsAllowedAsync(");
+        commentBlock.Should().Contain("\"comment-create\"");
+        commentBlock.Should().Contain("limit: 30");
+        commentBlock.Should().Contain("TimeSpan.FromHours(1)");
+        // 429 response with readable error code
+        commentBlock.Should().Contain("RATE_LIMIT_COMMENTS");
+        commentBlock.Should().Contain("TooManyRequests(");
+    }
+
+    [Fact]
+    public void CreateCommentRequest_ContentHasLengthConstraints()
+    {
+        var requestsText = ReadRequests();
+        // Content: 5–500 chars
+        requestsText.Should().Contain("StringLength(500, MinimumLength = 5)");
+    }
+
+    [Fact]
+    public void CreateCommentEndpoint_RunsModerationBeforeInsert()
+    {
+        var programText = ReadProgram();
+        var commentBlock = SliceEndpointBlock(
+            programText,
+            "app.MapPost(\"/api/v1/posts/{id:guid}/comments\"",
+            "app.MapDelete(\"/api/v1/comments/{id:guid}\"");
+
+        // Content moderation pipeline must run before DB insert
+        commentBlock.Should().Contain("moderationService.Analyze(request.Content)");
+        commentBlock.Should().Contain("CONTENT_REJECTED");
+    }
+
     // ── Auth — Login ───────────────────────────────────────────────────────
 
     [Fact]
@@ -189,6 +232,42 @@ public sealed class ResourceBudgetTests
         resetBlock.Should().Contain("OTP_MAX_ATTEMPTS");
         // Expired OTP must be rejected
         resetBlock.Should().Contain("OTP_EXPIRED");
+    }
+
+    // ── Vote — Brigade Guard ───────────────────────────────────────────────
+
+    [Fact]
+    public void VoteEndpoint_InvokesInlineBrigadeGuardAfterUpsert()
+    {
+        var programText = ReadProgram();
+        var voteBlock = SliceEndpointBlock(
+            programText,
+            "app.MapPost(\"/api/v1/posts/{id:guid}/vote\"",
+            "app.MapDelete(\"/api/v1/posts/{id:guid}/vote\"");
+
+        // Brigade guard must be injected
+        voteBlock.Should().Contain("VoteBrigadeGuard brigadeGuard");
+        // CheckAndSuppressAsync must be called inside the vote mutation branch
+        voteBlock.Should().Contain("brigadeGuard.CheckAndSuppressAsync(");
+        // Result must be checked before MarkPostDirtyAsync
+        voteBlock.Should().Contain("brigadeResult.Detected");
+    }
+
+    [Fact]
+    public void VoteEndpoint_BrigadeDetectionSupportsHiddenContentGuardrail()
+    {
+        // Suppressed votes must NOT manipulate the public verdict; the trend score
+        // updater already filters is_quarantined=FALSE.  Verify the endpoint never
+        // calls MarkPostDirtyAsync when brigade is detected.
+        var programText = ReadProgram();
+        var voteBlock = SliceEndpointBlock(
+            programText,
+            "app.MapPost(\"/api/v1/posts/{id:guid}/vote\"",
+            "app.MapDelete(\"/api/v1/posts/{id:guid}/vote\"");
+
+        // Both trust-quarantine AND brigade-suppression must be checked
+        voteBlock.Should().Contain("!trustDecision.ShouldQuarantineVote && !brigadeResult.Detected",
+            "MarkPostDirtyAsync must be guarded by both trust and brigade result");
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────
