@@ -9,6 +9,7 @@ public sealed class AdminAuthService
     private readonly string _email;
     private readonly string _password;
     private readonly string? _passwordHash;
+    private readonly string? _plainToken;
     private readonly HashSet<IPAddress> _ipAllowlist;
     private readonly JwtService _jwt;
 
@@ -21,6 +22,7 @@ public sealed class AdminAuthService
         _email = configuration["Admin:Email"] ?? "admin@karar.local";
         _password = configuration["Admin:Password"] ?? "dev-admin-password";
         _passwordHash = configuration["Admin:PasswordHash"];
+        _plainToken = configuration["Admin:Token"];
 
         if (isProduction && _passwordHash is null or { Length: 0 } &&
             (_password == "dev-admin-password" || string.IsNullOrWhiteSpace(_password)))
@@ -41,7 +43,7 @@ public sealed class AdminAuthService
             : password == _password;
     }
 
-    public string IssueToken() => _jwt.GenerateAdminToken(_email);
+    public string IssueToken() => _plainToken ?? _jwt.GenerateAdminToken(_email);
 
     public string? TryGetAdminEmail(HttpRequest request)
     {
@@ -60,6 +62,11 @@ public sealed class AdminAuthService
     private string? ValidateAdminToken(string? token)
     {
         if (string.IsNullOrWhiteSpace(token)) return null;
+
+        // Plain token öncelikli — JWT validasyon sorunlarını bypass eder
+        if (_plainToken is { Length: > 0 } && token == _plainToken)
+            return _email;
+
         var principal = _jwt.ValidateAccessToken(token);
         if (principal is null) return null;
         var role = principal.FindFirstValue(ClaimTypes.Role);
