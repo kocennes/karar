@@ -285,7 +285,7 @@ builder.Services.AddCors(options =>
                 .Get<string[]>();
             var origins = configuredOrigins?.Length > 0
                 ? configuredOrigins
-                : ["https://karar.app", "https://www.karar.app", "https://admin.karar.app", "https://admin-karar.vercel.app", "https://judge-app-karar.web.app", "https://judge-app-karar.firebaseapp.com"];
+                : ["https://karar.app", "https://www.karar.app", "https://admin.karar.app", "https://admin-karar.vercel.app", "https://karar-admin.vercel.app", "https://karar-admin-git-main-enes-koc-karar-s-projects.vercel.app", "https://judge-app-karar.web.app", "https://judge-app-karar.firebaseapp.com"];
             policy.WithOrigins(origins).AllowAnyHeader().AllowAnyMethod();
         }
     });
