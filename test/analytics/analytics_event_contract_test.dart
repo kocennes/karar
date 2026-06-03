@@ -282,9 +282,11 @@ void main() {
 
   group('Feed source attribution chain', () {
     test('FeedScreen navigates with source=feed query parameter', () {
-      final text = File('lib/features/feed/feed_screen.dart').readAsStringSync();
+      final text =
+          File('lib/features/feed/feed_screen.dart').readAsStringSync();
       expect(text, contains("source=feed"),
-          reason: 'FeedScreen must tag post navigation with source=feed so that '
+          reason:
+              'FeedScreen must tag post navigation with source=feed so that '
               'verdict_viewed events can be attributed to feed in the north-star metric');
     });
   });
@@ -325,7 +327,8 @@ void main() {
   });
 
   group('PostDetailScreen — logPostViewed receives source', () {
-    test('logPostViewed passes widget.source to attribute views by surface', () {
+    test('logPostViewed passes widget.source to attribute views by surface',
+        () {
       final text = File('lib/features/post_detail/post_detail_screen.dart')
           .readAsStringSync();
       expect(text, contains("source: widget.source ?? 'feed'"),
@@ -340,12 +343,14 @@ void main() {
     test('app.dart tags post navigation from push with source=notification',
         () {
       final text = File('lib/app.dart').readAsStringSync();
-      expect(text, contains('_withNotificationSource'),
+      final helper = File('lib/core/notifications/notification_deep_link.dart')
+          .readAsStringSync();
+      expect(text, contains('NotificationDeepLink.fromPayload'),
           reason:
               '_onMessageOpened must normalize post deep links before navigation');
-      expect(text, contains("query['source'] = 'notification'"),
+      expect(helper, contains("query['source'] = 'notification'"),
           reason: 'post deep links opened from push must preserve source');
-      expect(text, contains('uri.replace(queryParameters: query)'),
+      expect(helper, contains('uri.replace(queryParameters: query)'),
           reason:
               'notification source tagging must preserve existing query params '
               'like commentId/ref without duplicate source keys');

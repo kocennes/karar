@@ -89,10 +89,12 @@ void main() {
     () {
       final text = File('lib/features/notifications/notifications_screen.dart')
           .readAsStringSync();
+      final helper = File('lib/core/notifications/notification_deep_link.dart')
+          .readAsStringSync();
 
       expect(text, contains('logNotificationOpened'));
-      expect(text, contains('source=notification'));
-      expect(text, contains('_withNotificationSource'));
+      expect(text, contains('NotificationDeepLink.fromNotificationItem'));
+      expect(helper, contains("query['source'] = 'notification'"));
     },
   );
 
@@ -105,7 +107,7 @@ void main() {
     expect(text, contains('Bildirim izni ver'));
     expect(text, contains('Bildirim sesini aç'));
     expect(text, contains('Sessize al'));
-    expect(text, contains("context.push('/settings')"));
+    expect(text, contains("context.push('/settings/notifications')"));
     expect(text, contains("mute(duration)"));
   });
 

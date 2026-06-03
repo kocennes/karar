@@ -31,6 +31,9 @@ void main() {
 
     expect(register, contains('isUsernameAvailable'));
     expect(router, contains('ChangeUsernameSheet.show'));
+    expect(router, contains('await _migrateGuestDataAndRefresh'));
+    expect(router, contains('await authService.migrateGuestData()'));
+    expect(router, contains('await authService.init()'));
     expect(homeShell, contains('LoginNudge.show'));
     expect(feedProvider, contains('checkForNewPosts'));
     expect(feed, contains('_NewPostsBanner'));

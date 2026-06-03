@@ -17,8 +17,39 @@ import '../../core/history/history_provider.dart';
 import '../feed/categories_provider.dart';
 import '../../shared/widgets/centered_content.dart';
 
-class SettingsScreen extends ConsumerWidget {
-  const SettingsScreen({super.key});
+enum SettingsInitialSection { top, notifications }
+
+class SettingsScreen extends ConsumerStatefulWidget {
+  const SettingsScreen({
+    super.key,
+    this.initialSection = SettingsInitialSection.top,
+  });
+
+  final SettingsInitialSection initialSection;
+
+  @override
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+  final _notificationsSectionKey = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialSection == SettingsInitialSection.notifications) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final context = _notificationsSectionKey.currentContext;
+        if (context == null) return;
+        Scrollable.ensureVisible(
+          context,
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeOutCubic,
+          alignment: 0.02,
+        );
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -51,7 +82,10 @@ class SettingsScreen extends ConsumerWidget {
             ),
 
             // ── Bildirimler ──────────────────────────────────────────────────────
-            const _SectionHeader('Bildirimler'),
+            KeyedSubtree(
+              key: _notificationsSectionKey,
+              child: const _SectionHeader('Bildirimler'),
+            ),
             _SettingsTile(
               icon: Icons.notifications_outlined,
               title: 'Push bildirimleri',

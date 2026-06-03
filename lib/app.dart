@@ -11,6 +11,7 @@ import 'core/auth/auth_service.dart';
 import 'core/config/remote_config_service.dart';
 import 'core/keyboard/app_shortcuts.dart';
 import 'core/providers.dart';
+import 'core/notifications/notification_deep_link.dart';
 import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/font_size_provider.dart';
@@ -224,10 +225,7 @@ class _KararAppState extends ConsumerState<KararApp>
     final body = message.notification?.body;
     if (title == null || !mounted) return;
 
-    final deepLink = message.data['deepLink'] as String?;
-    final destination = deepLink?.isNotEmpty == true
-        ? deepLink!
-        : _deepLinkFromLegacy(message.data);
+    final destination = NotificationDeepLink.fromPayload(message.data);
 
     final messenger = ScaffoldMessenger.of(context);
     messenger.clearSnackBars();
@@ -256,9 +254,7 @@ class _KararAppState extends ConsumerState<KararApp>
         behavior: SnackBarBehavior.floating,
         action: SnackBarAction(
           label: 'Gör',
-          onPressed: () => _router.push(
-            _withNotificationSource(destination),
-          ),
+          onPressed: () => _router.push(destination),
         ),
       ),
     );
@@ -266,31 +262,12 @@ class _KararAppState extends ConsumerState<KararApp>
 
   void _onMessageOpened(RemoteMessage message) {
     final type = message.data['type'] as String?;
-    final deepLink = message.data['deepLink'] as String?;
 
     ref.read(analyticsServiceProvider).logPushNotificationOpened(
           type: type ?? 'unknown',
         );
 
-    var destination = deepLink?.isNotEmpty == true
-        ? deepLink!
-        : _deepLinkFromLegacy(message.data);
-
-    _router.go(_withNotificationSource(destination));
-  }
-
-  String _withNotificationSource(String destination) {
-    if (!destination.startsWith('/posts/')) return destination;
-
-    final uri = Uri.parse(destination);
-    final query = Map<String, String>.from(uri.queryParameters);
-    query['source'] = 'notification';
-    return uri.replace(queryParameters: query).toString();
-  }
-
-  String _deepLinkFromLegacy(Map<String, dynamic> data) {
-    final postId = data['postId'] as String? ?? data['referenceId'] as String?;
-    return postId != null ? '/posts/$postId' : '/notifications';
+    _router.go(NotificationDeepLink.fromPayload(message.data));
   }
 
   @override

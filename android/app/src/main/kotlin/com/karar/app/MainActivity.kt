@@ -20,13 +20,13 @@ class MainActivity : FlutterActivity() {
             NotificationChannel("comments", "Yorumlar", NotificationManager.IMPORTANCE_DEFAULT).apply {
                 description = "Postlarına gelen yeni yorumlar"
             },
-            NotificationChannel("mentions", "Bahsedilmeler", NotificationManager.IMPORTANCE_DEFAULT).apply {
+            NotificationChannel("mentions", "Bahsedilmeler", NotificationManager.IMPORTANCE_HIGH).apply {
                 description = "Yanıtlar ve @etiketlemeler"
             },
-            NotificationChannel("milestones", "Kararlar", NotificationManager.IMPORTANCE_HIGH).apply {
+            NotificationChannel("milestones", "Kararlar", NotificationManager.IMPORTANCE_DEFAULT).apply {
                 description = "Topluluk karar verdi ve viral eşikler"
             },
-            NotificationChannel("viral", "Viral", NotificationManager.IMPORTANCE_DEFAULT).apply {
+            NotificationChannel("viral", "Viral", NotificationManager.IMPORTANCE_LOW).apply {
                 description = "Trend olan içerikler"
             },
             NotificationChannel("digest", "Özet", NotificationManager.IMPORTANCE_LOW).apply {

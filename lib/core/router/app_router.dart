@@ -168,6 +168,12 @@ GoRouter buildRouter(AppServices services) => GoRouter(
               builder: (_, __) => const SessionsScreen(),
             ),
             GoRoute(
+              path: 'notifications',
+              builder: (_, __) => const SettingsScreen(
+                initialSection: SettingsInitialSection.notifications,
+              ),
+            ),
+            GoRoute(
               path: 'feedback',
               builder: (_, __) => const FeedbackScreen(),
             ),
@@ -328,11 +334,11 @@ class _LoginWrapper extends ConsumerWidget {
     return LoginScreen(
       authService: authService,
       onSuccess: () async {
-        // G06: migrate any guest data silently (errors are non-fatal)
-        authService.migrateGuestData().catchError((_) {});
-
         final user = authService.currentUser;
-        if (user != null && user.isNewUser) {
+        final isNewUser = user?.isNewUser == true;
+        await _migrateGuestDataAndRefresh(authService);
+
+        if (authService.currentUser != null && isNewUser) {
           await ChangeUsernameSheet.show(
             context,
             authService: authService,
@@ -376,12 +382,11 @@ class _RegisterWrapperState extends ConsumerState<_RegisterWrapper> {
       authService: widget.authService,
       returnTo: widget.returnTo,
       onSuccess: () async {
-        // G06: migrate any guest data silently (errors are non-fatal)
-        widget.authService.migrateGuestData().catchError((_) {});
-
         final user = widget.authService.currentUser;
         final isNewUser = user?.isNewUser == true;
-        if (user != null && isNewUser) {
+        await _migrateGuestDataAndRefresh(widget.authService);
+
+        if (widget.authService.currentUser != null && isNewUser) {
           await ChangeUsernameSheet.show(
             context,
             authService: widget.authService,
@@ -422,11 +427,11 @@ class _VerifyEmailWrapper extends ConsumerWidget {
       authService: authService,
       email: email,
       onSuccess: () async {
-        // G06: migrate any guest data silently (errors are non-fatal)
-        authService.migrateGuestData().catchError((_) {});
-
         final user = authService.currentUser;
-        if (user != null && user.isNewUser) {
+        final isNewUser = user?.isNewUser == true;
+        await _migrateGuestDataAndRefresh(authService);
+
+        if (authService.currentUser != null && isNewUser) {
           await ChangeUsernameSheet.show(
             context,
             authService: authService,
@@ -447,6 +452,13 @@ class _VerifyEmailWrapper extends ConsumerWidget {
       },
     );
   }
+}
+
+Future<void> _migrateGuestDataAndRefresh(AuthService authService) async {
+  try {
+    await authService.migrateGuestData();
+    await authService.init();
+  } catch (_) {}
 }
 
 void _finishAuth(BuildContext context, String? returnTo) {

@@ -37,18 +37,37 @@ if (firebaseConfig.apiKey) {
 function targetUrlForNotification(data) {
   const deepLink = data.deepLink || data.deeplink;
   if (deepLink && deepLink.startsWith('/')) {
-    return deepLink;
+    return withNotificationSource(deepLink);
+  }
+
+  if (deepLink && deepLink.startsWith('karar://')) {
+    const parsed = new URL(deepLink);
+    const path = parsed.hostname
+      ? `/${parsed.hostname}${parsed.pathname}`
+      : parsed.pathname;
+    return withNotificationSource(`${path}${parsed.search}`);
   }
 
   const postId = data.postId || data.referenceId;
   if (postId) {
-    const suffix = data.commentId
-      ? `?commentId=${encodeURIComponent(data.commentId)}&source=notification`
-      : '?source=notification';
-    return `/posts/${encodeURIComponent(postId)}${suffix}`;
+    const target = `/posts/${encodeURIComponent(postId)}`;
+    const comment = data.commentId
+      ? `?commentId=${encodeURIComponent(data.commentId)}`
+      : '';
+    return withNotificationSource(`${target}${comment}`);
   }
 
   return '/notifications';
+}
+
+function withNotificationSource(target) {
+  const url = new URL(target, self.location.origin);
+  if (!url.pathname.startsWith('/posts/')) {
+    return `${url.pathname}${url.search}`;
+  }
+
+  url.searchParams.set('source', 'notification');
+  return `${url.pathname}${url.search}`;
 }
 
 self.addEventListener('notificationclick', (event) => {

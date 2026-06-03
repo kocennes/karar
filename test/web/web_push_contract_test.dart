@@ -63,10 +63,13 @@ void main() {
       expect(worker, contains("importScripts('/firebase-config.js')"));
       expect(worker, contains('messaging.onBackgroundMessage'));
       expect(worker, contains("data.deepLink || data.deeplink"));
+      expect(worker, contains("deepLink.startsWith('karar://')"));
       expect(worker, contains("return '/notifications';"));
+      expect(worker, contains("withNotificationSource"));
+      expect(
+          worker, contains("url.searchParams.set('source', 'notification')"));
       expect(worker, contains("client.navigate(target.href)"));
       expect(worker, contains("clients.openWindow(target.href)"));
-      expect(worker, contains("source=notification"));
     });
   });
 }

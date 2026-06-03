@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/providers.dart';
+import '../../core/notifications/notification_deep_link.dart';
 import '../../core/settings/preferences_provider.dart';
 import '../../core/theme/app_colors.dart';
 import '../../shared/models/post.dart';
@@ -148,7 +149,7 @@ class _NotificationControls extends ConsumerWidget {
             ActionChip(
               avatar: const Icon(Icons.tune_outlined, size: 18),
               label: const Text('Tercihleri yönet'),
-              onPressed: () => context.push('/settings'),
+              onPressed: () => context.push('/settings/notifications'),
             ),
           ],
         ),
@@ -604,25 +605,12 @@ class _NotificationTile extends ConsumerWidget {
   }
 
   void _navigate(BuildContext context, NotificationItem item) {
-    if (item.deepLink != null && item.deepLink!.isNotEmpty) {
-      context.push(_withNotificationSource(item.deepLink!));
-      return;
-    }
-    if (item.postId != null) {
-      context.push('/posts/${item.postId}?source=notification');
-    }
-  }
-
-  String _withNotificationSource(String link) {
-    final uri = Uri.tryParse(link);
-    if (uri == null ||
-        uri.pathSegments.isEmpty ||
-        uri.pathSegments.first != 'posts') {
-      return link;
-    }
-    final query = Map<String, String>.from(uri.queryParameters);
-    query.putIfAbsent('source', () => 'notification');
-    return uri.replace(queryParameters: query).toString();
+    context.push(
+      NotificationDeepLink.fromNotificationItem(
+        deepLink: item.deepLink,
+        postId: item.postId,
+      ),
+    );
   }
 
   IconData _iconForType(String type) => switch (type) {

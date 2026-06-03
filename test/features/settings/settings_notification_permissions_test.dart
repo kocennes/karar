@@ -30,4 +30,20 @@ void main() {
     expect(settings, contains('canOpenPlatformNotificationSettings'));
     expect(settings, contains('notifications.openSettings()'));
   });
+
+  test('notification settings route opens the notification section directly',
+      () {
+    final router = File('lib/core/router/app_router.dart').readAsStringSync();
+    final settings =
+        File('lib/features/settings/settings_screen.dart').readAsStringSync();
+    final notifications =
+        File('lib/features/notifications/notifications_screen.dart')
+            .readAsStringSync();
+
+    expect(router, contains("path: 'notifications'"));
+    expect(router, contains('SettingsInitialSection.notifications'));
+    expect(settings, contains('Scrollable.ensureVisible'));
+    expect(settings, contains('_notificationsSectionKey'));
+    expect(notifications, contains("context.push('/settings/notifications')"));
+  });
 }
