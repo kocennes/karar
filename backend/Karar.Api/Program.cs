@@ -6203,14 +6203,91 @@ app.MapGet("/api/v1/admin/users", async (
     string search = "",
     bool? banned = null,
     int page = 1,
-    int limit = 30
+    int limit = 30,
+    string? role = null,
+    string sortBy = "assigned_at",
+    string sortDir = "desc"
 ) =>
 {
     if (RequireAdmin(httpRequest, adminAuth) is { } unauthorized)
-    {
         return unauthorized;
+
+    // ── Role listing mode ─────────────────────────────────────────────────
+    // Returns users assigned to a specific admin role with RoleUser shape.
+    if (role is not null)
+    {
+        if (!new[] { "superadmin", "moderator", "analyst" }.Contains(role))
+            return Results.BadRequest(new { error = "INVALID_ROLE" });
+
+        page = Math.Max(1, page);
+        limit = Math.Clamp(limit, 1, 100);
+        var roleOffset = (page - 1) * limit;
+
+        var orderCol = sortBy switch
+        {
+            "username" => "u.username",
+            "action_count" => "action_count_30d",
+            _ => "ar.assigned_at",
+        };
+        var direction = string.Equals(sortDir, "asc", StringComparison.OrdinalIgnoreCase) ? "ASC" : "DESC";
+
+        await using var roleConn = await db.OpenConnectionAsync();
+
+        await using var roleCountCmd = new NpgsqlCommand(
+            "SELECT COUNT(*) FROM admin_roles ar JOIN users u ON u.id = ar.user_id WHERE ar.role = @role AND u.deleted_at IS NULL",
+            roleConn
+        );
+        roleCountCmd.Parameters.AddWithValue("role", role);
+        var roleTotal = Convert.ToInt32(await roleCountCmd.ExecuteScalarAsync());
+
+        await using var roleCmd = new NpgsqlCommand(
+            $"""
+            SELECT
+                u.id,
+                u.username,
+                u.email,
+                ar.role,
+                ar.assigned_at,
+                u.updated_at AS last_active_at,
+                COALESCE((
+                    SELECT COUNT(*)
+                    FROM admin_actions aa
+                    WHERE aa.admin_email = u.email
+                      AND aa.created_at >= NOW() - INTERVAL '30 days'
+                ), 0) AS action_count_30d
+            FROM admin_roles ar
+            JOIN users u ON u.id = ar.user_id
+            WHERE ar.role = @role
+              AND u.deleted_at IS NULL
+            ORDER BY {orderCol} {direction}
+            LIMIT @limit OFFSET @offset
+            """,
+            roleConn
+        );
+        roleCmd.Parameters.AddWithValue("role", role);
+        roleCmd.Parameters.AddWithValue("limit", limit);
+        roleCmd.Parameters.AddWithValue("offset", roleOffset);
+
+        var roleUsers = new List<object>();
+        await using var roleReader = await roleCmd.ExecuteReaderAsync();
+        while (await roleReader.ReadAsync())
+        {
+            roleUsers.Add(new
+            {
+                id = roleReader.GetGuid(0).ToString(),
+                username = roleReader.GetString(1),
+                email = roleReader.GetString(2),
+                role = roleReader.GetString(3),
+                assignedAt = roleReader.GetFieldValue<DateTimeOffset>(4),
+                lastActiveAt = roleReader.IsDBNull(5) ? (DateTimeOffset?)null : roleReader.GetFieldValue<DateTimeOffset>(5),
+                actionCount30d = Convert.ToInt32(roleReader.GetInt64(6)),
+            });
+        }
+
+        return Results.Ok(new { users = roleUsers, total = roleTotal, page, pageSize = limit });
     }
 
+    // ── Standard user listing / search mode ──────────────────────────────
     page = Math.Max(1, page);
     limit = Math.Clamp(limit, 1, 100);
     var offset = (page - 1) * limit;
@@ -6858,6 +6935,87 @@ app.MapPost("/api/v1/admin/users/bulk", async (
 
     await transaction.CommitAsync();
     return Results.Ok(new { successCount });
+});
+
+// ── ADMIN ROLE MANAGEMENT ────────────────────────────────────────────────
+
+app.MapPost("/api/v1/admin/users/{id:guid}/role", async (
+    Guid id,
+    AdminAssignRoleRequest request,
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth
+) =>
+{
+    var adminEmail = adminAuth.TryGetAdminEmail(httpRequest);
+    if (adminEmail is null) return Unauthorized();
+
+    if (ValidateRequest(request) is { } ve) return ve;
+
+    if (!new[] { "superadmin", "moderator", "analyst" }.Contains(request.Role))
+        return BadRequest("INVALID_ROLE", "Geçersiz rol.");
+
+    await using var connection = await db.OpenConnectionAsync();
+
+    await using var checkCmd = new NpgsqlCommand(
+        "SELECT id FROM users WHERE id = @id AND deleted_at IS NULL",
+        connection
+    );
+    checkCmd.Parameters.AddWithValue("id", id);
+    if (await checkCmd.ExecuteScalarAsync() is null) return Results.NotFound();
+
+    await using var upsertCmd = new NpgsqlCommand(
+        """
+        INSERT INTO admin_roles (user_id, role, assigned_by)
+        VALUES (@userId, @role, @assignedBy)
+        ON CONFLICT (user_id) DO UPDATE SET role = @role, assigned_at = NOW(), assigned_by = @assignedBy
+        """,
+        connection
+    );
+    upsertCmd.Parameters.AddWithValue("userId", id);
+    upsertCmd.Parameters.AddWithValue("role", request.Role);
+    upsertCmd.Parameters.AddWithValue("assignedBy", adminEmail);
+    await upsertCmd.ExecuteNonQueryAsync();
+
+    await using var auditCmd = new NpgsqlCommand(
+        "INSERT INTO admin_actions (admin_email, action, target_type, target_id, note) VALUES (@email, 'role_assigned', 'user', @targetId, @note)",
+        connection
+    );
+    auditCmd.Parameters.AddWithValue("email", adminEmail);
+    auditCmd.Parameters.AddWithValue("targetId", id);
+    auditCmd.Parameters.AddWithValue("note", (object)request.Role);
+    await auditCmd.ExecuteNonQueryAsync();
+
+    return Results.NoContent();
+});
+
+app.MapDelete("/api/v1/admin/users/{id:guid}/role", async (
+    Guid id,
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth
+) =>
+{
+    var adminEmail = adminAuth.TryGetAdminEmail(httpRequest);
+    if (adminEmail is null) return Unauthorized();
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var cmd = new NpgsqlCommand(
+        "DELETE FROM admin_roles WHERE user_id = @userId",
+        connection
+    );
+    cmd.Parameters.AddWithValue("userId", id);
+    await cmd.ExecuteNonQueryAsync();
+
+    await using var auditCmd = new NpgsqlCommand(
+        "INSERT INTO admin_actions (admin_email, action, target_type, target_id, note) VALUES (@email, 'role_revoked', 'user', @targetId, NULL)",
+        connection
+    );
+    auditCmd.Parameters.AddWithValue("email", adminEmail);
+    auditCmd.Parameters.AddWithValue("targetId", id);
+    await auditCmd.ExecuteNonQueryAsync();
+
+    return Results.NoContent();
 });
 
 // ── ADMIN MODERATION NOTIFY ──────────────────────────────────────────────
