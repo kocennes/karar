@@ -37,6 +37,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   DateTime? _selectedDob;
   String? _selectedGender;
+  bool _ageConfirmed = false;
   bool _acceptedPolicy = false;
 
   var _isLoading = false;
@@ -133,7 +134,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       context: context,
       initialDate: initialDate,
       firstDate: DateTime(now.year - 100),
-      lastDate: DateTime(now.year - 13), // 13+ limit
+      lastDate: DateTime(now.year - 18, now.month, now.day),
       helpText: 'Doğum Tarihini Seç',
     );
     if (picked != null && picked != _selectedDob) {
@@ -166,6 +167,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
+    if (!_ageConfirmed) {
+      setState(() => _error = '18 yaşında veya daha büyük olduğunu onaylamalısın.');
+      return;
+    }
+
     if (!_acceptedPolicy) {
       setState(
         () => _error =
@@ -187,6 +193,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         gender: _selectedGender!,
         acceptedTerms: _acceptedPolicy,
         acceptedCommunityGuidelines: _acceptedPolicy,
+        ageConfirmed: _ageConfirmed,
       );
       if (!mounted) return;
       context.go(_authLocation('/auth/verify-email'), extra: email);
@@ -410,6 +417,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         Validators.passwordsMatch(v, _passwordCtrl.text),
                   ),
                   const SizedBox(height: 16),
+                  CheckboxListTile(
+                    value: _ageConfirmed,
+                    onChanged: _isLoading
+                        ? null
+                        : (value) => setState(
+                              () => _ageConfirmed = value ?? false,
+                            ),
+                    controlAffinity: ListTileControlAffinity.leading,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text(
+                      '18 yaşında veya daha büyük olduğumu beyan ediyorum.',
+                    ),
+                  ),
                   CheckboxListTile(
                     value: _acceptedPolicy,
                     onChanged: _isLoading

@@ -228,7 +228,8 @@ public sealed record RegisterRequest(
     [Required] DateTime DateOfBirth,
     [Required] string Gender,
     bool AcceptedTerms = false,
-    bool AcceptedCommunityGuidelines = false
+    bool AcceptedCommunityGuidelines = false,
+    bool AgeConfirmed = false
 );
 
 public sealed record VerifyEmailRequest(

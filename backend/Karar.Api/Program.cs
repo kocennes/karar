@@ -8174,6 +8174,24 @@ app.MapPost("/api/v1/auth/register", async (
             "Kullanim kosullari ve topluluk kurallari kabul edilmeden hesap olusturulamaz.");
     }
 
+    if (!request.AgeConfirmed)
+    {
+        return BadRequest(
+            "AGE_CONFIRMATION_REQUIRED",
+            "18 yaş ve üzeri olduğunu onaylamadan hesap oluşturamazsın.");
+    }
+
+    var today = DateOnly.FromDateTime(DateTime.UtcNow);
+    var dob = DateOnly.FromDateTime(request.DateOfBirth);
+    var age = today.Year - dob.Year;
+    if (dob > today.AddYears(-age)) age--;
+    if (age < 18)
+    {
+        return BadRequest(
+            "UNDER_AGE",
+            "Karar'a katılmak için 18 yaşında veya daha büyük olmalısın.");
+    }
+
     await using var connection = await db.OpenConnectionAsync();
 
     // KullanÄ±cÄ± adÄ± veya e-posta daha Ã¶nce alÄ±nmÄ±ÅŸ mÄ±?
