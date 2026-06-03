@@ -109,11 +109,32 @@ public sealed class EmailService
         }
 
         if (!string.IsNullOrEmpty(_brevoApiKey))
-            await SendViaBrevoAsync(toEmail, subject, body);
-        else if (!string.IsNullOrEmpty(_resendApiKey))
-            await SendViaResendAsync(toEmail, subject, body);
-        else
-            await SendViaSmtpAsync(toEmail, subject, body);
+        {
+            try
+            {
+                await SendViaBrevoAsync(toEmail, subject, body);
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Brevo başarısız, Resend'e geçiliyor");
+            }
+        }
+
+        if (!string.IsNullOrEmpty(_resendApiKey))
+        {
+            try
+            {
+                await SendViaResendAsync(toEmail, subject, body);
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Resend başarısız, SMTP'ye geçiliyor");
+            }
+        }
+
+        await SendViaSmtpAsync(toEmail, subject, body);
     }
 
     private async Task SendViaBrevoAsync(string toEmail, string subject, string body)
