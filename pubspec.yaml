@@ -69,7 +69,7 @@ dependencies:
   share_plus: ^10.1.0
 
   # Connectivity
-  connectivity_plus: ^6.1.0
+  connectivity_plus: ^7.1.1
 
   # Settings
   app_settings: ^6.1.1
