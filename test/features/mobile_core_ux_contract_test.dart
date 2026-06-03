@@ -51,6 +51,7 @@ void main() {
     expect(createPostProvider, contains('webp'));
     expect(imagePicker, contains('uploadFailed'));
     expect(app, contains('didChangeAppLifecycleState'));
+    expect(app, contains('syncUnreadCount()'));
     expect(app, contains('didCrashOnPreviousExecution'));
     expect(search, contains("Tab(text: 'Kullanıcılar')"));
     expect(search, contains("context.push('/users/\${user.username}')"));

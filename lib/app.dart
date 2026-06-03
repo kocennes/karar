@@ -169,6 +169,7 @@ class _KararAppState extends ConsumerState<KararApp>
 
   void _onResumed() {
     widget.services.authService.init();
+    ref.read(notificationsProvider.notifier).syncUnreadCount();
 
     final bg = _backgroundedAt;
     if (bg != null &&
