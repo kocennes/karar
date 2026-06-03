@@ -3940,7 +3940,7 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
         "new" => "cm.created_at DESC",
         "old" => "cm.created_at ASC",
         "controversial" => "(cm.upvote_count + cm.downvote_count) DESC, ABS(cm.upvote_count - cm.downvote_count) ASC",
-        _ => $"{wilsonExpr} DESC, cm.created_at ASC"
+        _ => $"({wilsonExpr} - cm.quality_penalty) DESC, cm.created_at ASC"
     };
 
     await using var connection = await db.OpenConnectionAsync();
@@ -4169,9 +4169,25 @@ app.MapPost("/api/v1/posts/{id:guid}/comments", async (
     {
         return BadRequest(moderation.Code ?? "CONTENT_REJECTED", moderation.Message);
     }
+    var qualityPenalty = CommentQualityScorer.Score(request.Content);
 
     await using var connection = await db.OpenConnectionAsync();
     await using var transaction = await connection.BeginTransactionAsync();
+
+    // Check for duplicate comment on same post (Rule d)
+    await using var dupCmd = new NpgsqlCommand(
+        "SELECT EXISTS(SELECT 1 FROM comments WHERE post_id = @postId AND LOWER(TRIM(content)) = LOWER(TRIM(@content)) AND status = 'active')",
+        connection,
+        transaction
+    );
+    dupCmd.Parameters.AddWithValue("postId", id);
+    dupCmd.Parameters.AddWithValue("content", request.Content);
+    var isDuplicate = (bool)(await dupCmd.ExecuteScalarAsync() ?? false);
+    if (isDuplicate)
+    {
+        qualityPenalty = Math.Min(qualityPenalty + 0.8f, 1.0f);
+    }
+
     var effectiveDeviceId = deviceId ?? await GetUserDeviceIdAsync(connection, userId!.Value, transaction);
     if (effectiveDeviceId is null)
     {
@@ -4199,7 +4215,8 @@ app.MapPost("/api/v1/posts/{id:guid}/comments", async (
             status,
             moderation_reason,
             moderation_checked_at,
-            crisis_flagged
+            crisis_flagged,
+            quality_penalty
         )
         VALUES (
             @postId,
@@ -4210,7 +4227,8 @@ app.MapPost("/api/v1/posts/{id:guid}/comments", async (
             @status,
             @moderationReason,
             NOW(),
-            @crisisFlagged
+            @crisisFlagged,
+            @qualityPenalty
         )
         RETURNING id, status, created_at
         """,
@@ -4225,6 +4243,7 @@ app.MapPost("/api/v1/posts/{id:guid}/comments", async (
     command.Parameters.AddWithValue("status", moderation.Status);
     command.Parameters.AddWithValue("moderationReason", moderation.Message);
     command.Parameters.AddWithValue("crisisFlagged", moderation.IsCrisisFlagged);
+    command.Parameters.AddWithValue("qualityPenalty", qualityPenalty);
 
     await using var reader = await command.ExecuteReaderAsync();
     if (!await reader.ReadAsync())
