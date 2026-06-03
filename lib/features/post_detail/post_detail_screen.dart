@@ -1108,6 +1108,10 @@ class _PostContent extends ConsumerWidget {
           ],
         ),
         const SizedBox(height: 12),
+        if (post.contentSource != 'user') ...[
+          _ContentSourceBadge(source: post.contentSource),
+          const SizedBox(height: 8),
+        ],
         MentionText(
           text: post.title,
           style: Theme.of(context).textTheme.headlineSmall?.copyWith(
@@ -1638,6 +1642,32 @@ class _VoteButton extends StatelessWidget {
             duration: 500.ms,
             color: Colors.white.withValues(alpha: 0.2),
           ),
+    );
+  }
+}
+
+class _ContentSourceBadge extends StatelessWidget {
+  const _ContentSourceBadge({required this.source});
+
+  final String source;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = source == 'ai' ? 'AI destekli' : 'Sistem';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: Colors.orange.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: Colors.orange,
+        ),
+      ),
     );
   }
 }

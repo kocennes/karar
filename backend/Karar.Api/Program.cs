@@ -1431,7 +1431,7 @@ app.MapGet("/api/v1/posts", async (
                    p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                    v.vote_type, p.trend_score, p.created_at,
                    (p.device_id = @deviceId OR p.user_id = @userId),
-                   p.is_unlisted, p.is_anonymous, p.tags
+                   p.is_unlisted, p.is_anonymous, p.tags, p.content_source
             FROM posts p
             JOIN categories c ON c.id = p.category_id
             LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -1483,7 +1483,7 @@ app.MapGet("/api/v1/posts", async (
                    p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                    v.vote_type, p.trend_score, p.created_at,
                    (p.device_id = @deviceId OR p.user_id = @userId),
-                   p.is_unlisted, p.is_anonymous, p.tags
+                   p.is_unlisted, p.is_anonymous, p.tags, p.content_source
             FROM posts p
             JOIN categories c ON c.id = p.category_id
             LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -1630,7 +1630,7 @@ app.MapGet("/api/v1/posts/discover", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
-               p.is_unlisted, p.is_anonymous, p.tags
+               p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -1666,7 +1666,7 @@ app.MapGet("/api/v1/posts/discover", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
-               p.is_unlisted, p.is_anonymous, p.tags
+               p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -1703,7 +1703,7 @@ app.MapGet("/api/v1/posts/discover", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
-               p.is_unlisted, p.is_anonymous, p.tags
+               p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -1780,7 +1780,7 @@ app.MapGet("/api/v1/posts/discover", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
-               p.is_unlisted, p.is_anonymous, p.tags
+               p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -1887,7 +1887,7 @@ app.MapGet("/api/v1/posts/discover/feed", async (
                    p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                    v.vote_type, p.trend_score, p.created_at,
                    (p.device_id = @deviceId OR p.user_id = @userId) AS is_owner,
-                   p.is_unlisted, p.is_anonymous, p.tags,
+                   p.is_unlisted, p.is_anonymous, p.tags, p.content_source,
                    COALESCE(p.user_id, p.device_id) AS ranking_author_key,
                    ROW_NUMBER() OVER (
                        PARTITION BY COALESCE(p.user_id::text, p.device_id::text)
@@ -1993,7 +1993,7 @@ app.MapGet("/api/v1/posts/discover/feed", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId) AS is_owner,
-               p.is_unlisted, p.is_anonymous, p.tags,
+               p.is_unlisted, p.is_anonymous, p.tags, p.content_source,
                COALESCE(p.user_id, p.device_id) AS ranking_author_key
         FROM posts p
         JOIN categories c ON c.id = p.category_id
@@ -2170,7 +2170,7 @@ app.MapGet("/api/v1/posts/discover/feed", async (
                    p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                    v.vote_type, p.trend_score, p.created_at,
                    (p.device_id = @deviceId OR p.user_id = @userId) AS is_owner,
-                   p.is_unlisted, p.is_anonymous, p.tags,
+                   p.is_unlisted, p.is_anonymous, p.tags, p.content_source,
                    COALESCE(p.user_id, p.device_id) AS ranking_author_key
             FROM posts p
             JOIN categories c ON c.id = p.category_id
@@ -2363,7 +2363,7 @@ app.MapGet("/api/v1/posts/{id:guid}/similar", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
-               p.is_unlisted, p.is_anonymous, p.tags
+               p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         CROSS JOIN target t
@@ -2442,7 +2442,7 @@ app.MapGet("/api/v1/posts/weekly-featured", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
-               p.is_unlisted, p.is_anonymous, p.tags
+               p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -2482,7 +2482,7 @@ app.MapGet("/api/v1/posts/today", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
-               p.is_unlisted, p.is_anonymous, p.tags
+               p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -2531,7 +2531,7 @@ app.MapGet("/api/v1/posts/trending/city", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
-               p.is_unlisted, p.is_anonymous, p.tags
+               p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -2846,7 +2846,7 @@ app.MapGet("/api/v1/posts/{id:guid}", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
-               p.is_unlisted, p.is_anonymous, p.tags, p.ai_summary
+               p.is_unlisted, p.is_anonymous, p.tags, p.ai_summary, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -2974,7 +2974,7 @@ app.MapPost("/api/v1/posts/{id:guid}/ai-summary", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
-               p.is_unlisted, p.is_anonymous, p.tags, p.ai_summary
+               p.is_unlisted, p.is_anonymous, p.tags, p.ai_summary, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -10577,7 +10577,7 @@ app.MapGet("/api/v1/users/me/saved", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
-               p.is_unlisted, p.is_anonymous, p.tags
+               p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM saved_posts sp
         JOIN posts p ON p.id = sp.post_id
         JOIN categories c ON c.id = p.category_id
@@ -14109,6 +14109,7 @@ static async Task<IReadOnlyList<PostDto>> ReadPostsAsync(NpgsqlCommand command)
         Guid? authorId = ReadGuid("author_id");
         var tags = ReadStringArray("tags");
         var aiSummary = ReadString("ai_summary");
+        var contentSource = ReadString("content_source") ?? "user";
         var status = ReadString("status");
         var moderationReason = ReadString("moderation_reason");
 
@@ -14144,6 +14145,7 @@ static async Task<IReadOnlyList<PostDto>> ReadPostsAsync(NpgsqlCommand command)
             IsClosed: isClosed,
             Tags: tags,
             AiSummary: aiSummary,
+            ContentSource: contentSource,
             RankingAuthorKey: ReadGuid("ranking_author_key")
         ));
 

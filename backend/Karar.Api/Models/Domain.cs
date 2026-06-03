@@ -38,6 +38,7 @@ public sealed record PostDto(
     string? RankingLabel = null,
     IReadOnlyList<string>? Tags = null,
     string? AiSummary = null,
+    string ContentSource = "user",
     [property: JsonIgnore]
     Guid? RankingAuthorKey = null
 );

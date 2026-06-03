@@ -164,6 +164,10 @@ class _PostCardState extends ConsumerState<PostCard> {
                         ),
                       ),
                     ],
+                    if (post.contentSource != 'user') ...[
+                      const SizedBox(height: 6),
+                      _ContentSourceBadge(source: post.contentSource),
+                    ],
                     const SizedBox(height: 8),
                     if (isSensitive)
                       Container(
@@ -825,6 +829,32 @@ class _TagChip extends StatelessWidget {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ContentSourceBadge extends StatelessWidget {
+  const _ContentSourceBadge({required this.source});
+
+  final String source;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = source == 'ai' ? 'AI destekli' : 'Sistem';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.orange.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+          color: Colors.orange,
         ),
       ),
     );

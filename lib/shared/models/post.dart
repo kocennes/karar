@@ -345,6 +345,7 @@ class Post {
     this.isAnonymous = false,
     this.rankingReason,
     this.rankingLabel,
+    this.contentSource = 'user',
   });
 
   final String id;
@@ -378,6 +379,7 @@ class Post {
   final bool isAnonymous;
   final String? rankingReason;
   final String? rankingLabel;
+  final String contentSource;
 
   int get totalVotes => voteCountHakli + voteCountHaksiz;
 
@@ -445,6 +447,7 @@ class Post {
     bool? isAnonymous,
     String? rankingReason,
     String? rankingLabel,
+    String? contentSource,
   }) {
     return Post(
       id: id,
@@ -477,6 +480,7 @@ class Post {
       isAnonymous: isAnonymous ?? this.isAnonymous,
       rankingReason: rankingReason ?? this.rankingReason,
       rankingLabel: rankingLabel ?? this.rankingLabel,
+      contentSource: contentSource ?? this.contentSource,
     );
   }
 }

@@ -702,6 +702,7 @@ class PostRepository {
       isAnonymous: json['isAnonymous'] as bool? ?? false,
       rankingReason: json['ranking_reason'] as String?,
       rankingLabel: json['ranking_label'] as String?,
+      contentSource: json['contentSource'] as String? ?? 'user',
     );
   }
 
