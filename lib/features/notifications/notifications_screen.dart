@@ -247,6 +247,7 @@ class _WebPushBanner extends ConsumerStatefulWidget {
 class _WebPushBannerState extends ConsumerState<_WebPushBanner> {
   AuthorizationStatus? _status;
   bool _isRequesting = false;
+  bool _onCooldown = false;
 
   @override
   void initState() {
@@ -255,13 +256,29 @@ class _WebPushBannerState extends ConsumerState<_WebPushBanner> {
   }
 
   Future<void> _checkStatus() async {
-    final settings = await FirebaseMessaging.instance.getNotificationSettings();
+    final notifService = ref.read(notificationServiceProvider);
+    final results = await Future.wait([
+      FirebaseMessaging.instance.getNotificationSettings(),
+      notifService.isSoftPromptOnCooldown(),
+    ]);
     if (!mounted) return;
-    setState(() => _status = settings.authorizationStatus);
+    final settings = results[0] as NotificationSettings;
+    final onCooldown = results[1] as bool;
+    setState(() {
+      _status = settings.authorizationStatus;
+      _onCooldown = onCooldown;
+    });
   }
 
   Future<void> _requestPermission() async {
     final notifService = ref.read(notificationServiceProvider);
+    final analytics = ref.read(analyticsServiceProvider);
+
+    await analytics.logNotificationPermissionPromptShown(
+      surface: 'web_notifications_tab',
+      trigger: 'manual_tap',
+    );
+
     final shouldRequest = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -288,7 +305,15 @@ class _WebPushBannerState extends ConsumerState<_WebPushBanner> {
       ),
     );
 
-    if (shouldRequest != true || !mounted) return;
+    if (!mounted) return;
+
+    if (shouldRequest != true) {
+      await notifService.recordSoftPromptDismissed();
+      await analytics.logNotificationPermissionDenied(source: 'soft_dismiss');
+      setState(() => _onCooldown = true);
+      return;
+    }
+
     setState(() => _isRequesting = true);
     await notifService.maybeRequestPermission(force: true);
     if (!mounted) return;
@@ -302,6 +327,9 @@ class _WebPushBannerState extends ConsumerState<_WebPushBanner> {
     if (status == null) return const SizedBox.shrink();
     if (status == AuthorizationStatus.authorized ||
         status == AuthorizationStatus.provisional) {
+      return const SizedBox.shrink();
+    }
+    if (_onCooldown && status != AuthorizationStatus.denied) {
       return const SizedBox.shrink();
     }
 

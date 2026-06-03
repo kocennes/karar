@@ -299,6 +299,16 @@ class AnalyticsService {
     );
   }
 
+  Future<void> logNotificationPermissionPromptShown({
+    String surface = 'unknown',
+    String trigger = 'unknown',
+  }) async {
+    await _a?.logEvent(
+      name: 'notification_permission_prompt_shown',
+      parameters: {'surface': surface, 'trigger': trigger},
+    );
+  }
+
   Future<void> logNotificationPermissionGranted(
       {String source = 'unknown'}) async {
     await _a?.logEvent(

@@ -16,6 +16,8 @@ class NotificationService {
 
   static const _kInteractionsKey = 'notif_interactions';
   static const _kDecidedKey = 'notif_permission_decided';
+  static const _kSoftPromptDismissedKey = 'notif_soft_prompt_dismissed_at';
+  static const _kSoftPromptCooldownDays = 7;
   static const _kThreshold = 3;
 
   Future<void> init() async {
@@ -57,6 +59,20 @@ class NotificationService {
   Future<bool> isPermissionDecided() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_kDecidedKey) == true;
+  }
+
+  Future<bool> isSoftPromptOnCooldown() async {
+    final prefs = await SharedPreferences.getInstance();
+    final ms = prefs.getInt(_kSoftPromptDismissedKey);
+    if (ms == null) return false;
+    final dismissed = DateTime.fromMillisecondsSinceEpoch(ms);
+    return DateTime.now().difference(dismissed).inDays < _kSoftPromptCooldownDays;
+  }
+
+  Future<void> recordSoftPromptDismissed() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(
+        _kSoftPromptDismissedKey, DateTime.now().millisecondsSinceEpoch);
   }
 
   Future<void> markPermissionDecided() async => _markDecided();

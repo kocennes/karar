@@ -111,6 +111,27 @@ void main() {
     expect(text, contains("mute(duration)"));
   });
 
+  test('web push banner: soft prompt cooldown and analytics wired', () {
+    final text = File('lib/features/notifications/notifications_screen.dart')
+        .readAsStringSync();
+    final service =
+        File('lib/core/notifications/notification_service.dart').readAsStringSync();
+    final analytics =
+        File('lib/core/analytics/analytics_service.dart').readAsStringSync();
+
+    expect(service, contains('isSoftPromptOnCooldown'));
+    expect(service, contains('recordSoftPromptDismissed'));
+    expect(service, contains('_kSoftPromptCooldownDays'));
+    expect(analytics, contains('notification_permission_prompt_shown'));
+    expect(analytics, contains("'surface'"));
+    expect(analytics, contains("'trigger'"));
+    expect(text, contains('logNotificationPermissionPromptShown'));
+    expect(text, contains('isSoftPromptOnCooldown'));
+    expect(text, contains('recordSoftPromptDismissed'));
+    expect(text, contains("source: 'soft_dismiss'"));
+    expect(text, contains('_onCooldown'));
+  });
+
   testWidgets(
     'NotificationsScreen: all notification types visible in in-app center',
     (tester) async {
