@@ -41,8 +41,9 @@ class KararLogo extends StatelessWidget {
     };
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final boxColor =
-        isDark ? AppColors.darkSurfaceVariant : AppColors.surfaceVariant;
+    final boxColor = isDark
+        ? AppColors.darkSurfaceContainerHighest
+        : AppColors.surfaceContainerHighest;
     final boxBorder = isDark ? AppColors.darkBorder : AppColors.border;
     final scaleColor =
         isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;

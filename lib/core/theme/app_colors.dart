@@ -18,7 +18,7 @@ class AppColors {
   // Light mode.
   static const background = Color(0xFFF8F9FA);
   static const surface = Color(0xFFFFFFFF);
-  static const surfaceVariant = Color(0xFFF0F2F5);
+  static const surfaceContainerHighest = Color(0xFFF0F2F5);
   static const border = Color(0xFFE1E4E8);
   static const textPrimary = Color(0xFF0D0D0D);
   static const textSecondary = Color(0xFF4B5563);
@@ -32,7 +32,8 @@ class AppColors {
   // Text: off-white to avoid eye strain, not pure white.
   static const darkBackground = Color(0xFF111827); // Tailwind gray-900
   static const darkSurface = Color(0xFF1F2937); // Tailwind gray-800
-  static const darkSurfaceVariant = Color(0xFF2D3748); // Tailwind gray-750
+  static const darkSurfaceContainerHighest =
+      Color(0xFF2D3748); // Tailwind gray-750
   static const darkBorder = Color(0xFF374151); // Tailwind gray-700
   static const darkTextPrimary = Color(0xFFE8EAED); // Off-white, no halation
   static const darkTextSecondary = Color(0xFF9CA3AF); // Tailwind gray-400

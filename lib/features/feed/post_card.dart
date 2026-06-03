@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -468,7 +469,7 @@ class _FeedVoteButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final foreground = selected ? Colors.white : color;
-    return SizedBox(
+    final button = SizedBox(
       height: 44,
       child: OutlinedButton.icon(
         onPressed: onPressed,
@@ -490,6 +491,20 @@ class _FeedVoteButton extends StatelessWidget {
         ),
       ),
     );
+
+    if (!selected) {
+      return button;
+    }
+
+    return button
+        .animate(key: ValueKey(selected))
+        .scale(
+          begin: const Offset(0.8, 0.8),
+          end: const Offset(1.0, 1.0),
+          duration: 220.ms,
+          curve: Curves.elasticOut,
+        )
+        .fadeIn(duration: 120.ms);
   }
 }
 

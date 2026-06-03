@@ -6,7 +6,11 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 Write-Host "Building Flutter web (production)..." -ForegroundColor Cyan
-flutter build web --dart-define=USE_REMOTE_API=true --release
+flutter build web `
+  --release `
+  --no-wasm-dry-run `
+  --dart-define=USE_REMOTE_API=true `
+  --dart-define=API_BASE_URL=https://karar-oq5t.onrender.com
 
 Write-Host "Deploying to Firebase Hosting..." -ForegroundColor Cyan
 firebase deploy --only hosting:app

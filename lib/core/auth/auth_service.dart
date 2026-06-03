@@ -209,18 +209,28 @@ class AuthService {
   }
 
   Future<void> logout({LogoutReason reason = LogoutReason.manual}) async {
-    await _onBeforeLogout?.call();
-    final refreshToken = await _storage.readRefreshToken();
-    if (refreshToken != null && reason == LogoutReason.manual) {
-      try {
+    try {
+      await _onBeforeLogout?.call();
+    } catch (_) {}
+
+    try {
+      final refreshToken = await _storage.readRefreshToken();
+      if (refreshToken != null && reason == LogoutReason.manual) {
         await _apiClient.postJson<void>(
           ApiEndpoints.authLogout,
           body: {'refreshToken': refreshToken},
         );
-      } catch (_) {}
-    }
-    await _googleSignIn.signOut();
-    await FirebaseAuth.instance.signOut();
+      }
+    } catch (_) {}
+
+    try {
+      await _googleSignIn.signOut();
+    } catch (_) {}
+
+    try {
+      await FirebaseAuth.instance.signOut();
+    } catch (_) {}
+
     await _storage.clearAuthTokens();
     _currentUser = null;
     TabAuthSync.notifyLoggedOut(); // W36: diğer sekmelere sinyal gönder

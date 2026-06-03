@@ -62,7 +62,6 @@ class WeeklyStatsScreen extends ConsumerWidget {
   }
 }
 
-
 class _StatsBody extends StatelessWidget {
   const _StatsBody({required this.stats});
   final WeeklyStats stats;
@@ -131,8 +130,7 @@ class _WeekHeader extends StatelessWidget {
         ),
         if (stats.streak > 0)
           Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 colors: [
@@ -227,7 +225,9 @@ class _StatCard extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bg = highlighted
         ? color.withValues(alpha: 0.12)
-        : (isDark ? AppColors.darkSurfaceVariant : AppColors.surfaceVariant);
+        : (isDark
+            ? AppColors.darkSurfaceContainerHighest
+            : AppColors.surfaceContainerHighest);
 
     return Container(
       padding: const EdgeInsets.all(14),

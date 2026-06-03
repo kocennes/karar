@@ -101,7 +101,6 @@ class KarmaHistoryScreen extends ConsumerWidget {
   }
 }
 
-
 class _KarmaStatsRow extends StatelessWidget {
   const _KarmaStatsRow({
     required this.total,
@@ -170,7 +169,9 @@ class _StatCard extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bg = highlighted
         ? color.withValues(alpha: 0.12)
-        : (isDark ? AppColors.darkSurfaceVariant : AppColors.surfaceVariant);
+        : (isDark
+            ? AppColors.darkSurfaceContainerHighest
+            : AppColors.surfaceContainerHighest);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),

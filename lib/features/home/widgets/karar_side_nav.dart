@@ -130,7 +130,9 @@ class _LogoArea extends StatelessWidget {
         cursor: SystemMouseCursors.click,
         child: GestureDetector(
           onTap: onTap,
-          child: collapsed ? _iconOnly(context) : const KararLogo(size: LogoSize.medium),
+          child: collapsed
+              ? _iconOnly(context)
+              : const KararLogo(size: LogoSize.medium),
         ),
       ),
     );
@@ -138,9 +140,12 @@ class _LogoArea extends StatelessWidget {
 
   Widget _iconOnly(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final boxColor = isDark ? AppColors.darkSurfaceVariant : AppColors.surfaceVariant;
+    final boxColor = isDark
+        ? AppColors.darkSurfaceContainerHighest
+        : AppColors.surfaceContainerHighest;
     final boxBorder = isDark ? AppColors.darkBorder : AppColors.border;
-    final iconColor = isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
+    final iconColor =
+        isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
     final hakliColor = isDark ? AppColors.darkHakli : AppColors.hakli;
     final haksizColor = isDark ? AppColors.darkHaksiz : AppColors.haksiz;
 
@@ -174,8 +179,10 @@ class _LogoArea extends StatelessWidget {
             child: Container(
               width: badge,
               height: badge,
-              decoration: BoxDecoration(color: hakliColor, shape: BoxShape.circle),
-              child: Center(child: Icon(Icons.check, size: 7, color: Colors.white)),
+              decoration:
+                  BoxDecoration(color: hakliColor, shape: BoxShape.circle),
+              child: Center(
+                  child: Icon(Icons.check, size: 7, color: Colors.white)),
             ),
           ),
           Positioned(
@@ -184,8 +191,10 @@ class _LogoArea extends StatelessWidget {
             child: Container(
               width: badge,
               height: badge,
-              decoration: BoxDecoration(color: haksizColor, shape: BoxShape.circle),
-              child: Center(child: Icon(Icons.close, size: 7, color: Colors.white)),
+              decoration:
+                  BoxDecoration(color: haksizColor, shape: BoxShape.circle),
+              child: Center(
+                  child: Icon(Icons.close, size: 7, color: Colors.white)),
             ),
           ),
         ],
@@ -392,7 +401,8 @@ class _MoreTileState extends ConsumerState<_MoreTile> {
             ),
             PopupMenuItem(
               value: 'register',
-              child: _PopupItem(icon: Icons.person_add_outlined, label: 'Kayıt Ol'),
+              child: _PopupItem(
+                  icon: Icons.person_add_outlined, label: 'Kayıt Ol'),
             ),
           ],
         ],
@@ -421,6 +431,7 @@ class _MoreTileState extends ConsumerState<_MoreTile> {
       case 'logout':
         final authService = ref.read(authServiceProvider);
         await authService.logout();
+        ref.read(currentUserProvider.notifier).state = null;
         if (context.mounted) context.go('/');
       case 'login':
         context.push('/auth/login');

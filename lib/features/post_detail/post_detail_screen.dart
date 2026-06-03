@@ -74,7 +74,9 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
       ref.read(sessionTrackerProvider).incrementPostViewed();
       ref.read(postRepositoryProvider).recordView(widget.postId);
 
-      ref.read(judgmentLoopTrackerProvider).onImpression(widget.postId, widget.source ?? 'feed');
+      ref
+          .read(judgmentLoopTrackerProvider)
+          .onImpression(widget.postId, widget.source ?? 'feed');
 
       if (widget.post != null) {
         ref
@@ -108,7 +110,9 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
       _meaningfulDwellTimer = Timer(const Duration(seconds: 5), () {
         if (!mounted) return;
         final elapsed = _dwellStopwatch.elapsed.inSeconds;
-        ref.read(judgmentLoopTrackerProvider).onMeaningfulDwell(widget.postId, elapsed);
+        ref
+            .read(judgmentLoopTrackerProvider)
+            .onMeaningfulDwell(widget.postId, elapsed);
         ref.read(analyticsServiceProvider).logMeaningfulDwell(
               postId: widget.postId,
               dwellSeconds: elapsed,
@@ -1173,7 +1177,7 @@ class _PostContent extends ConsumerWidget {
         ],
         if (balancedRationale != null &&
             balancedRationale?.id != topRationale?.id &&
-            post.voteCountTotal >= 40) ...[
+            post.totalVotes >= 40) ...[
           const SizedBox(height: 16),
           _BalancedRationaleCard(comment: balancedRationale!),
         ],

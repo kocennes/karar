@@ -96,12 +96,15 @@ void main() {
   });
 
   group('Ghost-town fallback — UI', () {
+    Future<void> pumpFeed(WidgetTester tester, FeedState state) async {
+      await tester.pumpWidget(_app(state));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+    }
+
     testWidgets('fallback banner is visible when isFallback is true',
         (tester) async {
-      await tester.pumpWidget(
-        _app(FeedState(posts: samplePosts, isFallback: true)),
-      );
-      await tester.pump();
+      await pumpFeed(tester, FeedState(posts: samplePosts, isFallback: true));
 
       expect(
         find.text('Bu akışta henüz paylaşım yok — popüler gönderiler'),
@@ -111,10 +114,7 @@ void main() {
 
     testWidgets('fallback banner is hidden when isFallback is false',
         (tester) async {
-      await tester.pumpWidget(
-        _app(FeedState(posts: samplePosts, isFallback: false)),
-      );
-      await tester.pump();
+      await pumpFeed(tester, FeedState(posts: samplePosts, isFallback: false));
 
       expect(
         find.text('Bu akışta henüz paylaşım yok — popüler gönderiler'),
@@ -124,10 +124,7 @@ void main() {
 
     testWidgets('posts are still rendered when fallback is active',
         (tester) async {
-      await tester.pumpWidget(
-        _app(FeedState(posts: samplePosts, isFallback: true)),
-      );
-      await tester.pump();
+      await pumpFeed(tester, FeedState(posts: samplePosts, isFallback: true));
 
       expect(find.text(samplePosts.first.title), findsOneWidget);
     });
@@ -137,10 +134,7 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(400, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
-      await tester.pumpWidget(
-        _app(FeedState(isFallback: false)),
-      );
-      await tester.pump();
+      await pumpFeed(tester, FeedState(isFallback: false));
 
       expect(find.text('Henüz paylaşım yok'), findsOneWidget);
     });

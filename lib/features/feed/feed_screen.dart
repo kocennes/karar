@@ -2,6 +2,7 @@ import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart' hide Category;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -499,23 +500,30 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
                                   .watch(followedCategoriesProvider)
                                   .contains(category.id);
 
-                              return GestureDetector(
-                                onLongPress: () =>
-                                    _showCategoryOptions(category),
-                                child: ChoiceChip(
-                                  label: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Text(category.name),
-                                      if (isFollowed && category.id != 0) ...[
-                                        const SizedBox(width: 4),
-                                        const Icon(Icons.star, size: 12),
+                              final isSelected =
+                                  _selectedCategoryId == category.id;
+                              return AnimatedScale(
+                                scale: isSelected ? 1.06 : 1.0,
+                                duration: const Duration(milliseconds: 100),
+                                curve: Curves.easeOut,
+                                child: GestureDetector(
+                                  onLongPress: () =>
+                                      _showCategoryOptions(category),
+                                  child: ChoiceChip(
+                                    label: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(category.name),
+                                        if (isFollowed && category.id != 0) ...[
+                                          const SizedBox(width: 4),
+                                          const Icon(Icons.star, size: 12),
+                                        ],
                                       ],
-                                    ],
+                                    ),
+                                    selected: isSelected,
+                                    onSelected: (_) =>
+                                        _onCategoryChanged(category.id),
                                   ),
-                                  selected: _selectedCategoryId == category.id,
-                                  onSelected: (_) =>
-                                      _onCategoryChanged(category.id),
                                 ),
                               );
                             },
@@ -776,7 +784,17 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
               onVote: (voteType) => _voteFromFeed(post, voteType),
               onTap: () =>
                   context.push('/posts/${post.id}?source=feed', extra: post),
-            ),
+            )
+                .animate(
+                  delay: Duration(milliseconds: (40 * index.clamp(0, 5))),
+                )
+                .slideY(
+                  begin: 0.05,
+                  end: 0,
+                  duration: 250.ms,
+                  curve: Curves.easeOut,
+                )
+                .fadeIn(duration: 250.ms),
           );
         },
       ),

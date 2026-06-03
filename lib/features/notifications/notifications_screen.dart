@@ -392,7 +392,8 @@ class _WebPushBannerState extends ConsumerState<_WebPushBanner> {
                 onPressed: _isRequesting ? null : _requestPermission,
                 style: FilledButton.styleFrom(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                  visualDensity: VisualDensity.compact,
+                  minimumSize: const Size(64, 36),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
                 child: _isRequesting
                     ? const SizedBox(

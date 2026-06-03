@@ -95,8 +95,34 @@ void main() {
     expect(result.rankingLabel, 'category_trending',
         reason: 'envelope-level rankingLabel must be surfaced on FeedResponse');
     expect(result.hasMore, isTrue,
-        reason: 'hasMore must reflect pagination.hasNext from the API response');
+        reason:
+            'hasMore must reflect pagination.hasNext from the API response');
     expect(result.posts, hasLength(1));
+  });
+
+  test('PostRepository maps product trending sort to backend hot sort',
+      () async {
+    late RequestOptions request;
+    final repository = PostRepository(
+      apiClient: ApiClient(
+        dio: _mockDio(
+          {
+            'posts': <Object?>[],
+            'pagination': {
+              'page': 1,
+              'limit': 20,
+              'total': 0,
+              'hasNext': false,
+            },
+          },
+          onRequest: (options) => request = options,
+        ),
+      ),
+    );
+
+    await repository.fetchFeed(sort: 'trending');
+
+    expect(request.queryParameters['sort'], 'hot');
   });
 
   test('PostRepository parses categories envelope from API contract', () async {
@@ -203,12 +229,15 @@ void main() {
     final result = await repository.fetchFeed();
 
     expect(result.posts.single.rankingReason, 'rising',
-        reason: 'ranking_reason (snake_case) from PostDto must be parsed into Post.rankingReason');
+        reason:
+            'ranking_reason (snake_case) from PostDto must be parsed into Post.rankingReason');
     expect(result.posts.single.rankingLabel, 'trending',
-        reason: 'ranking_label (snake_case) from PostDto must be parsed into Post.rankingLabel');
+        reason:
+            'ranking_label (snake_case) from PostDto must be parsed into Post.rankingLabel');
   });
 
-  test('DiscoverFeedItem rankingReason accepts all valid server values', () async {
+  test('DiscoverFeedItem rankingReason accepts all valid server values',
+      () async {
     const validReasons = ['rising', 'controversial', 'fresh', 'trending'];
 
     for (final reason in validReasons) {

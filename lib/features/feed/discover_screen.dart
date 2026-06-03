@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -203,9 +204,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen>
         actions: [
           IconButton(
             icon: Icon(
-              _showSections
-                  ? Icons.explore_rounded
-                  : Icons.dashboard_rounded,
+              _showSections ? Icons.explore_rounded : Icons.dashboard_rounded,
             ),
             tooltip: _showSections ? 'Akış' : 'Bölümler',
             onPressed: _toggleSections,
@@ -215,131 +214,136 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen>
       body: _showSections
           ? const _DiscoverSectionsView()
           : feedAsync.when(
-        data: (state) {
-          if (state.items.isEmpty) {
-            return Center(
-              child: EmptyState(
-                message:
-                    'Şu an keşfedilecek içerik yok.\nBiraz sonra tekrar dene.',
-                icon: Icons.explore_outlined,
-                action: () => ref.invalidate(discoverFeedProvider),
-                actionLabel: 'Yenile',
-              ),
-            );
-          }
-          return PageView.builder(
-            controller: _ctrl,
-            scrollDirection: Axis.vertical,
-            itemCount: state.items.length + (state.isLoadingMore ? 1 : 0),
-            itemBuilder: (context, index) {
-              if (index >= state.items.length) {
-                return const Center(child: CircularProgressIndicator());
-              }
-              final item = state.items[index];
-              return _DiscoverCard(
-                key: ValueKey(item.post.id),
-                item: item,
-                index: index,
-                total: state.items.length,
-                onVote: (voteType) => ref
-                    .read(discoverFeedProvider.notifier)
-                    .vote(item.post.id, voteType,
-                        impressionToken: item.impressionToken),
-                onNotInterested: () {
-                  ref
-                      .read(discoverFeedProvider.notifier)
-                      .removeItem(item.post.id);
-                  if (_activePostId == item.post.id) {
-                    _activePostId = null;
-                  }
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (!mounted) return;
-                    final nextItems =
-                        ref.read(discoverFeedProvider).valueOrNull?.items ?? [];
-                    if (nextItems.isEmpty) return;
-                    if (_currentIndex >= nextItems.length) {
-                      _currentIndex = nextItems.length - 1;
-                    }
-                    _handlePageEnter(_currentIndex, nextItems);
-                  });
-                  ref.read(postRepositoryProvider).sendDiscoverEvent(
-                        postId: item.post.id,
-                        eventType: 'not_interested',
-                        impressionToken: item.impressionToken,
-                        rankingReason: item.rankingReason,
-                      );
-                  ref.read(analyticsServiceProvider).logPostNotInterested(
-                        postId: item.post.id,
-                        rankingReason: item.rankingReason,
-                      );
-                  ref
-                      .read(postRepositoryProvider)
-                      .markNotInterested(item.post.id);
-                  if (_currentIndex >= state.items.length - 1) {
-                    _ctrl.previousPage(
-                      duration: const Duration(milliseconds: 300),
-                      curve: Curves.easeOut,
-                    );
-                  }
-                },
-                onCommentOpen: () {
-                  ref.read(postRepositoryProvider).sendDiscoverEvent(
-                        postId: item.post.id,
-                        eventType: 'comment_open',
-                        impressionToken: item.impressionToken,
-                        rankingReason: item.rankingReason,
-                      );
-                  ref.read(analyticsServiceProvider).logDiscoverCommentOpen(
-                        postId: item.post.id,
-                        position: index,
-                        rankingReason: item.rankingReason,
-                      );
-                  _showCommentsSheet(
-                    context,
-                    item.post,
-                    impressionToken: item.impressionToken,
-                    rankingReason: item.rankingReason,
+              data: (state) {
+                if (state.items.isEmpty) {
+                  return Center(
+                    child: EmptyState(
+                      message:
+                          'Şu an keşfedilecek içerik yok.\nBiraz sonra tekrar dene.',
+                      icon: Icons.explore_outlined,
+                      action: () => ref.invalidate(discoverFeedProvider),
+                      actionLabel: 'Yenile',
+                    ),
                   );
-                },
-                onShare: () {
-                  ref.read(postRepositoryProvider).sendDiscoverEvent(
-                        postId: item.post.id,
-                        eventType: 'share',
-                        impressionToken: item.impressionToken,
-                        rankingReason: item.rankingReason,
-                      );
-                  ref.read(analyticsServiceProvider).logPostShared(
-                        postId: item.post.id,
-                        category: item.post.category.name,
-                      );
-                  SharePickerSheet.show(context, item.post);
-                },
-                onSave: (isSaved) async {
-                  final repo = ref.read(postRepositoryProvider);
-                  if (isSaved) {
-                    await repo.unsavePost(item.post.id);
-                  } else {
-                    await repo.savePost(item.post.id);
-                    ref.read(postRepositoryProvider).sendDiscoverEvent(
-                          postId: item.post.id,
-                          eventType: 'save',
+                }
+                return PageView.builder(
+                  controller: _ctrl,
+                  scrollDirection: Axis.vertical,
+                  itemCount: state.items.length + (state.isLoadingMore ? 1 : 0),
+                  itemBuilder: (context, index) {
+                    if (index >= state.items.length) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    final item = state.items[index];
+                    return _DiscoverCard(
+                      key: ValueKey(item.post.id),
+                      item: item,
+                      index: index,
+                      total: state.items.length,
+                      onVote: (voteType) => ref
+                          .read(discoverFeedProvider.notifier)
+                          .vote(item.post.id, voteType,
+                              impressionToken: item.impressionToken),
+                      onNotInterested: () {
+                        ref
+                            .read(discoverFeedProvider.notifier)
+                            .removeItem(item.post.id);
+                        if (_activePostId == item.post.id) {
+                          _activePostId = null;
+                        }
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (!mounted) return;
+                          final nextItems = ref
+                                  .read(discoverFeedProvider)
+                                  .valueOrNull
+                                  ?.items ??
+                              [];
+                          if (nextItems.isEmpty) return;
+                          if (_currentIndex >= nextItems.length) {
+                            _currentIndex = nextItems.length - 1;
+                          }
+                          _handlePageEnter(_currentIndex, nextItems);
+                        });
+                        ref.read(postRepositoryProvider).sendDiscoverEvent(
+                              postId: item.post.id,
+                              eventType: 'not_interested',
+                              impressionToken: item.impressionToken,
+                              rankingReason: item.rankingReason,
+                            );
+                        ref.read(analyticsServiceProvider).logPostNotInterested(
+                              postId: item.post.id,
+                              rankingReason: item.rankingReason,
+                            );
+                        ref
+                            .read(postRepositoryProvider)
+                            .markNotInterested(item.post.id);
+                        if (_currentIndex >= state.items.length - 1) {
+                          _ctrl.previousPage(
+                            duration: const Duration(milliseconds: 300),
+                            curve: Curves.easeOut,
+                          );
+                        }
+                      },
+                      onCommentOpen: () {
+                        ref.read(postRepositoryProvider).sendDiscoverEvent(
+                              postId: item.post.id,
+                              eventType: 'comment_open',
+                              impressionToken: item.impressionToken,
+                              rankingReason: item.rankingReason,
+                            );
+                        ref
+                            .read(analyticsServiceProvider)
+                            .logDiscoverCommentOpen(
+                              postId: item.post.id,
+                              position: index,
+                              rankingReason: item.rankingReason,
+                            );
+                        _showCommentsSheet(
+                          context,
+                          item.post,
                           impressionToken: item.impressionToken,
                           rankingReason: item.rankingReason,
                         );
-                  }
-                },
-              );
-            },
-          );
-        },
-        loading: () => const _DiscoverLoadingSkeleton(),
-        error: (error, _) => Center(
-          child: ErrorView(
-            message: 'Keşfet yüklenemedi',
-            onRetry: () => ref.invalidate(discoverFeedProvider),
-          ),
-        ),
-      ),
+                      },
+                      onShare: () {
+                        ref.read(postRepositoryProvider).sendDiscoverEvent(
+                              postId: item.post.id,
+                              eventType: 'share',
+                              impressionToken: item.impressionToken,
+                              rankingReason: item.rankingReason,
+                            );
+                        ref.read(analyticsServiceProvider).logPostShared(
+                              postId: item.post.id,
+                              category: item.post.category.name,
+                            );
+                        SharePickerSheet.show(context, item.post);
+                      },
+                      onSave: (isSaved) async {
+                        final repo = ref.read(postRepositoryProvider);
+                        if (isSaved) {
+                          await repo.unsavePost(item.post.id);
+                        } else {
+                          await repo.savePost(item.post.id);
+                          ref.read(postRepositoryProvider).sendDiscoverEvent(
+                                postId: item.post.id,
+                                eventType: 'save',
+                                impressionToken: item.impressionToken,
+                                rankingReason: item.rankingReason,
+                              );
+                        }
+                      },
+                    );
+                  },
+                );
+              },
+              loading: () => const _DiscoverLoadingSkeleton(),
+              error: (error, _) => Center(
+                child: ErrorView(
+                  message: 'Keşfet yüklenemedi',
+                  onRetry: () => ref.invalidate(discoverFeedProvider),
+                ),
+              ),
+            ),
     );
   }
 
@@ -460,115 +464,118 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                  // Category chip
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      '${post.category.icon} ${post.category.name}',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.primary,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-
-                  // Title
-                  GestureDetector(
-                    onTap: () => context.push('/posts/${post.id}', extra: post),
-                    child: Text(
-                      post.title,
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        height: 1.3,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-
-                  // Content (expandable)
-                  if (post.content.isNotEmpty) ...[
-                    GestureDetector(
-                      onTap: () => setState(() => _expanded = !_expanded),
-                      child: Text(
-                        post.content,
-                        maxLines: _expanded ? null : 5,
-                        overflow: _expanded
-                            ? TextOverflow.visible
-                            : TextOverflow.ellipsis,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                          height: 1.5,
+                      // Category chip
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(20),
                         ),
-                      ),
-                    ),
-                    if (!_expanded && post.content.length > 200)
-                      GestureDetector(
-                        onTap: () => setState(() => _expanded = true),
-                        child: const Text(
-                          'Devamını oku',
-                          style: TextStyle(
+                        child: Text(
+                          '${post.category.icon} ${post.category.name}',
+                          style: const TextStyle(
+                            fontSize: 12,
                             color: AppColors.primary,
-                            fontSize: 13,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
                       ),
-                    const SizedBox(height: 10),
-                  ],
+                      const SizedBox(height: 12),
 
-                  // Image — height capped at 30% of viewport height on small screens
-                  if (post.imageUrl != null) ...[
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: Image.network(
-                        post.imageUrl!,
-                        width: double.infinity,
-                        height: (MediaQuery.sizeOf(context).height * 0.30)
-                            .clamp(140.0, 260.0),
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                      // Title
+                      GestureDetector(
+                        onTap: () =>
+                            context.push('/posts/${post.id}', extra: post),
+                        child: Text(
+                          post.title,
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            height: 1.3,
+                          ),
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 10),
-                  ],
+                      const SizedBox(height: 10),
 
-                  // Author + time
-                  Row(
-                    children: [
-                      Icon(Icons.person_outline,
-                          size: 14, color: theme.colorScheme.onSurfaceVariant),
-                      const SizedBox(width: 4),
-                      Text(
-                        post.isAnonymous
-                            ? 'Anonim'
-                            : (post.authorName ?? 'Anonim'),
-                        style: TextStyle(
-                            fontSize: 12,
-                            color: theme.colorScheme.onSurfaceVariant),
+                      // Content (expandable)
+                      if (post.content.isNotEmpty) ...[
+                        GestureDetector(
+                          onTap: () => setState(() => _expanded = !_expanded),
+                          child: Text(
+                            post.content,
+                            maxLines: _expanded ? null : 5,
+                            overflow: _expanded
+                                ? TextOverflow.visible
+                                : TextOverflow.ellipsis,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                              height: 1.5,
+                            ),
+                          ),
+                        ),
+                        if (!_expanded && post.content.length > 200)
+                          GestureDetector(
+                            onTap: () => setState(() => _expanded = true),
+                            child: const Text(
+                              'Devamını oku',
+                              style: TextStyle(
+                                color: AppColors.primary,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        const SizedBox(height: 10),
+                      ],
+
+                      // Image — height capped at 30% of viewport height on small screens
+                      if (post.imageUrl != null) ...[
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: Image.network(
+                            post.imageUrl!,
+                            width: double.infinity,
+                            height: (MediaQuery.sizeOf(context).height * 0.30)
+                                .clamp(140.0, 260.0),
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) =>
+                                const SizedBox.shrink(),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+
+                      // Author + time
+                      Row(
+                        children: [
+                          Icon(Icons.person_outline,
+                              size: 14,
+                              color: theme.colorScheme.onSurfaceVariant),
+                          const SizedBox(width: 4),
+                          Text(
+                            post.isAnonymous
+                                ? 'Anonim'
+                                : (post.authorName ?? 'Anonim'),
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: theme.colorScheme.onSurfaceVariant),
+                          ),
+                          const SizedBox(width: 6),
+                          Text('·',
+                              style: TextStyle(
+                                  color: theme.colorScheme.onSurfaceVariant)),
+                          const SizedBox(width: 6),
+                          Text(
+                            post.createdAgo,
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: theme.colorScheme.onSurfaceVariant),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 6),
-                      Text('·',
-                          style: TextStyle(
-                              color: theme.colorScheme.onSurfaceVariant)),
-                      const SizedBox(width: 6),
-                      Text(
-                        post.createdAgo,
-                        style: TextStyle(
-                            fontSize: 12,
-                            color: theme.colorScheme.onSurfaceVariant),
-                      ),
+                      const SizedBox(height: 8),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                ],
-              ),
                 ),
               ),
             ),
@@ -591,96 +598,97 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
                     child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    VoteBar(post: post, isCompact: true),
-                    const SizedBox(height: 8),
-                    Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        Expanded(
-                          child: _VoteButton(
-                            label: 'Haklı',
-                            icon: Icons.check_rounded,
-                            color:
-                                isDark ? AppColors.darkHakli : AppColors.hakli,
-                            isSelected: post.myVote == VoteType.hakli,
-                            isLoading: _isVoting,
-                            onTap: () => _handleVote(VoteType.hakli),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: _VoteButton(
-                            label: 'Haksız',
-                            icon: Icons.close_rounded,
-                            color: isDark
-                                ? AppColors.darkHaksiz
-                                : AppColors.haksiz,
-                            isSelected: post.myVote == VoteType.haksiz,
-                            isLoading: _isVoting,
-                            onTap: () => _handleVote(VoteType.haksiz),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        _ActionButton(
-                          icon: Icons.chat_bubble_outline_rounded,
-                          label: '${post.commentCount}',
-                          onTap: widget.onCommentOpen,
-                        ),
-                        const SizedBox(width: 2),
-                        _ActionButton(
-                          icon: Icons.share_rounded,
-                          label: '',
-                          onTap: widget.onShare,
-                        ),
-                        const SizedBox(width: 2),
-                        _ActionButton(
-                          icon: _isSaved
-                              ? Icons.bookmark_rounded
-                              : Icons.bookmark_outline_rounded,
-                          label: '',
-                          color: _isSaved ? AppColors.primary : null,
-                          onTap: () async {
-                            final prev = _isSaved;
-                            setState(() => _isSaved = !_isSaved);
-                            try {
-                              await widget.onSave(prev);
-                            } catch (_) {
-                              if (mounted) setState(() => _isSaved = prev);
-                            }
-                          },
-                        ),
-                        const SizedBox(width: 2),
-                        _ActionButton(
-                          icon: Icons.open_in_new_rounded,
-                          label: '',
-                          onTap: () =>
-                              context.push('/posts/${post.id}', extra: post),
-                        ),
-                        const Spacer(),
-                        TextButton(
-                          onPressed: widget.onNotInterested,
-                          style: TextButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 4),
-                            minimumSize: Size.zero,
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          ),
-                          child: Text(
-                            'İlgilenmiyorum',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: theme.colorScheme.onSurfaceVariant,
+                        VoteBar(post: post, isCompact: true),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _VoteButton(
+                                label: 'Haklı',
+                                icon: Icons.check_rounded,
+                                color: isDark
+                                    ? AppColors.darkHakli
+                                    : AppColors.hakli,
+                                isSelected: post.myVote == VoteType.hakli,
+                                isLoading: _isVoting,
+                                onTap: () => _handleVote(VoteType.hakli),
+                              ),
                             ),
-                          ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: _VoteButton(
+                                label: 'Haksız',
+                                icon: Icons.close_rounded,
+                                color: isDark
+                                    ? AppColors.darkHaksiz
+                                    : AppColors.haksiz,
+                                isSelected: post.myVote == VoteType.haksiz,
+                                isLoading: _isVoting,
+                                onTap: () => _handleVote(VoteType.haksiz),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            _ActionButton(
+                              icon: Icons.chat_bubble_outline_rounded,
+                              label: '${post.commentCount}',
+                              onTap: widget.onCommentOpen,
+                            ),
+                            const SizedBox(width: 2),
+                            _ActionButton(
+                              icon: Icons.share_rounded,
+                              label: '',
+                              onTap: widget.onShare,
+                            ),
+                            const SizedBox(width: 2),
+                            _ActionButton(
+                              icon: _isSaved
+                                  ? Icons.bookmark_rounded
+                                  : Icons.bookmark_outline_rounded,
+                              label: '',
+                              color: _isSaved ? AppColors.primary : null,
+                              onTap: () async {
+                                final prev = _isSaved;
+                                setState(() => _isSaved = !_isSaved);
+                                try {
+                                  await widget.onSave(prev);
+                                } catch (_) {
+                                  if (mounted) setState(() => _isSaved = prev);
+                                }
+                              },
+                            ),
+                            const SizedBox(width: 2),
+                            _ActionButton(
+                              icon: Icons.open_in_new_rounded,
+                              label: '',
+                              onTap: () => context.push('/posts/${post.id}',
+                                  extra: post),
+                            ),
+                            const Spacer(),
+                            TextButton(
+                              onPressed: widget.onNotInterested,
+                              style: TextButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 4),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              child: Text(
+                                'İlgilenmiyorum',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
-                    ),
-                  ],
                     ),
                   ),
                 ),
@@ -712,7 +720,7 @@ class _VoteButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedContainer(
+    final button = AnimatedContainer(
       duration: const Duration(milliseconds: 200),
       decoration: BoxDecoration(
         color: isSelected ? color : color.withValues(alpha: 0.1),
@@ -759,6 +767,20 @@ class _VoteButton extends StatelessWidget {
         ),
       ),
     );
+
+    if (!isSelected) {
+      return button;
+    }
+
+    return button
+        .animate(key: ValueKey(isSelected))
+        .scale(
+          begin: const Offset(0.82, 0.82),
+          end: const Offset(1.0, 1.0),
+          duration: 260.ms,
+          curve: Curves.elasticOut,
+        )
+        .fadeIn(duration: 120.ms);
   }
 }
 
@@ -1124,8 +1146,7 @@ class _DiscoverCommentInputState extends ConsumerState<_DiscoverCommentInput> {
                           .read(postDetailProvider(widget.postId).notifier)
                           .cancelReply(),
                       child: Icon(Icons.close_rounded,
-                          size: 16,
-                          color: theme.colorScheme.onSurfaceVariant),
+                          size: 16, color: theme.colorScheme.onSurfaceVariant),
                     ),
                   ],
                 ),

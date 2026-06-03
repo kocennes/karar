@@ -31,13 +31,14 @@ class PostRepository {
     String sort = 'trending',
     String? afterId,
   }) async {
+    final apiSort = sort == 'trending' ? 'hot' : sort;
     final json = await _apiClient.getJson<Map<String, Object?>>(
       '/api/v1/posts',
       query: {
         'page': '$page',
         'limit': '$limit',
         'categoryId': categoryId?.toString(),
-        'sort': sort,
+        'sort': apiSort,
         if (afterId != null) 'afterId': afterId,
       },
     );

@@ -15,7 +15,10 @@ void main() {
     _expectAa(AppColors.darkTextPrimary, AppColors.darkBackground);
     _expectAa(AppColors.darkTextSecondary, AppColors.darkSurface);
     _expectAa(AppColors.darkTextTertiary, AppColors.darkSurface);
-    _expectAa(AppColors.darkTextTertiary, AppColors.darkSurfaceVariant);
+    _expectAa(
+      AppColors.darkTextTertiary,
+      AppColors.darkSurfaceContainerHighest,
+    );
   });
 
   test('interactive colors meet WCAG AA with white foreground', () {

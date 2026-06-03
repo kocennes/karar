@@ -30,7 +30,7 @@ void main() {
         child: MaterialApp.router(routerConfig: router),
       ),
     );
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
     expect(find.text('karar'), findsOneWidget);
     expect(find.text(samplePosts.first.title), findsOneWidget);
@@ -53,7 +53,7 @@ void main() {
         child: MaterialApp.router(routerConfig: router),
       ),
     );
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
     await tester.tap(find.byIcon(Icons.search));
     await tester.pumpAndSettle();

@@ -64,7 +64,7 @@ void main() {
     tester.view.devicePixelRatio = 1;
     await tester.pumpWidget(_app(state));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pump(const Duration(milliseconds: 400));
   }
 
   testWidgets('first user sees first vote coachmark', (tester) async {
@@ -79,7 +79,7 @@ void main() {
     await tester
         .tap(find.byKey(const ValueKey('feed_vote_hakli_button')).first);
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pump(const Duration(milliseconds: 400));
 
     expect(find.text('Ilk oyunu at'), findsNothing);
 
@@ -95,7 +95,7 @@ void main() {
       find.byKey(const ValueKey('first_vote_coachmark_dismiss')),
     );
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pump(const Duration(milliseconds: 400));
 
     expect(find.text('Ilk oyunu at'), findsNothing);
 
