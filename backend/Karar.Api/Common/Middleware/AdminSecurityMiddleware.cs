@@ -1,3 +1,4 @@
+using Karar.Api.Common;
 using Karar.Api.Data;
 using Karar.Api.Services;
 using Npgsql;
@@ -62,6 +63,7 @@ public sealed class AdminSecurityMiddleware
         }
 
         var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var ipBlock = IpAddressPrivacy.ToNetworkBlock(context.Connection.RemoteIpAddress) ?? "unknown";
 
         // Login endpoint'i BruteForceService + auth-strict ile korunuyor, burada tekrar sınırlama.
         if (!path.StartsWithSegments(AdminAuthPath))
@@ -90,11 +92,11 @@ public sealed class AdminSecurityMiddleware
         if (!path.StartsWithSegments(AdminAuthPath) &&
             context.Response.StatusCode is StatusCodes.Status401Unauthorized or StatusCodes.Status403Forbidden)
         {
-            await LogUnauthorizedAccessAsync(ip, context.Request.Method, path, context.Response.StatusCode);
+            await LogUnauthorizedAccessAsync(ipBlock, context.Request.Method, path, context.Response.StatusCode);
         }
     }
 
-    private async Task LogUnauthorizedAccessAsync(string ip, string method, PathString path, int statusCode)
+    private async Task LogUnauthorizedAccessAsync(string ipBlock, string method, PathString path, int statusCode)
     {
         try
         {
@@ -109,7 +111,7 @@ public sealed class AdminSecurityMiddleware
             cmd.Parameters.AddWithValue("email", "unknown");
             cmd.Parameters.AddWithValue("action", "unauthorized_access");
             cmd.Parameters.AddWithValue("targetType", "admin");
-            cmd.Parameters.AddWithValue("note", $"IP: {ip}, {method} {path}, HTTP {statusCode}");
+            cmd.Parameters.AddWithValue("note", $"IP block: {ipBlock}, {method} {path}, HTTP {statusCode}");
             await cmd.ExecuteNonQueryAsync();
         }
         catch (Exception ex)

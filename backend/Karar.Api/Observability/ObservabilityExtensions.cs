@@ -58,6 +58,7 @@ public static class ObservabilityExtensions
             {
                 metrics
                     .AddMeter(KararTelemetry.MeterName)
+                    .AddMeter("Karar.Api.Business")
                     .AddAspNetCoreInstrumentation()
                     .AddHttpClientInstrumentation()
                     .AddRuntimeInstrumentation();

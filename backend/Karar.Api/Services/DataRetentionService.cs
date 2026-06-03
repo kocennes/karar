@@ -3,10 +3,18 @@ using Npgsql;
 
 namespace Karar.Api.Services;
 
-public sealed class DataRetentionService(Db db, AffinityService affinity, ILogger<DataRetentionService> logger) : BackgroundService
+public sealed class DataRetentionService(
+    Db db,
+    AffinityService affinity,
+    IConfiguration configuration,
+    ILogger<DataRetentionService> logger) : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromDays(1);
     private DateTime _lastWeeklyDecay = DateTime.MinValue;
+
+    // Security audit log retention: default 365 days in DB (already archived to GCS by AuditLogExportJob)
+    private int AuditLogRetentionDays =>
+        configuration.GetValue("AuditLogs:RetentionDays", 365);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -20,6 +28,14 @@ public sealed class DataRetentionService(Db db, AffinityService affinity, ILogge
                 if (anonymizedUsers > 0)
                 {
                     logger.LogInformation("Anonymized {Count} deleted users", anonymizedUsers);
+                }
+
+                var purgedAuditLogs = await PurgeAuditLogsAsync(stoppingToken);
+                if (purgedAuditLogs > 0)
+                {
+                    logger.LogInformation(
+                        "Purged {Count} admin_actions records older than {Days} days from DB (archived to GCS)",
+                        purgedAuditLogs, AuditLogRetentionDays);
                 }
 
                 // Weekly category affinity decay (0.9× every 7 days) — hem user hem device tablosu
@@ -82,5 +98,24 @@ public sealed class DataRetentionService(Db db, AffinityService affinity, ILogge
         );
 
         return Convert.ToInt32(await command.ExecuteScalarAsync(ct));
+    }
+
+    // Purge security audit logs (admin_actions) older than retention period from DB.
+    // AuditLogExportJob archives these to GCS first; this keeps the DB lean.
+    private async Task<int> PurgeAuditLogsAsync(CancellationToken ct)
+    {
+        var retentionDays = AuditLogRetentionDays;
+        if (retentionDays <= 0)
+            return 0;
+
+        await using var connection = await db.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(
+            """
+            DELETE FROM admin_actions
+            WHERE created_at < NOW() - (@retentionDays * INTERVAL '1 day')
+            """,
+            connection);
+        command.Parameters.AddWithValue("retentionDays", retentionDays);
+        return await command.ExecuteNonQueryAsync(ct);
     }
 }
