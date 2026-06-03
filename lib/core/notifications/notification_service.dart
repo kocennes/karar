@@ -2,13 +2,15 @@ import 'package:app_settings/app_settings.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../analytics/analytics_service.dart';
 import '../auth/device_service.dart';
 import '../config/app_config.dart';
 
 class NotificationService {
-  NotificationService({required this.deviceService});
+  NotificationService({required this.deviceService, required this.analytics});
 
   final DeviceService deviceService;
+  final AnalyticsService analytics;
 
   void Function(RemoteMessage)? onForegroundMessage;
 
@@ -64,8 +66,22 @@ class NotificationService {
     return settings.authorizationStatus == AuthorizationStatus.denied;
   }
 
+  bool get canOpenPlatformNotificationSettings => !kIsWeb;
+
+  String get deniedPermissionHelpText => kIsWeb
+      ? 'Tarayici site ayarlarindan bildirim iznini ac. In-app bildirim merkezi calismaya devam eder.'
+      : 'Bildirimler kapali. Istersen cihaz ayarlarindan tekrar acabilirsin.';
+
   Future<void> openSettings() async {
+    if (kIsWeb) return;
     await AppSettings.openAppSettings(type: AppSettingsType.notification);
+  }
+
+  Future<void> deleteCurrentToken() async {
+    try {
+      await deviceService.deleteFcmToken();
+      await FirebaseMessaging.instance.deleteToken();
+    } catch (_) {}
   }
 
   // Call this after a meaningful user interaction (vote, post creation).
@@ -87,14 +103,22 @@ class NotificationService {
     );
     _markDecided();
 
-    if (settings.authorizationStatus == AuthorizationStatus.authorized ||
-        settings.authorizationStatus == AuthorizationStatus.provisional) {
+    final granted =
+        settings.authorizationStatus == AuthorizationStatus.authorized ||
+            settings.authorizationStatus == AuthorizationStatus.provisional;
+
+    if (granted) {
+      analytics.logNotificationPermissionGranted(
+          source: force ? 'aha_moment' : 'threshold');
       final token = await FirebaseMessaging.instance.getToken(
         vapidKey: kIsWeb && AppConfig.webVapidKey.isNotEmpty
             ? AppConfig.webVapidKey
             : null,
       );
       if (token != null) await _registerToken(token);
+    } else {
+      analytics.logNotificationPermissionDenied(
+          source: force ? 'aha_moment' : 'threshold');
     }
   }
 

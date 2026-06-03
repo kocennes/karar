@@ -2,18 +2,22 @@ namespace Karar.Api.Services;
 
 public sealed class ReportAbuseProtectionService
 {
-    private readonly RedisService _redis;
+    private readonly Func<string, string, int, TimeSpan, Task<bool>> _isAllowed;
 
     private const int ReportHourlyLimit = 10;
     private static readonly TimeSpan ReportWindow = TimeSpan.FromHours(1);
 
-    public ReportAbuseProtectionService(RedisService redis) => _redis = redis;
+    public ReportAbuseProtectionService(RedisService redis) => _isAllowed = redis.IsAllowedAsync;
+
+    // Test constructor — allows injecting an in-memory or fault-injecting rate limiter without Redis.
+    internal ReportAbuseProtectionService(Func<string, string, int, TimeSpan, Task<bool>> isAllowed)
+        => _isAllowed = isAllowed;
 
     // Device-based sliding window: cihaz başına saatte max 10 rapor.
     // Hata durumunda fail-open (Redis'e ulaşılamazsa isteğe izin verilir).
     public async Task<(bool IsAllowed, int RetryAfterSeconds)> CheckDeviceRateLimitAsync(Guid deviceId)
     {
-        var allowed = await _redis.IsAllowedAsync(
+        var allowed = await _isAllowed(
             "report-device",
             deviceId.ToString("N"),
             ReportHourlyLimit,

@@ -3,10 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/auth/auth_service.dart';
+import '../../core/theme/app_colors.dart';
 import '../../core/utils/validators.dart';
 import '../../shared/widgets/karar_button.dart';
 import '../../shared/widgets/centered_content.dart';
 import '../../shared/widgets/karar_logo.dart';
+
+enum UsernameStatus { idle, checking, available, taken }
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({
@@ -42,9 +45,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String? _error;
 
   // Username availability check
-  Timer? _debounce;
-  bool? _isUsernameAvailable;
-  bool _isCheckingUsername = false;
+  Timer? _usernameDebounce;
+  UsernameStatus _usernameStatus = UsernameStatus.idle;
 
   final _confirmPasswordFocus = FocusNode();
 
@@ -57,7 +59,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   void dispose() {
     _usernameCtrl.removeListener(_onUsernameChanged);
-    _debounce?.cancel();
+    _usernameDebounce?.cancel();
     _usernameCtrl.dispose();
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
@@ -68,38 +70,60 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   void _onUsernameChanged() {
-    if (_debounce?.isActive ?? false) _debounce?.cancel();
+    _usernameDebounce?.cancel();
 
     final username = _usernameCtrl.text.trim();
     if (username.length < 3) {
-      setState(() {
-        _isUsernameAvailable = null;
-        _isCheckingUsername = false;
-      });
+      setState(() => _usernameStatus = UsernameStatus.idle);
       return;
     }
 
-    setState(() => _isCheckingUsername = true);
+    _usernameDebounce = Timer(const Duration(milliseconds: 500), _checkUsername);
+  }
 
-    _debounce = Timer(const Duration(milliseconds: 500), () async {
-      try {
-        final available =
-            await widget.authService.isUsernameAvailable(username);
-        if (mounted && _usernameCtrl.text.trim() == username) {
-          setState(() {
-            _isUsernameAvailable = available;
-            _isCheckingUsername = false;
-          });
-        }
-      } catch (_) {
-        if (mounted) {
-          setState(() {
-            _isCheckingUsername = false;
-            _isUsernameAvailable = null;
-          });
-        }
+  Future<void> _checkUsername() async {
+    final username = _usernameCtrl.text.trim();
+    if (username.length < 3) return;
+
+    setState(() => _usernameStatus = UsernameStatus.checking);
+
+    try {
+      final isAvailable =
+          await widget.authService.isUsernameAvailable(username);
+      if (!mounted) return;
+
+      // Kullanıcı hala aynı şeyi mi yazıyor kontrol et (race condition)
+      if (_usernameCtrl.text.trim() == username) {
+        setState(() {
+          _usernameStatus =
+              isAvailable ? UsernameStatus.available : UsernameStatus.taken;
+        });
       }
-    });
+    } catch (_) {
+      if (mounted) {
+        setState(() => _usernameStatus = UsernameStatus.idle);
+      }
+    }
+  }
+
+  Widget? _buildUsernameSuffix() {
+    switch (_usernameStatus) {
+      case UsernameStatus.checking:
+        return const SizedBox(
+          width: 16,
+          height: 16,
+          child: Padding(
+            padding: EdgeInsets.all(12),
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        );
+      case UsernameStatus.available:
+        return const Icon(Icons.check_circle, color: AppColors.hakli);
+      case UsernameStatus.taken:
+        return const Icon(Icons.cancel, color: AppColors.haksiz);
+      case UsernameStatus.idle:
+        return null;
+    }
   }
 
   Future<void> _selectDob() async {
@@ -133,8 +157,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    if (_isUsernameAvailable == false) {
+    if (_usernameStatus == UsernameStatus.taken) {
       setState(() => _error = 'Bu kullanıcı adı zaten alınmış.');
+      return;
+    }
+
+    if (_usernameStatus == UsernameStatus.checking) {
       return;
     }
 
@@ -265,33 +293,26 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       labelText: 'Kullanıcı adı',
                       prefixIcon: const Icon(Icons.alternate_email),
                       border: const OutlineInputBorder(),
-                      helperText: '3-20 karakter, harf/rakam/alt çizgi',
-                      suffixIcon: _isCheckingUsername
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: Padding(
-                                padding: EdgeInsets.all(12),
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              ))
-                          : _isUsernameAvailable == null
-                              ? null
-                              : Icon(
-                                  _isUsernameAvailable!
-                                      ? Icons.check_circle_outline
-                                      : Icons.error_outline,
-                                  color: _isUsernameAvailable!
-                                      ? Colors.green
-                                      : colorScheme.error,
-                                ),
+                      helperText: _usernameStatus == UsernameStatus.available
+                          ? 'Kullanılabilir'
+                          : _usernameStatus == UsernameStatus.taken
+                              ? 'Bu kullanıcı adı alınmış'
+                              : '3-20 karakter, harf/rakam/alt çizgi',
+                      helperStyle: TextStyle(
+                        color: _usernameStatus == UsernameStatus.available
+                            ? AppColors.hakli
+                            : _usernameStatus == UsernameStatus.taken
+                                ? AppColors.haksiz
+                                : null,
+                      ),
+                      suffixIcon: _buildUsernameSuffix(),
                     ),
                     keyboardType: TextInputType.name,
                     textInputAction: TextInputAction.next,
                     validator: (v) {
                       final basic = Validators.username(v);
                       if (basic != null) return basic;
-                      if (_isUsernameAvailable == false) {
+                      if (_usernameStatus == UsernameStatus.taken) {
                         return 'Bu kullanıcı adı zaten alınmış.';
                       }
                       return null;
@@ -438,7 +459,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   const SizedBox(height: 32),
                   KararButton(
                     label: 'Kaydol',
-                    onPressed: _submit,
+                    onPressed:
+                        _usernameStatus == UsernameStatus.taken || _isLoading
+                            ? null
+                            : _submit,
                     isLoading: _isLoading,
                   ),
                   const SizedBox(height: 16),

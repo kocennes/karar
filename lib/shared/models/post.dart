@@ -80,6 +80,7 @@ class DiscoverData {
     required this.fresh,
     this.cityTrending = const [],
     this.city,
+    this.serendipity = const [],
     this.trendTopics = const [],
     this.todaysPosts = const [],
   });
@@ -89,6 +90,7 @@ class DiscoverData {
   final List<Post> fresh;
   final List<Post> cityTrending;
   final String? city;
+  final List<Post> serendipity;
   final List<TrendTopic> trendTopics;
   final List<Post> todaysPosts;
 }

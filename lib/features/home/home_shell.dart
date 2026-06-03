@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/layout/breakpoints.dart';
 import '../../core/providers.dart';
 import '../../core/utils/pwa_helper.dart';
+import '../../shared/widgets/connectivity_banner.dart';
 import '../../shared/widgets/content_policy_update_banner.dart';
 import '../../shared/widgets/kvkk_banner.dart';
 import '../../shared/widgets/login_nudge.dart';
@@ -49,7 +50,7 @@ class _HomeShellState extends ConsumerState<HomeShell>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      ref.read(notificationsProvider.notifier).load();
+      ref.read(notificationsProvider.notifier).syncUnreadCount();
     }
   }
 
@@ -181,6 +182,7 @@ class _HomeShellState extends ConsumerState<HomeShell>
     Widget shell = Scaffold(
       body: Column(
         children: [
+          const ConnectivityBanner(),
           const ContentPolicyUpdateBanner(),
           if (_showPwaBanner) _buildPwaBanner(),
           Expanded(child: _buildLayout(context, unreadCount)),

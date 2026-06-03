@@ -9,6 +9,7 @@ abstract final class ApiEndpoints {
   static const String authLogin = '/api/v1/auth/login';
   static const String authRefresh = '/api/v1/auth/refresh';
   static const String authLogout = '/api/v1/auth/logout';
+  static const String authCheckUsername = '/api/v1/auth/check-username';
 
   static const String categories = '/api/v1/categories';
   static const String posts = '/api/v1/posts';
@@ -65,12 +66,18 @@ abstract final class ApiEndpoints {
 
   static const String userMeModerationHistory =
       '/api/v1/users/me/moderation-history';
+  static const String userMeReports = '/api/v1/users/me/reports';
   static const String userMeModerationAppeals =
       '/api/v1/users/me/moderation-appeals';
 
   static const String authMigrateGuestData = '/api/v1/auth/migrate-guest-data';
+  static const String moderationCheck = '/api/v1/moderation/check';
   static const String moderationTransparency =
       '/api/v1/moderation/transparency';
 
   static const String growthEvents = '/api/v1/growth-events';
+  static const String loopCompleted = '/api/v1/analytics/loop-completed';
+
+  static const String policyStatus = '/api/v1/users/me/policy-status';
+  static const String acceptPolicy = '/api/v1/users/me/accept-policy';
 }

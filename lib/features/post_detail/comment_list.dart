@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -181,8 +182,11 @@ class _CommentTile extends ConsumerWidget {
     // Twitter-like indentation cap for mobile
     final double indent = (level > 3 ? 3 : level) * 16.0;
 
-    return Container(
-      margin: EdgeInsets.only(left: indent),
+    return GestureDetector(
+      onLongPress: () => _showLongPressMenu(context, ref),
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        margin: EdgeInsets.only(left: indent),
       decoration: BoxDecoration(
         color: isHighlighted
             ? colorScheme.primaryContainer.withValues(alpha: 0.3)
@@ -456,6 +460,53 @@ class _CommentTile extends ConsumerWidget {
             ),
           ],
         ],
+      ),
+    ),
+  );
+}
+
+  void _showLongPressMenu(BuildContext context, WidgetRef ref) {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.copy),
+              title: const Text('Kopyala'),
+              onTap: () {
+                Clipboard.setData(ClipboardData(text: comment.content));
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Yorum kopyalandı')),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.flag_outlined),
+              title: const Text('Şikayet Et'),
+              onTap: () {
+                Navigator.pop(ctx);
+                ReportBottomSheet.show(
+                  context,
+                  targetType: 'comment',
+                  targetId: comment.id,
+                  repository: ref.read(postRepositoryProvider),
+                );
+              },
+            ),
+            if (comment.isOwner)
+              ListTile(
+                leading: Icon(Icons.delete, color: Theme.of(context).colorScheme.error),
+                title: Text('Sil', style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _confirmDelete(context);
+                },
+              ),
+          ],
+        ),
       ),
     );
   }

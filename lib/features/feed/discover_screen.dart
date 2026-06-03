@@ -449,13 +449,17 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
             ),
           ),
 
-          // Scrollable content (edge-to-edge)
+          // Scrollable content — centered on wide viewports
           Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 680),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                   // Category chip
                   Container(
                     padding:
@@ -519,14 +523,15 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
                     const SizedBox(height: 10),
                   ],
 
-                  // Image
+                  // Image — height capped at 30% of viewport height on small screens
                   if (post.imageUrl != null) ...[
                     ClipRRect(
                       borderRadius: BorderRadius.circular(12),
                       child: Image.network(
                         post.imageUrl!,
                         width: double.infinity,
-                        height: 220,
+                        height: (MediaQuery.sizeOf(context).height * 0.30)
+                            .clamp(140.0, 260.0),
                         fit: BoxFit.cover,
                         errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                       ),
@@ -564,6 +569,8 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
                   const SizedBox(height: 8),
                 ],
               ),
+                ),
+              ),
             ),
           ),
 
@@ -577,9 +584,13 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
             ),
             child: SafeArea(
               top: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
-                child: Column(
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 680),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+                    child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     VoteBar(post: post, isCompact: true),
@@ -670,6 +681,8 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
                       ],
                     ),
                   ],
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -1251,9 +1264,15 @@ class _DiscoverSectionsView extends ConsumerWidget {
           }
         }
 
-        return ListView(
-          padding: const EdgeInsets.only(bottom: 24),
-          children: items,
+        return Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 680),
+            child: ListView(
+              padding: const EdgeInsets.only(bottom: 24),
+              children: items,
+            ),
+          ),
         );
       },
     );

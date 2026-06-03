@@ -14,6 +14,7 @@ public sealed class NotificationSchemaTests
         "verdict_milestone",
         "verdict_reminder",
         "moderation_result",
+        "crisis_support",
         "mention",
         "follow",
         "follow_new_post",
@@ -146,6 +147,25 @@ public sealed class NotificationSchemaTests
     }
 
     [Fact]
+    public void FcmTokenEndpoint_AcceptsWebPlatformTokens()
+    {
+        var requestsPath = FindRepoFile("backend/Karar.Api/Contracts/Requests.cs");
+        var requests = File.ReadAllText(requestsPath);
+        var programPath = FindRepoFile("backend/Karar.Api/Program.cs");
+        var program = File.ReadAllText(programPath);
+        var putBlock = Slice(
+            program,
+            "app.MapPut(\"/api/v1/devices/fcm-token\"",
+            "app.MapDelete(\"/api/v1/devices/fcm-token\"");
+
+        requests.Should().Contain("public sealed record FcmTokenRequest");
+        putBlock.Should().Contain("IsSupportedPlatform(request.Platform)");
+        putBlock.Should().Contain("INSERT INTO fcm_tokens (device_id, token, platform)");
+        putBlock.Should().Contain("platform = @platform");
+        program.Should().Contain("platform is \"android\" or \"ios\" or \"web\"");
+    }
+
+    [Fact]
     public void DispatcherFailureUpdates_DoNotDeleteInAppNotificationRows()
     {
         var dispatcherPath = FindRepoFile("backend/Karar.Api/Services/NotificationDispatcher.cs");
@@ -185,6 +205,59 @@ public sealed class NotificationSchemaTests
         failureBlock.Should().Contain("result.Status == PushSendStatus.PermanentFailure");
         failureBlock.Should().Contain("\"permanent_failure\"");
         failureBlock.Should().Contain("\"max_attempts_exceeded\"");
+    }
+
+    [Fact]
+    public void CrisisFlaggedMigration_AddsCrisisFlaggedColumnToBothTables()
+    {
+        var migrationPath = FindRepoFile("backend/migrations/V55__crisis_flagged.sql");
+        var migrationSql = File.ReadAllText(migrationPath).ToLowerInvariant();
+
+        migrationSql.Should().Contain("alter table posts")
+            .And.Contain("alter table comments")
+            .And.Contain("crisis_flagged boolean not null default false");
+    }
+
+    [Fact]
+    public void CrisisFlaggedMigration_UpdatesNotificationConstraintConsistentlyWithV44()
+    {
+        var v44Sql = File.ReadAllText(FindRepoFile("backend/migrations/V44__notification_follow_new_post_type.sql"));
+        var v55Sql = File.ReadAllText(FindRepoFile("backend/migrations/V55__crisis_flagged.sql"));
+
+        var v44Types = Regex.Matches(v44Sql, "'([a-z_]+)'")
+            .Select(m => m.Groups[1].Value)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var v55Types = Regex.Matches(v55Sql, "'([a-z_]+)'")
+            .Select(m => m.Groups[1].Value)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var missingInV55 = v44Types.Except(v55Types).ToArray();
+        missingInV55.Should().BeEmpty(
+            because: "V55 re-creates the notifications_type_check constraint — it must include every type from V44");
+    }
+
+    [Fact]
+    public void CrisisSupportNotification_BodyContains182HotlineAndImeceUrl()
+    {
+        var programPath = FindRepoFile("backend/Karar.Api/Program.cs");
+        var program = File.ReadAllText(programPath);
+
+        var crisisBlock = Slice(
+            program,
+            "static async Task InsertCrisisSupportNotificationForContentAsync(",
+            "// İlk 24 saatte");
+
+        crisisBlock.Should().Contain("'crisis_support'",
+            because: "bildirim tipi 'crisis_support' olmalı");
+        crisisBlock.Should().Contain("182",
+            because: "bildirim gövdesi 182 ALO hattına atıfta bulunmalı");
+        crisisBlock.Should().Contain("imece.org",
+            because: "bildirim gövdesi imece.org destek URL'ini içermeli");
+        crisisBlock.Should().NotContain("uyarı",
+            because: "kriz bildirimi cezalandırıcı değil destek odaklı olmalı");
+        crisisBlock.Should().NotContain("ihlal",
+            because: "kriz bildirimi kural ihlalinden söz etmemeli");
     }
 
     private static string FindRepoFile(string relativePath)

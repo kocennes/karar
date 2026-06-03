@@ -73,11 +73,13 @@ class AppServices {
       tokenStore: tokenStore,
     );
 
+    final analyticsService = AnalyticsService(apiClient: apiClient);
+
     final notificationService = NotificationService(
       deviceService: deviceService,
+      analytics: analyticsService,
     );
-
-    final analyticsService = AnalyticsService(apiClient: apiClient);
+    authService.setOnBeforeLogout(notificationService.deleteCurrentToken);
     final shareService = ShareService(analyticsService: analyticsService);
     final ratingService = RatingService();
     final sessionTracker = await SessionTracker.create();

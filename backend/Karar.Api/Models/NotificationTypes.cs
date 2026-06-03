@@ -16,4 +16,5 @@ public static class NotificationTypes
     public const string TrendAlert = "trend_alert";
     public const string ViralPostOwner = "viral_post_owner";
     public const string WeeklyDigest = "weekly_digest";
+    public const string CrisisSupport = "crisis_support";
 }

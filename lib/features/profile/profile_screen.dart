@@ -183,6 +183,7 @@ class _LoggedInProfile extends ConsumerWidget {
           FilledButton(
             onPressed: () async {
               Navigator.pop(ctx);
+              await ref.read(notificationServiceProvider).deleteCurrentToken();
               final authService = ref.read(authServiceProvider);
               await authService.logout();
               ref.read(currentUserProvider.notifier).state = null;

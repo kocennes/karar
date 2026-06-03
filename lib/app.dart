@@ -46,8 +46,9 @@ class _KararAppState extends ConsumerState<KararApp>
       _sub = FirebaseMessaging.onMessageOpenedApp.listen(_onMessageOpened);
       _checkInitialMessage();
       _checkPreviousCrash();
-      widget.services.notificationService.onForegroundMessage = (_) {
+      widget.services.notificationService.onForegroundMessage = (message) {
         ref.invalidate(notificationsProvider);
+        _showForegroundNotificationBanner(message);
       };
     } catch (_) {}
 
@@ -60,6 +61,7 @@ class _KararAppState extends ConsumerState<KararApp>
     });
 
     widget.services.apiClient.setOnMaintenance(() {
+      ref.read(maintenanceMessageProvider.notifier).state = null;
       ref.read(maintenanceProvider.notifier).state = true;
     });
 
@@ -68,6 +70,9 @@ class _KararAppState extends ConsumerState<KararApp>
       if (!mounted) return;
       final rc = ref.read(remoteConfigProvider);
       if (rc.getBool(RemoteConfigKeys.maintenanceMode)) {
+        final message = rc.getString(RemoteConfigKeys.maintenanceMessage);
+        ref.read(maintenanceMessageProvider.notifier).state =
+            message.trim().isEmpty ? null : message.trim();
         ref.read(maintenanceProvider.notifier).state = true;
       }
     });
@@ -214,6 +219,51 @@ class _KararAppState extends ConsumerState<KararApp>
     } catch (_) {}
   }
 
+  void _showForegroundNotificationBanner(RemoteMessage message) {
+    final title = message.notification?.title;
+    final body = message.notification?.body;
+    if (title == null || !mounted) return;
+
+    final deepLink = message.data['deepLink'] as String?;
+    final destination = deepLink?.isNotEmpty == true
+        ? deepLink!
+        : _deepLinkFromLegacy(message.data);
+
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            if (body != null)
+              Text(
+                body,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 13),
+              ),
+          ],
+        ),
+        duration: const Duration(seconds: 5),
+        behavior: SnackBarBehavior.floating,
+        action: SnackBarAction(
+          label: 'Gör',
+          onPressed: () => _router.push(
+            _withNotificationSource(destination),
+          ),
+        ),
+      ),
+    );
+  }
+
   void _onMessageOpened(RemoteMessage message) {
     final type = message.data['type'] as String?;
     final deepLink = message.data['deepLink'] as String?;
@@ -277,6 +327,7 @@ class _KararAppState extends ConsumerState<KararApp>
     final themeMode = ref.watch(themeProvider);
     final fontSize = ref.watch(fontSizeProvider);
     final isMaintenance = ref.watch(maintenanceProvider);
+    final maintenanceMessage = ref.watch(maintenanceMessageProvider);
 
     return AppShortcuts(
       child: MaterialApp.router(
@@ -299,8 +350,11 @@ class _KararAppState extends ConsumerState<KararApp>
                 textScaler: TextScaler.linear(fontSize.factor),
               ),
               child: MaintenanceScreen(
-                onRetry: () =>
-                    ref.read(maintenanceProvider.notifier).state = false,
+                message: maintenanceMessage,
+                onRetry: () {
+                  ref.read(maintenanceMessageProvider.notifier).state = null;
+                  ref.read(maintenanceProvider.notifier).state = false;
+                },
               ),
             );
           }

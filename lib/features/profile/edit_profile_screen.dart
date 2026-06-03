@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/auth/auth_service.dart';
 import '../../core/providers.dart';
@@ -7,9 +8,9 @@ import '../../shared/widgets/karar_avatar.dart';
 import '../../shared/widgets/centered_content.dart';
 
 class EditProfileScreen extends ConsumerStatefulWidget {
-  const EditProfileScreen({super.key, required this.user});
+  const EditProfileScreen({super.key, this.user});
 
-  final AuthUser user;
+  final AuthUser? user;
 
   @override
   ConsumerState<EditProfileScreen> createState() => _EditProfileScreenState();
@@ -26,8 +27,9 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
   @override
   void initState() {
     super.initState();
-    _usernameCtrl = TextEditingController(text: widget.user.username);
-    _bioCtrl = TextEditingController(text: widget.user.bio ?? '');
+    final user = widget.user ?? ref.read(currentUserProvider);
+    _usernameCtrl = TextEditingController(text: user?.username ?? '');
+    _bioCtrl = TextEditingController(text: user?.bio ?? '');
   }
 
   @override
@@ -38,12 +40,17 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
   }
 
   bool get _usernameChanged =>
-      _usernameCtrl.text.trim() != widget.user.username;
+      _usernameCtrl.text.trim() != _currentUser?.username;
+
+  AuthUser? get _currentUser => widget.user ?? ref.read(currentUserProvider);
 
   Future<void> _save() async {
+    final user = _currentUser;
+    if (user == null) return;
+
     final newUsername = _usernameChanged ? _usernameCtrl.text.trim() : null;
     final newBio = _bioCtrl.text.trim();
-    final bioChanged = newBio != (widget.user.bio ?? '');
+    final bioChanged = newBio != (user.bio ?? '');
 
     if (newUsername == null && !bioChanged) {
       Navigator.pop(context);
@@ -51,7 +58,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
     }
 
     // Username cooldown check
-    if (newUsername != null && !widget.user.canChangeUsername) {
+    if (newUsername != null && !user.canChangeUsername) {
       setState(() =>
           _usernameError = 'Kullanıcı adını 30 günde bir değiştirebilirsin.');
       return;
@@ -103,15 +110,53 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final canChangeUsername = widget.user.canChangeUsername;
-    final changedAt = widget.user.usernameChangedAt;
+    final user = ref.watch(currentUserProvider) ?? widget.user;
+    if (user == null) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Profili Düzenle'),
+          centerTitle: true,
+        ),
+        body: CenteredContent(
+          maxWidth: 420,
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.account_circle_outlined,
+                  size: 56,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Profilini düzenlemek için giriş yapmalısın.',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: () =>
+                      context.push('/auth/login?returnTo=/profile/edit'),
+                  child: const Text('Giriş yap'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    final canChangeUsername = user.canChangeUsername;
+    final changedAt = user.usernameChangedAt;
 
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
 
-        final bioChanged = _bioCtrl.text.trim() != (widget.user.bio ?? '');
+        final bioChanged = _bioCtrl.text.trim() != (user.bio ?? '');
 
         if (!_usernameChanged && !bioChanged) {
           if (context.mounted) Navigator.pop(context);
@@ -170,7 +215,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                 child: Column(
                   children: [
                     KararAvatar(
-                      username: widget.user.username,
+                      username: user.username,
                       radius: 48,
                       fontSize: 32,
                     ),
@@ -186,8 +231,8 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
               Text(
                 'Kullanıcı adı',
                 style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+                      fontWeight: FontWeight.bold,
+                    ),
               ),
               const SizedBox(height: 8),
               TextField(
@@ -223,8 +268,8 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
               Text(
                 'Biyografi',
                 style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+                      fontWeight: FontWeight.bold,
+                    ),
               ),
               const SizedBox(height: 8),
               ValueListenableBuilder<TextEditingValue>(
@@ -248,6 +293,5 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
     );
   }
 
-  String _formatDate(DateTime dt) =>
-      '${dt.day}/${dt.month}/${dt.year}';
+  String _formatDate(DateTime dt) => '${dt.day}/${dt.month}/${dt.year}';
 }

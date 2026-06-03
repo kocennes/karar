@@ -52,7 +52,7 @@ class DiscoverFeedNotifier extends AsyncNotifier<DiscoverFeedState> {
             );
         repo.sendDiscoverEvent(
           postId: postId,
-          eventType: 'vote',
+          eventType: voteType == VoteType.hakli ? 'vote_hakli' : 'vote_haksiz',
           impressionToken: impressionToken ?? item.impressionToken,
           rankingReason: item.rankingReason,
         );

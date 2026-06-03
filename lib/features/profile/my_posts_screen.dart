@@ -62,6 +62,7 @@ class MyPostsScreen extends ConsumerWidget {
   }
 }
 
+
 class _MyPostsList extends ConsumerWidget {
   const _MyPostsList();
 
@@ -107,6 +108,8 @@ class _MyPostsList extends ConsumerWidget {
               PostCard(
                 post: post,
                 onTap: () => context.push('/posts/${post.id}', extra: post),
+                onDeleted: () =>
+                    ref.read(myPostsProvider.notifier).removePost(post.id),
               ),
             ],
           );
@@ -182,4 +185,3 @@ class _ModerationStatusBanner extends StatelessWidget {
     );
   }
 }
-

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/providers.dart';
+import '../../core/settings/preferences_provider.dart';
 import '../../core/theme/app_colors.dart';
 import '../../shared/models/post.dart';
 import '../../shared/widgets/centered_content.dart';
@@ -76,6 +77,7 @@ class NotificationsScreen extends ConsumerWidget {
       return const Column(
         children: [
           webPushBanner,
+          _NotificationControls(),
           _DigestWidget(),
           Expanded(
             child: EmptyState(
@@ -91,6 +93,7 @@ class NotificationsScreen extends ConsumerWidget {
     return Column(
       children: [
         webPushBanner,
+        const _NotificationControls(),
         Expanded(
           child: RefreshIndicator(
             onRefresh: () => ref.read(notificationsProvider.notifier).load(),
@@ -105,6 +108,130 @@ class NotificationsScreen extends ConsumerWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _NotificationControls extends ConsumerWidget {
+  const _NotificationControls();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final prefs = ref.watch(userPreferencesProvider);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 2),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            ActionChip(
+              avatar: const Icon(Icons.notifications_active_outlined, size: 18),
+              label:
+                  Text(prefs.pushEnabled ? 'İzin açık' : 'Bildirim izni ver'),
+              onPressed: () => _requestPermission(context, ref),
+            ),
+            const SizedBox(width: 8),
+            ActionChip(
+              avatar: const Icon(Icons.volume_up_outlined, size: 18),
+              label:
+                  Text(prefs.soundEnabled ? 'Ses açık' : 'Bildirim sesini aç'),
+              onPressed: () => _enableSound(context, ref),
+            ),
+            const SizedBox(width: 8),
+            ActionChip(
+              avatar: const Icon(Icons.notifications_paused_outlined, size: 18),
+              label: const Text('Sessize al'),
+              onPressed: () => _showMuteSheet(context, ref),
+            ),
+            const SizedBox(width: 8),
+            ActionChip(
+              avatar: const Icon(Icons.tune_outlined, size: 18),
+              label: const Text('Tercihleri yönet'),
+              onPressed: () => context.push('/settings'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _requestPermission(BuildContext context, WidgetRef ref) async {
+    await ref
+        .read(userPreferencesProvider.notifier)
+        .update((s) => s.copyWith(pushEnabled: true));
+    final notifications = ref.read(notificationServiceProvider);
+    await notifications.maybeRequestPermission(force: true);
+    final denied = await notifications.isDenied();
+    if (!context.mounted || !denied) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(notifications.deniedPermissionHelpText),
+        action: notifications.canOpenPlatformNotificationSettings
+            ? SnackBarAction(
+                label: 'Ayarlar',
+                onPressed: () => notifications.openSettings(),
+              )
+            : null,
+      ),
+    );
+  }
+
+  Future<void> _enableSound(BuildContext context, WidgetRef ref) async {
+    await ref
+        .read(userPreferencesProvider.notifier)
+        .update((s) => s.copyWith(soundEnabled: true, pushEnabled: true));
+    await ref.read(notificationServiceProvider).openSettings();
+  }
+
+  Future<void> _showMuteSheet(BuildContext context, WidgetRef ref) async {
+    final duration = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            ListTile(
+              leading: const Icon(Icons.schedule_outlined),
+              title: const Text('1 saat'),
+              onTap: () => Navigator.pop(ctx, '1h'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.today_outlined),
+              title: const Text('Bugün'),
+              onTap: () => Navigator.pop(ctx, 'today'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.date_range_outlined),
+              title: const Text('7 gün'),
+              onTap: () => Navigator.pop(ctx, '7d'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.notifications_off_outlined),
+              title: const Text('Süresiz'),
+              onTap: () => Navigator.pop(ctx, 'indefinite'),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (duration == null || !context.mounted) return;
+
+    final success =
+        await ref.read(notificationsProvider.notifier).mute(duration);
+    if (!context.mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          success
+              ? 'Bildirimler sessize alındı.'
+              : 'Sessize alma kaydedilemedi. Tekrar dene.',
+        ),
+      ),
     );
   }
 }

@@ -82,7 +82,8 @@ public sealed class NotificationRateLimiter(
 
     public static NotificationPriority GetPriority(string type) => type switch
     {
-        NotificationTypes.ModerationResult or NotificationTypes.SystemAnnouncement => NotificationPriority.Critical,
+        NotificationTypes.ModerationResult or NotificationTypes.SystemAnnouncement
+            or NotificationTypes.CrisisSupport => NotificationPriority.Critical,
         NotificationTypes.ReplyOnComment or NotificationTypes.Mention or NotificationTypes.Follow
             or NotificationTypes.VerdictMilestone or NotificationTypes.ViralPostOwner => NotificationPriority.High,
         _ => NotificationPriority.Normal,
@@ -105,6 +106,90 @@ public sealed class NotificationRateLimiter(
     public static int GetDailyLimit(DateTimeOffset deviceCreatedAt, DateTimeOffset utcNow)
     {
         return utcNow - deviceCreatedAt < TimeSpan.FromHours(48) ? 1 : 2;
+    }
+
+    // ─── Per-post / per-category fatigue guards ──────────────────────────────
+
+    private static readonly TimeSpan PostCooldown = TimeSpan.FromHours(1);
+    private static readonly TimeSpan CategoryCooldown = TimeSpan.FromMinutes(30);
+    private const int CategoryCooldownLimit = 2;
+
+    /// Returns false (suppress) when a push was already sent for this post within the last hour.
+    /// Uses SETNX: sets the key on first call (allow), returns false if key exists (suppress).
+    public async Task<bool> CheckPostCooldownAsync(
+        Guid deviceId, Guid postId, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        var key = $"notif:post_cd:{deviceId:N}:{postId:N}";
+        try
+        {
+            return await redis.GetDb().StringSetAsync(key, "1", PostCooldown, StackExchange.Redis.When.NotExists);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Post cooldown check failed for device {DeviceId} post {PostId}", deviceId, postId);
+            return true;
+        }
+    }
+
+    /// Maps a notification type to a broad category for fatigue tracking.
+    public static string GetNotificationCategory(string type) => type switch
+    {
+        NotificationTypes.CommentOnPost or NotificationTypes.ReplyOnComment
+            or NotificationTypes.Mention => "comments",
+        NotificationTypes.VerdictMilestone or NotificationTypes.VerdictReminder
+            or NotificationTypes.ViralPostOwner => "verdicts",
+        NotificationTypes.TrendAlert or NotificationTypes.FollowNewPost => "trends",
+        NotificationTypes.Follow => "social",
+        NotificationTypes.WeeklyDigest => "digest",
+        _ => "system",
+    };
+
+    /// Sliding-window category guard: max 2 pushes per category per 30 minutes.
+    /// "system" and "digest" categories are exempt.
+    public async Task<bool> CheckCategoryCooldownAsync(
+        Guid deviceId, string type, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        var category = GetNotificationCategory(type);
+        if (category is "system" or "digest") return true;
+
+        var key = $"notif:cat_cd:{deviceId:N}:{category}";
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var cutoffMs = nowMs - (long)CategoryCooldown.TotalMilliseconds;
+        var expSec = (long)CategoryCooldown.TotalSeconds + 60;
+
+        const string script = """
+            local key      = KEYS[1]
+            local nowMs    = tonumber(ARGV[1])
+            local cutoffMs = tonumber(ARGV[2])
+            local limit    = tonumber(ARGV[3])
+            local expSec   = tonumber(ARGV[4])
+
+            redis.call('ZREMRANGEBYSCORE', key, '-inf', cutoffMs)
+
+            local count = redis.call('ZCARD', key)
+            if count >= limit then return 0 end
+
+            local member = tostring(nowMs) .. '-' .. tostring(count)
+            redis.call('ZADD', key, nowMs, member)
+            redis.call('EXPIRE', key, expSec)
+            return 1
+            """;
+
+        try
+        {
+            var result = await redis.GetDb().ScriptEvaluateAsync(
+                script,
+                keys: new RedisKey[] { key },
+                values: new RedisValue[] { nowMs, cutoffMs, CategoryCooldownLimit, expSec });
+            return (int)result == 1;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Category cooldown check failed for device {DeviceId} type {Type}", deviceId, type);
+            return true;
+        }
     }
 
     // ─── Sliding-window rate limit ───────────────────────────────────────────

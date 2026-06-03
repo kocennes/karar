@@ -35,6 +35,28 @@ public sealed class StoreComplianceSmokeTests
     }
 
     [Fact]
+    public void ModerationDecisionNotifications_RequireRuleAndAppealPath()
+    {
+        var contracts = TestRepoPaths.ReadText("backend", "Karar.Api", "Contracts", "Requests.cs");
+        var program = TestRepoPaths.ReadText("backend", "Karar.Api", "Program.cs");
+        var dispatcher = TestRepoPaths.ReadText("backend", "Karar.Api", "Services", "NotificationDispatcher.cs");
+
+        contracts.Should().Contain("JsonPropertyName(\"rule_violated\")");
+        contracts.Should().Contain("string RuleViolated");
+
+        var notifyBlock = Slice(
+            program,
+            "app.MapPost(\"/api/v1/admin/moderation/{targetType}/{targetId:guid}/notify\"",
+            "// ── ADMIN USERS DATA EXPORT");
+        notifyBlock.Should().Contain("Kural ihlali:");
+        notifyBlock.Should().Contain("rule_violated = ruleViolated");
+        notifyBlock.Should().Contain("appeal_path = \"/settings/moderation-history\"");
+        notifyBlock.Should().Contain("INSERT INTO notifications (device_id, type, title, body, post_id, payload)");
+
+        dispatcher.Should().Contain("NotificationTypes.ModerationResult => \"/settings/moderation-history\"");
+    }
+
+    [Fact]
     public void HiddenRemovedAndUnderReviewContent_AreExcludedFromDiscoverySurfaces()
     {
         var program = TestRepoPaths.ReadText("backend", "Karar.Api", "Program.cs");

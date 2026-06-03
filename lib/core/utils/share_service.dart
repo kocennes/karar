@@ -1,5 +1,6 @@
 import 'package:share_plus/share_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import '../analytics/analytics_service.dart';
 import '../../shared/models/post.dart';
 
@@ -16,25 +17,32 @@ class ShareService {
     final String url = '$_baseUrl/posts/${post.id}';
     final String text = _buildShareText(post, url);
 
-    if (kIsWeb) {
-      // Web specific sharing logic could go here if needed, 
-      // but share_plus handles it via Navigator.share if available.
+    final ShareResult result;
+    try {
+      result = await Share.share(
+        text,
+        subject: 'Karar: ${post.title}',
+      );
+    } catch (_) {
+      if (kIsWeb) {
+        await Clipboard.setData(ClipboardData(text: url));
+      }
+      return;
     }
 
-    await Share.share(
-      text,
-      subject: 'Karar: ${post.title}',
-    );
-
-    await analyticsService.logPostShared(
-      postId: post.id,
-      category: post.category.name,
-    );
+    if (result.status == ShareResultStatus.success) {
+      await analyticsService.logPostShared(
+        postId: post.id,
+        category: post.category.name,
+      );
+    } else if (kIsWeb && result.status == ShareResultStatus.unavailable) {
+      await Clipboard.setData(ClipboardData(text: url));
+    }
   }
 
   String _buildShareText(Post post, String url) {
     final total = post.voteCountHakli + post.voteCountHaksiz;
-    
+
     String stats = '';
     if (total >= 10) {
       stats = '$total kişi oyladı · %${post.hakliPercent} Haklı · ';
@@ -44,8 +52,21 @@ class ShareService {
   }
 
   Future<void> shareApp() async {
-    const String text = 'Karar: Topluluk Yargılıyor. Anlaşmazlıklarını anonim paylaş, topluluk karar versin. Hemen indir: $_baseUrl';
-    
-    await Share.share(text);
+    const String text =
+        'Karar: Topluluk Yargılıyor. Anlaşmazlıklarını anonim paylaş, topluluk karar versin. Hemen indir: $_baseUrl';
+
+    final ShareResult result;
+    try {
+      result = await Share.share(text);
+    } catch (_) {
+      if (kIsWeb) {
+        await Clipboard.setData(const ClipboardData(text: _baseUrl));
+      }
+      return;
+    }
+
+    if (kIsWeb && result.status == ShareResultStatus.unavailable) {
+      await Clipboard.setData(const ClipboardData(text: _baseUrl));
+    }
   }
 }

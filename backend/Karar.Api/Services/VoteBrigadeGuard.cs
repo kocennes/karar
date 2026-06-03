@@ -26,9 +26,9 @@ public sealed class VoteBrigadeGuard
         if (voterIpBlock is not null)
         {
             var ipCount = await CountVotesByIpBlockAsync(connection, transaction, postId, voterIpBlock);
-            if (ipCount >= SuppressThreshold)
+            if (ipCount > SuppressThreshold)
             {
-                await QuarantineByIpBlockAsync(connection, transaction, postId, voterIpBlock);
+                await SuppressByIpBlockAsync(connection, transaction, postId, voterIpBlock);
                 var alertId = await InsertAdminAlertAsync(
                     connection, transaction, postId, ipCount,
                     ipConcentration: 1.0, detectionKind: "ip_block");
@@ -38,9 +38,9 @@ public sealed class VoteBrigadeGuard
 
         // --- Fingerprint prefix check ---
         var fpResult = await CheckFingerprintClusterAsync(connection, transaction, postId);
-        if (fpResult.Count >= SuppressThreshold)
+        if (fpResult.Count > SuppressThreshold)
         {
-            await QuarantineByFingerprintPrefixAsync(connection, transaction, postId, fpResult.Prefix);
+            await SuppressByFingerprintPrefixAsync(connection, transaction, postId, fpResult.Prefix);
             var alertId = await InsertAdminAlertAsync(
                 connection, transaction, postId, fpResult.Count,
                 ipConcentration: fpResult.Concentration, detectionKind: "fingerprint_prefix");
@@ -64,7 +64,6 @@ public sealed class VoteBrigadeGuard
             WHERE v.post_id = @postId
               AND v.voter_ip_block = @ipBlock
               AND v.created_at >= NOW() - (@windowMinutes * INTERVAL '1 minute')
-              AND v.is_quarantined = FALSE
             """,
             connection, transaction);
         cmd.Parameters.AddWithValue("postId", postId);
@@ -87,7 +86,6 @@ public sealed class VoteBrigadeGuard
                 JOIN devices d ON d.id = v.device_id
                 WHERE v.post_id = @postId
                   AND v.created_at >= NOW() - (@windowMinutes * INTERVAL '1 minute')
-                  AND v.is_quarantined = FALSE
             ),
             prefix_counts AS (
                 SELECT fp_prefix, COUNT(DISTINCT device_id)::int AS cnt
@@ -120,7 +118,7 @@ public sealed class VoteBrigadeGuard
         return (count, prefix, concentration);
     }
 
-    private static async Task QuarantineByIpBlockAsync(
+    private static async Task SuppressByIpBlockAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         Guid postId,
@@ -130,12 +128,15 @@ public sealed class VoteBrigadeGuard
         await using var cmd = new NpgsqlCommand(
             """
             UPDATE votes
-            SET is_quarantined = TRUE,
-                quarantined     = TRUE
+            SET is_suppressed = TRUE,
+                suppression_reason = 'brigade_ip_block',
+                suppressed_at = NOW(),
+                is_quarantined = TRUE,
+                quarantined = TRUE
             WHERE post_id = @postId
               AND voter_ip_block = @ipBlock
               AND created_at >= NOW() - (@windowMinutes * INTERVAL '1 minute')
-              AND is_quarantined = FALSE
+              AND is_suppressed = FALSE
             """,
             connection, transaction);
         cmd.Parameters.AddWithValue("postId", postId);
@@ -144,7 +145,7 @@ public sealed class VoteBrigadeGuard
         await cmd.ExecuteNonQueryAsync();
     }
 
-    private static async Task QuarantineByFingerprintPrefixAsync(
+    private static async Task SuppressByFingerprintPrefixAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         Guid postId,
@@ -154,14 +155,17 @@ public sealed class VoteBrigadeGuard
         await using var cmd = new NpgsqlCommand(
             """
             UPDATE votes v
-            SET is_quarantined = TRUE,
-                quarantined     = TRUE
+            SET is_suppressed = TRUE,
+                suppression_reason = 'brigade_fingerprint_prefix',
+                suppressed_at = NOW(),
+                is_quarantined = TRUE,
+                quarantined = TRUE
             FROM devices d
             WHERE v.device_id = d.id
               AND v.post_id = @postId
               AND LEFT(d.fingerprint, @prefixLen) = @fpPrefix
               AND v.created_at >= NOW() - (@windowMinutes * INTERVAL '1 minute')
-              AND v.is_quarantined = FALSE
+              AND v.is_suppressed = FALSE
             """,
             connection, transaction);
         cmd.Parameters.AddWithValue("postId", postId);

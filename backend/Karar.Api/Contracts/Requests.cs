@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Serialization;
 
 namespace Karar.Api.Contracts;
 
@@ -78,6 +79,11 @@ public sealed record MuteNotificationsRequest(
     [Required] string Duration
 );
 
+public sealed record AcceptPolicyRequest(
+    [Range(1, short.MaxValue)] int TermsVersion,
+    [Range(1, short.MaxValue)] int PrivacyVersion
+);
+
 public sealed record TwoFactorCodeRequest(
     [Required, StringLength(6, MinimumLength = 6)] string Code
 );
@@ -155,6 +161,13 @@ public sealed record GrowthEventRequest(
     [StringLength(200)] string? ReferrerCode = null
 );
 
+public sealed record LoopCompletedRequest(
+    [Required, StringLength(200)] string PostId,
+    [Required, StringLength(50)] string Source,
+    [Range(0, 7200)] int DwellSeconds = 0,
+    [Range(0, 7200)] int LoopDurationSeconds = 0
+);
+
 public sealed record AdminScheduledReportRequest(
     [Required] string Report,
     [Required] string Frequency,
@@ -223,7 +236,9 @@ public sealed record VerifyEmailRequest(
 );
 
 public sealed record AdminNotifyRequest(
-    [Required, StringLength(500, MinimumLength = 5)] string Message
+    [Required, StringLength(500, MinimumLength = 5)] string Message,
+    [property: JsonPropertyName("rule_violated")]
+    [Required, StringLength(120, MinimumLength = 3)] string RuleViolated
 );
 
 public sealed record AdminBanSubnetRequest(
@@ -283,3 +298,12 @@ public sealed record ConfirmChangeEmailRequest(
 public sealed record RecoverAccountRequest(
     [Required] string Token
 );
+
+public sealed record ApplyEnforcementRequest(
+    [Required] string TargetType,       // 'device' | 'user'
+    [Required] string TargetId,
+    [Required] string Action,           // 'warning' | 'strike' | 'temp_ban' | 'perm_ban'
+    string? Reason = null,
+    DateTimeOffset? ExpiresAt = null    // temp_ban için
+);
+

@@ -34,24 +34,53 @@ if (firebaseConfig.apiKey) {
   });
 }
 
+function targetUrlForNotification(data) {
+  const deepLink = data.deepLink || data.deeplink;
+  if (deepLink && deepLink.startsWith('/')) {
+    return deepLink;
+  }
+
+  const postId = data.postId || data.referenceId;
+  if (postId) {
+    const suffix = data.commentId
+      ? `?commentId=${encodeURIComponent(data.commentId)}&source=notification`
+      : '?source=notification';
+    return `/posts/${encodeURIComponent(postId)}${suffix}`;
+  }
+
+  return '/notifications';
+}
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
   const data = event.notification.data || {};
-  const postId = data.referenceId || data.postId;
-  const targetUrl = postId ? `/posts/${postId}` : '/';
+  const targetUrl = targetUrlForNotification(data);
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      const target = new URL(targetUrl, self.location.origin);
+
       for (const client of clientList) {
         const url = new URL(client.url);
-        if (url.pathname === targetUrl && 'focus' in client) {
-          return client.focus();
+        if (url.origin === target.origin && 'focus' in client) {
+          if (url.pathname === target.pathname && url.search === target.search) {
+            return client.focus();
+          }
+
+          if ('navigate' in client) {
+            return client.navigate(target.href).then((navigatedClient) => {
+              if (navigatedClient && 'focus' in navigatedClient) {
+                return navigatedClient.focus();
+              }
+              return client.focus();
+            });
+          }
         }
       }
 
       if (clients.openWindow) {
-        return clients.openWindow(targetUrl);
+        return clients.openWindow(target.href);
       }
 
       return undefined;

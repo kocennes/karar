@@ -21,6 +21,8 @@ import '../../features/legal/contact_screen.dart';
 import '../../features/legal/copyright_complaint_screen.dart';
 import '../../features/legal/legal_screen.dart';
 import '../../features/legal/moderation_transparency_screen.dart';
+import '../../features/legal/policy_acceptance_screen.dart';
+import '../../features/legal/privacy_summary_screen.dart';
 import '../../features/notifications/notifications_screen.dart';
 import '../../features/post_detail/post_detail_screen.dart';
 import '../../features/profile/edit_profile_screen.dart';
@@ -116,7 +118,9 @@ GoRouter buildRouter(AppServices services) => GoRouter(
                     GoRoute(
                       path: 'edit',
                       builder: (_, state) => EditProfileScreen(
-                        user: state.extra! as AuthUser,
+                        user: state.extra is AuthUser
+                            ? state.extra as AuthUser
+                            : null,
                       ),
                     ),
                   ],
@@ -236,6 +240,29 @@ GoRouter buildRouter(AppServices services) => GoRouter(
         GoRoute(
           path: '/legal/moderation-transparency',
           builder: (_, __) => const ModerationTransparencyScreen(),
+        ),
+
+        // ── Policy re-acceptance (major policy updates) ──────────────────────
+        GoRoute(
+          path: '/policy-acceptance',
+          builder: (_, state) {
+            final extra = state.extra as (PolicyStatus, AuthService);
+            return PolicyAcceptanceScreen(
+              policyStatus: extra.$1,
+              authService: extra.$2,
+            );
+          },
+        ),
+        GoRoute(
+          path: '/legal/faq',
+          builder: (_, __) => const LegalScreen(
+            title: 'Sık Sorulan Sorular',
+            assetPath: 'docs/faq.md',
+          ),
+        ),
+        GoRoute(
+          path: '/legal/privacy-summary',
+          builder: (_, __) => const PrivacySummaryScreen(),
         ),
 
         // ── Post detail (top-level so any tab can navigate here) ─────────────

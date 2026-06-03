@@ -18,12 +18,15 @@ class BannerAdWidget extends ConsumerStatefulWidget {
 class _BannerAdWidgetState extends ConsumerState<BannerAdWidget> {
   BannerAd? _ad;
   var _loaded = false;
+  var _adsEnabled = false;
+  var _loadFailed = false;
 
   @override
   void initState() {
     super.initState();
-    final adsEnabled = ref.read(remoteConfigProvider).getBool(RemoteConfigKeys.adsEnabled);
-    if (adsEnabled) _loadAd();
+    _adsEnabled =
+        ref.read(remoteConfigProvider).getBool(RemoteConfigKeys.adsEnabled);
+    if (_adsEnabled) _loadAd();
   }
 
   void _loadAd() {
@@ -36,10 +39,17 @@ class _BannerAdWidgetState extends ConsumerState<BannerAdWidget> {
       size: AdSize.banner,
       request: const AdRequest(),
       listener: BannerAdListener(
-        onAdLoaded: (_) => setState(() => _loaded = true),
+        onAdLoaded: (_) {
+          if (!mounted) return;
+          setState(() => _loaded = true);
+        },
         onAdFailedToLoad: (ad, _) {
           ad.dispose();
-          setState(() => _ad = null);
+          if (!mounted) return;
+          setState(() {
+            _ad = null;
+            _loadFailed = true;
+          });
         },
       ),
     )..load();
@@ -53,14 +63,15 @@ class _BannerAdWidgetState extends ConsumerState<BannerAdWidget> {
 
   @override
   Widget build(BuildContext context) {
-    if (_ad == null) return const SizedBox.shrink();
-    
+    if (!_adsEnabled || _loadFailed) return const SizedBox.shrink();
+
     return Container(
       height: 50,
       width: double.infinity,
       alignment: Alignment.center,
       color: Colors.transparent,
-      child: _loaded ? AdWidget(ad: _ad!) : const SizedBox.shrink(),
+      child:
+          _loaded && _ad != null ? AdWidget(ad: _ad!) : const SizedBox.shrink(),
     );
   }
 }

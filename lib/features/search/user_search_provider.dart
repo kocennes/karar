@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/app_services.dart';
@@ -46,34 +44,20 @@ class UserSearchState {
 }
 
 class UserSearchNotifier extends Notifier<UserSearchState> {
-  Timer? _debounce;
-
   @override
-  UserSearchState build() {
-    ref.onDispose(() {
-      _debounce?.cancel();
-      _debounce = null;
-    });
-    return const UserSearchState();
-  }
+  UserSearchState build() => const UserSearchState();
 
   void search(String query) {
-    _debounce?.cancel();
     if (query.length < 3) {
       state = state.copyWith(results: [], query: query, clearError: true);
       return;
     }
 
     state = state.copyWith(isLoading: true, query: query, clearError: true);
-
-    _debounce = Timer(const Duration(milliseconds: 300), () async {
-      await _fetch(query);
-    });
+    _fetch(query);
   }
 
   void clear() {
-    _debounce?.cancel();
-    _debounce = null;
     state = const UserSearchState();
   }
 
@@ -82,8 +66,7 @@ class UserSearchNotifier extends Notifier<UserSearchState> {
       final mock = [
         UserSearchResult(username: query, karma: 247, postCount: 12),
         UserSearchResult(username: '${query}m', karma: 8, postCount: 3),
-        UserSearchResult(
-            username: '${query}_user', karma: 1203, postCount: 38),
+        UserSearchResult(username: '${query}_user', karma: 1203, postCount: 38),
       ];
       if (state.query == query) {
         state = state.copyWith(results: mock, isLoading: false);
@@ -94,11 +77,13 @@ class UserSearchNotifier extends Notifier<UserSearchState> {
     try {
       final repo = ref.read(postRepositoryProvider);
       final raw = await repo.searchUsers(query);
-      final results = raw.map((u) => UserSearchResult(
-            username: u['username'] as String,
-            karma: u['karma'] as int? ?? 0,
-            postCount: u['postCount'] as int? ?? 0,
-          )).toList();
+      final results = raw
+          .map((u) => UserSearchResult(
+                username: u['username'] as String,
+                karma: u['karma'] as int? ?? 0,
+                postCount: u['postCount'] as int? ?? 0,
+              ))
+          .toList();
       if (state.query == query) {
         state = state.copyWith(results: results, isLoading: false);
       }

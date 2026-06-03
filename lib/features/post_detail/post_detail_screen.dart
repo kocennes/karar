@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -58,6 +60,7 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
   late final ConfettiController _confettiController;
   final _dwellStopwatch = Stopwatch();
   bool _interacted = false;
+  Timer? _meaningfulDwellTimer;
 
   @override
   void initState() {
@@ -70,6 +73,8 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
       ref.read(historyProvider.notifier).markAsSeen(widget.postId);
       ref.read(sessionTrackerProvider).incrementPostViewed();
       ref.read(postRepositoryProvider).recordView(widget.postId);
+
+      ref.read(judgmentLoopTrackerProvider).onImpression(widget.postId, widget.source ?? 'feed');
 
       if (widget.post != null) {
         ref
@@ -99,11 +104,23 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
               isGuest: ref.read(currentUserProvider) == null,
             );
       }
+
+      _meaningfulDwellTimer = Timer(const Duration(seconds: 5), () {
+        if (!mounted) return;
+        final elapsed = _dwellStopwatch.elapsed.inSeconds;
+        ref.read(judgmentLoopTrackerProvider).onMeaningfulDwell(widget.postId, elapsed);
+        ref.read(analyticsServiceProvider).logMeaningfulDwell(
+              postId: widget.postId,
+              dwellSeconds: elapsed,
+              source: widget.source ?? 'feed',
+            );
+      });
     });
   }
 
   @override
   void dispose() {
+    _meaningfulDwellTimer?.cancel();
     if (_dwellStopwatch.isRunning) {
       _dwellStopwatch.stop();
       final seconds = _dwellStopwatch.elapsed.inSeconds;
@@ -357,12 +374,26 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
         setState(() => _interacted = true);
         _confettiController.play();
 
+        final loopTracker = ref.read(judgmentLoopTrackerProvider);
+        loopTracker.onVoted(widget.postId);
+
         ref.read(analyticsServiceProvider).logVerdictViewed(
               postId: widget.postId,
               voteType: next.post!.myVote!.name,
               source: widget.source ?? 'post_detail',
               rankingReason: next.post?.rankingReason,
             );
+
+        final completedLoop = loopTracker.onVerdictViewed(widget.postId);
+        if (completedLoop != null) {
+          ref.read(analyticsServiceProvider).logCompletedJudgmentLoop(
+                postId: completedLoop.postId,
+                source: completedLoop.source,
+                dwellSeconds: completedLoop.dwellSeconds,
+                loopDurationSeconds: completedLoop.loopDurationSeconds,
+                votedBeforeResult: completedLoop.votedBeforeResult,
+              );
+        }
 
         if (widget.referrerCode != null) {
           ref.read(analyticsServiceProvider).logShareLandingCompletedJudgment(
@@ -979,7 +1010,7 @@ class _CommentHeader extends StatelessWidget {
           ),
         ),
         PopupMenuButton<String>(
-          tooltip: 'Yorum sirala',
+          tooltip: 'Yorum sırala',
           constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
           initialValue: selectedSort,
           onSelected: onSortChanged,
@@ -987,7 +1018,7 @@ class _CommentHeader extends StatelessWidget {
             PopupMenuItem(value: 'top', child: Text('En iyi')),
             PopupMenuItem(value: 'new', child: Text('En yeni')),
             PopupMenuItem(value: 'old', child: Text('En eski')),
-            PopupMenuItem(value: 'controversial', child: Text('Tartismali')),
+            PopupMenuItem(value: 'controversial', child: Text('Tartışmalı')),
           ],
           child: InputChip(
             avatar: const Icon(Icons.sort, size: 18),
@@ -1001,7 +1032,7 @@ class _CommentHeader extends StatelessWidget {
   static String _sortLabel(String sort) => switch (sort) {
         'new' => 'En yeni',
         'old' => 'En eski',
-        'controversial' => 'Tartismali',
+        'controversial' => 'Tartışmalı',
         _ => 'En iyi',
       };
 }
@@ -1137,7 +1168,8 @@ class _PostContent extends ConsumerWidget {
           _TopRationaleCard(comment: topRationale!),
         ],
         if (balancedRationale != null &&
-            balancedRationale?.id != topRationale?.id) ...[
+            balancedRationale?.id != topRationale?.id &&
+            post.voteCountTotal >= 40) ...[
           const SizedBox(height: 16),
           _BalancedRationaleCard(comment: balancedRationale!),
         ],

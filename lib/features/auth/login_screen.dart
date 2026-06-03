@@ -28,7 +28,10 @@ class _LoginScreenState extends State<LoginScreen> {
   var _obscure = true;
   var _showMfaField = false;
   var _useBackupCode = false;
+  var _failedAttempts = 0;
   String? _error;
+
+  bool get _isLocked => _failedAttempts >= 5;
 
   @override
   void dispose() {
@@ -55,6 +58,7 @@ class _LoginScreenState extends State<LoginScreen> {
             ? _backupCodeCtrl.text.trim()
             : null,
       );
+      _failedAttempts = 0;
       widget.onSuccess?.call();
     } on ApiException catch (e) {
       if (e.code == 'EMAIL_NOT_VERIFIED') {
@@ -70,9 +74,13 @@ class _LoginScreenState extends State<LoginScreen> {
         });
         return;
       }
-      setState(() => _error = _friendlyError(e));
+      _failedAttempts++;
+      setState(() =>
+          _error = _isLocked ? null : _friendlyError(e));
     } catch (e) {
-      setState(() => _error = _friendlyError(e));
+      _failedAttempts++;
+      setState(() =>
+          _error = _isLocked ? null : _friendlyError(e));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -237,7 +245,43 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                   ],
-                  if (_error != null) ...[
+                  if (_isLocked) ...[
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: colorScheme.errorContainer.withValues(alpha: 0.4),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: colorScheme.error),
+                      ),
+                      child: Column(
+                        children: [
+                          Icon(Icons.lock_clock_outlined,
+                              color: colorScheme.error, size: 32),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Hesabın geçici olarak kilitlendi',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '5 başarısız deneme yapıldı. Lütfen 30 dakika bekle veya şifreni sıfırla.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                color: colorScheme.onSurfaceVariant,
+                                fontSize: 13),
+                          ),
+                          const SizedBox(height: 12),
+                          TextButton(
+                            onPressed: () =>
+                                context.push('/auth/forgot-password'),
+                            child: const Text('Şifremi Sıfırla'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ] else if (_error != null) ...[
                     const SizedBox(height: 16),
                     Container(
                       padding: const EdgeInsets.all(12),
@@ -259,7 +303,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   const SizedBox(height: 32),
                   KararButton(
                     label: 'Giriş Yap',
-                    onPressed: _submit,
+                    onPressed: _isLocked ? null : _submit,
                     isLoading: _isLoading,
                   ),
                   const SizedBox(height: 16),

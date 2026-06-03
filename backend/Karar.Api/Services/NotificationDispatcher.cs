@@ -159,6 +159,7 @@ public sealed class NotificationDispatcher(
                     notification.UserId,
                     notification.Type,
                     priority,
+                    notification.PostId,
                     connection,
                     ct);
 
@@ -597,6 +598,7 @@ public sealed class NotificationDispatcher(
         NotificationTypes.VerdictMilestone or NotificationTypes.ViralPostOwner => "milestones",
         NotificationTypes.TrendAlert or NotificationTypes.FollowNewPost => "viral",
         NotificationTypes.WeeklyDigest => "digest",
+        NotificationTypes.CrisisSupport => "system",
         _ => "system",
     };
 
@@ -611,6 +613,7 @@ public sealed class NotificationDispatcher(
         NotificationTypes.WeeklyDigest => "DIGEST",
         NotificationTypes.ModerationResult => "MODERATION",
         NotificationTypes.SystemAnnouncement => "SYSTEM",
+        NotificationTypes.CrisisSupport => "SUPPORT",
         _ => "GENERAL",
     };
 
@@ -623,7 +626,7 @@ public sealed class NotificationDispatcher(
                 or NotificationTypes.TrendAlert or NotificationTypes.FollowNewPost
                 when postId.HasValue => $"/posts/{postId}",
             NotificationTypes.WeeklyDigest => "/notifications",
-            NotificationTypes.ModerationResult => "/profile",
+            NotificationTypes.ModerationResult => "/settings/moderation-history",
             NotificationTypes.SystemAnnouncement => "/notifications",
             _ => "/notifications",
         };

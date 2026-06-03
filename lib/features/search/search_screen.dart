@@ -80,7 +80,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
 
   void _onChanged(String value) {
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 300), () {
+    _debounce = Timer(const Duration(milliseconds: 400), () {
       final q = value.trim();
       ref.read(searchProvider.notifier).search(q);
       ref.read(userSearchProvider.notifier).search(q);
@@ -223,7 +223,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
         return PostCard(
           post: post,
           searchQuery: state.query,
-          onTap: () => context.push('/posts/${post.id}?source=search', extra: post),
+          onTap: () =>
+              context.push('/posts/${post.id}?source=search', extra: post),
         );
       },
     );

@@ -43,6 +43,7 @@ final discoverProvider = FutureProvider.autoDispose<DiscoverData>((ref) async {
     fresh: discover.fresh,
     cityTrending: discover.cityTrending,
     city: discover.city,
+    serendipity: discover.serendipity,
     trendTopics: discover.trendTopics,
     todaysPosts: todays,
   );

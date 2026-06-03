@@ -22,10 +22,11 @@ public sealed class DataRetentionService(Db db, AffinityService affinity, ILogge
                     logger.LogInformation("Anonymized {Count} deleted users", anonymizedUsers);
                 }
 
-                // Weekly category affinity decay (0.9× every 7 days)
+                // Weekly category affinity decay (0.9× every 7 days) — hem user hem device tablosu
                 if (DateTime.UtcNow - _lastWeeklyDecay >= TimeSpan.FromDays(7))
                 {
                     await affinity.ApplyWeeklyDecayAsync();
+                    await affinity.ApplyWeeklyDeviceDecayAsync();
                     _lastWeeklyDecay = DateTime.UtcNow;
                     logger.LogInformation("Applied weekly affinity decay");
                 }

@@ -112,6 +112,15 @@ class NotificationsNotifier extends Notifier<NotificationsState> {
     }
   }
 
+  Future<void> syncUnreadCount() async {
+    if (!AppRuntime.useRemoteApi) return;
+
+    try {
+      final unreadCount = await _repo.fetchUnreadCount();
+      state = state.copyWith(unreadCount: unreadCount);
+    } catch (_) {}
+  }
+
   Future<void> markAllRead() async {
     try {
       if (AppRuntime.useRemoteApi) await _repo.markAllRead();
@@ -119,6 +128,7 @@ class NotificationsNotifier extends Notifier<NotificationsState> {
         items: [for (final item in state.items) item.copyWith(isRead: true)],
         unreadCount: 0,
       );
+      await syncUnreadCount();
     } catch (_) {}
   }
 
@@ -149,6 +159,14 @@ class NotificationsNotifier extends Notifier<NotificationsState> {
     }
   }
 
+  Future<void> markOpened(String id) async {
+    if (!AppRuntime.useRemoteApi) return;
+
+    try {
+      await _repo.markOpened(id);
+    } catch (_) {}
+  }
+
   Future<void> dismiss(String id) async {
     final item = state.items.where((i) => i.id == id).firstOrNull;
     if (item == null) return;
@@ -156,7 +174,10 @@ class NotificationsNotifier extends Notifier<NotificationsState> {
     // Optimistic update
     final wasUnread = !item.isRead;
     state = state.copyWith(
-      items: [for (final i in state.items) if (i.id != id) i],
+      items: [
+        for (final i in state.items)
+          if (i.id != id) i
+      ],
       unreadCount: wasUnread
           ? (state.unreadCount - 1).clamp(0, state.unreadCount)
           : state.unreadCount,
@@ -176,13 +197,25 @@ class NotificationsNotifier extends Notifier<NotificationsState> {
 
     // Optimistic update
     state = state.copyWith(
-      items: [for (final i in state.items) if (!i.isRead) i],
+      items: [
+        for (final i in state.items)
+          if (!i.isRead) i
+      ],
     );
 
     try {
       if (AppRuntime.useRemoteApi) await _repo.clearRead();
     } catch (_) {
       load();
+    }
+  }
+
+  Future<bool> mute(String duration) async {
+    try {
+      if (AppRuntime.useRemoteApi) await _repo.mute(duration);
+      return true;
+    } catch (_) {
+      return false;
     }
   }
 }
@@ -201,9 +234,9 @@ final digestPostsProvider = FutureProvider.autoDispose<List<Post>>((ref) async {
   }
   try {
     return (await ref.read(postRepositoryProvider).fetchFeed(
-          sort: 'trending',
-          limit: 3,
-        ))
+              sort: 'trending',
+              limit: 3,
+            ))
         .posts;
   } catch (_) {
     return [];

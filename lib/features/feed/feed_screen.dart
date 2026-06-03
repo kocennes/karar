@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/providers.dart';
 import '../../core/layout/breakpoints.dart';
@@ -40,14 +41,17 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
   ProviderSubscription<AsyncValue<ConnectivityStatus>>? _connectivitySub;
   final _itemKeys = <int, GlobalKey>{};
   int _scrollDepthMilestoneFired = 0;
+  bool _firstVoteCoachmarkDone = true;
 
   static const _fabThreshold = 400.0;
   static const _scrollMilestones = [5, 10, 25, 50];
+  static const _firstVoteCoachmarkKey = 'first_vote_coachmark_done';
 
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
+    _loadFirstVoteCoachmarkState();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!context.mounted) return;
@@ -127,8 +131,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
     final maxExtent = _scrollController.position.maxScrollExtent;
     if (maxExtent <= 0) return;
     final ratio = _scrollController.position.pixels / maxExtent;
-    final estimatedPosition =
-        (ratio * postCount).round().clamp(0, postCount);
+    final estimatedPosition = (ratio * postCount).round().clamp(0, postCount);
     for (final milestone in _scrollMilestones) {
       if (estimatedPosition >= milestone &&
           milestone > _scrollDepthMilestoneFired) {
@@ -169,6 +172,26 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
       return;
     }
     await ref.read(feedProvider.notifier).refresh();
+  }
+
+  Future<void> _loadFirstVoteCoachmarkState() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _firstVoteCoachmarkDone = prefs.getBool(_firstVoteCoachmarkKey) ?? false;
+    });
+  }
+
+  Future<void> _completeFirstVoteCoachmark() async {
+    if (_firstVoteCoachmarkDone) return;
+    setState(() => _firstVoteCoachmarkDone = true);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_firstVoteCoachmarkKey, true);
+  }
+
+  Future<void> _voteFromFeed(Post post, VoteType voteType) async {
+    await _completeFirstVoteCoachmark();
+    ref.read(feedProvider.notifier).vote(post.id, voteType.name);
   }
 
   void _syncStateFromRoute() {
@@ -353,9 +376,24 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
     final feedState = ref.watch(feedProvider);
     final focusedIndex = ref.watch(feedFocusIndexProvider);
     final filtered = feedState.posts;
+    final showFirstVoteCoachmark = !_firstVoteCoachmarkDone &&
+        filtered.isNotEmpty &&
+        !filtered.any((post) => post.myVote != null);
 
     final categoriesAsync = ref.watch(categoriesProvider);
-    final categories = categoriesAsync.valueOrNull ?? [];
+    final followedIds = ref.watch(followedCategoriesProvider);
+    final rawCategories = categoriesAsync.valueOrNull ?? [];
+
+    final categories = rawCategories.isEmpty
+        ? rawCategories
+        : [
+            ...rawCategories.where((c) => c.id == 0),
+            ...rawCategories
+                .where((c) => c.id != 0 && followedIds.contains(c.id)),
+            ...rawCategories
+                .where((c) => c.id != 0 && !followedIds.contains(c.id)),
+          ];
+
     final connectivity = ref.watch(connectivityProvider);
     final isDisconnected =
         connectivity.value == ConnectivityStatus.isDisconnected;
@@ -409,68 +447,83 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
           AnimatedSize(
             duration: const Duration(milliseconds: 300),
             curve: Curves.easeInOut,
-            child: _showTopBar 
-              ? Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (!context.isDesktop) const WeeklyFeaturedCard(),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-                      child: SegmentedButton<_FeedSort>(
-                        segments: const [
-                          ButtonSegment(
-                            value: _FeedSort.trending,
-                            label: Text('Trend'),
-                            icon: Icon(Icons.local_fire_department_outlined),
-                          ),
-                          ButtonSegment(
-                            value: _FeedSort.newest,
-                            label: Text('Yeni'),
-                            icon: Icon(Icons.schedule_outlined),
-                          ),
-                        ],
-                        selected: {_sortMode},
-                        onSelectionChanged: (s) => _onSortChanged(s.first),
-                      ),
-                    ),
-                    if (categories.isNotEmpty)
-                      SizedBox(
-                        height: 52,
-                        child: ListView.separated(
-                          padding:
-                              const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          scrollDirection: Axis.horizontal,
-                          itemCount: categories.length,
-                          separatorBuilder: (_, __) => const SizedBox(width: 8),
-                          itemBuilder: (context, index) {
-                            final category = categories[index];
-                            final isFollowed = ref
-                                .watch(followedCategoriesProvider)
-                                .contains(category.id);
-
-                            return GestureDetector(
-                              onLongPress: () => _showCategoryOptions(category),
-                              child: ChoiceChip(
-                                label: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(category.name),
-                                    if (isFollowed && category.id != 0) ...[
-                                      const SizedBox(width: 4),
-                                      const Icon(Icons.star, size: 12),
-                                    ],
-                                  ],
-                                ),
-                                selected: _selectedCategoryId == category.id,
-                                onSelected: (_) => _onCategoryChanged(category.id),
+            child: _showTopBar
+                ? Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (!context.isDesktop) const WeeklyFeaturedCard(),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                        child: SegmentedButton<_FeedSort>(
+                          segments: [
+                            ButtonSegment(
+                              value: _FeedSort.trending,
+                              icon: Tooltip(
+                                message: 'Trend',
+                                child: const Icon(
+                                    Icons.local_fire_department_outlined),
                               ),
-                            );
-                          },
+                            ),
+                            ButtonSegment(
+                              value: _FeedSort.newest,
+                              icon: Tooltip(
+                                message: 'Yeni',
+                                child: const Icon(Icons.schedule_outlined),
+                              ),
+                            ),
+                            ButtonSegment(
+                              value: _FeedSort.controversial,
+                              icon: Tooltip(
+                                message: 'Tartışmalı',
+                                child: const Icon(Icons.whatshot_outlined),
+                              ),
+                            ),
+                          ],
+                          selected: {_sortMode},
+                          onSelectionChanged: (s) => _onSortChanged(s.first),
                         ),
                       ),
-                  ],
-                )
-              : const SizedBox.shrink(),
+                      if (categories.isNotEmpty)
+                        SizedBox(
+                          height: 52,
+                          child: ListView.separated(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 8),
+                            scrollDirection: Axis.horizontal,
+                            itemCount: categories.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(width: 8),
+                            itemBuilder: (context, index) {
+                              final category = categories[index];
+                              final isFollowed = ref
+                                  .watch(followedCategoriesProvider)
+                                  .contains(category.id);
+
+                              return GestureDetector(
+                                onLongPress: () =>
+                                    _showCategoryOptions(category),
+                                child: ChoiceChip(
+                                  label: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(category.name),
+                                      if (isFollowed && category.id != 0) ...[
+                                        const SizedBox(width: 4),
+                                        const Icon(Icons.star, size: 12),
+                                      ],
+                                    ],
+                                  ),
+                                  selected: _selectedCategoryId == category.id,
+                                  onSelected: (_) =>
+                                      _onCategoryChanged(category.id),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                    ],
+                  )
+                : const SizedBox.shrink(),
           ),
           AnimatedSwitcher(
             duration: const Duration(milliseconds: 220),
@@ -494,9 +547,19 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
           ),
           Expanded(
             child: context.isDesktop
-                ? _buildDesktopLayout(feedState, filtered, focusedIndex)
+                ? _buildDesktopLayout(
+                    feedState,
+                    filtered,
+                    focusedIndex,
+                    showFirstVoteCoachmark,
+                  )
                 : CenteredContent(
-                    child: _buildBody(feedState, filtered, focusedIndex)),
+                    child: _buildBody(
+                    feedState,
+                    filtered,
+                    focusedIndex,
+                    showFirstVoteCoachmark,
+                  )),
           ),
         ],
       ),
@@ -504,13 +567,23 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
   }
 
   Widget _buildDesktopLayout(
-      FeedState feedState, List<Post> posts, int? focusedIndex) {
+    FeedState feedState,
+    List<Post> posts,
+    int? focusedIndex,
+    bool showFirstVoteCoachmark,
+  ) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Expanded(
           child: CenteredContent(
-              child: _buildBody(feedState, posts, focusedIndex)),
+            child: _buildBody(
+              feedState,
+              posts,
+              focusedIndex,
+              showFirstVoteCoachmark,
+            ),
+          ),
         ),
         const VerticalDivider(width: 1),
         SizedBox(width: 300, child: _buildRightPanel()),
@@ -619,7 +692,12 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
     );
   }
 
-  Widget _buildBody(FeedState feedState, List<Post> posts, int? focusedIndex) {
+  Widget _buildBody(
+    FeedState feedState,
+    List<Post> posts,
+    int? focusedIndex,
+    bool showFirstVoteCoachmark,
+  ) {
     if (feedState.isLoading && posts.isEmpty) {
       return ListView.separated(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
@@ -673,7 +751,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
       );
     }
 
-    return RefreshIndicator(
+    final listView = RefreshIndicator(
       onRefresh: _onRefresh,
       child: ListView.separated(
         controller: _scrollController,
@@ -693,10 +771,55 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
               post: post,
               isSeen: seenPosts.contains(post.id),
               isFocused: focusedIndex == index,
-              onTap: () => context.push('/posts/${post.id}?source=feed', extra: post),
+              showFirstVoteCoachmark: showFirstVoteCoachmark && index == 0,
+              onDismissFirstVoteCoachmark: _completeFirstVoteCoachmark,
+              onVote: (voteType) => _voteFromFeed(post, voteType),
+              onTap: () =>
+                  context.push('/posts/${post.id}?source=feed', extra: post),
             ),
           );
         },
+      ),
+    );
+
+    if (feedState.isFallback) {
+      return Column(
+        children: [
+          const _FallbackBanner(),
+          Expanded(child: listView),
+        ],
+      );
+    }
+    return listView;
+  }
+}
+
+class _FallbackBanner extends StatelessWidget {
+  const _FallbackBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        children: [
+          Icon(
+            Icons.explore_outlined,
+            size: 16,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Bu akışta henüz paylaşım yok — popüler gönderiler',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -704,15 +827,18 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
 
 enum _FeedSort {
   trending,
-  newest;
+  newest,
+  controversial;
 
   String get queryValue => switch (this) {
         _FeedSort.trending => 'trending',
         _FeedSort.newest => 'new',
+        _FeedSort.controversial => 'controversial',
       };
 
   static _FeedSort fromQuery(String? value) => switch (value) {
         'new' || 'newest' => _FeedSort.newest,
+        'controversial' => _FeedSort.controversial,
         _ => _FeedSort.trending,
       };
 }

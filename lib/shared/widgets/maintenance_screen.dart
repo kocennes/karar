@@ -3,8 +3,13 @@ import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 
 class MaintenanceScreen extends StatelessWidget {
-  const MaintenanceScreen({super.key, required this.onRetry});
+  const MaintenanceScreen({
+    super.key,
+    this.message,
+    required this.onRetry,
+  });
 
+  final String? message;
   final VoidCallback onRetry;
 
   @override
@@ -28,7 +33,7 @@ class MaintenanceScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  'Karar birazdan geri dönecek.',
+                  message ?? 'Karar birazdan geri dönecek.',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: AppColors.textSecondary,
                       ),

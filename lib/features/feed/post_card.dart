@@ -21,6 +21,10 @@ class PostCard extends ConsumerStatefulWidget {
     this.isSeen = false,
     this.isFocused = false,
     this.searchQuery,
+    this.onDeleted,
+    this.showFirstVoteCoachmark = false,
+    this.onDismissFirstVoteCoachmark,
+    this.onVote,
   });
 
   final Post post;
@@ -28,6 +32,10 @@ class PostCard extends ConsumerStatefulWidget {
   final bool isSeen;
   final bool isFocused;
   final String? searchQuery;
+  final VoidCallback? onDeleted;
+  final bool showFirstVoteCoachmark;
+  final VoidCallback? onDismissFirstVoteCoachmark;
+  final ValueChanged<VoteType>? onVote;
 
   @override
   ConsumerState<PostCard> createState() => _PostCardState();
@@ -121,7 +129,10 @@ class _PostCardState extends ConsumerState<PostCard> {
                                     color: AppColors.textTertiary,
                                   ),
                         ),
-                        _MoreMenu(post: post),
+                        _MoreMenu(
+                          post: post,
+                          onDeleted: widget.onDeleted,
+                        ),
                       ],
                     ),
                     const SizedBox(height: 8),
@@ -208,53 +219,61 @@ class _PostCardState extends ConsumerState<PostCard> {
                                 ),
                               ),
                               if (post.hasImage) ...[
-                            const SizedBox(width: 12),
-                            Stack(
-                              children: [
-                                PostImage(
-                                  imageUrl: post.imageUrls.isNotEmpty ? post.imageUrls.first : post.imageUrl!,
-                                  width: 76,
-                                  height: 76,
-                                  borderRadius: 10,
-                                  memCacheWidth: 200,
-                                  heroTag: 'post_image_${post.id}_0',
-                                ),
-                                if (post.imageUrls.length > 1)
-                                  Positioned(
-                                    right: 4,
-                                    bottom: 4,
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: Colors.black54,
-                                        borderRadius: BorderRadius.circular(4),
-                                      ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          const Icon(Icons.copy, size: 8, color: Colors.white),
-                                          const SizedBox(width: 2),
-                                          Text(
-                                            '${post.imageUrls.length}',
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 8,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
+                                const SizedBox(width: 12),
+                                Stack(
+                                  children: [
+                                    PostImage(
+                                      imageUrl: post.imageUrls.isNotEmpty
+                                          ? post.imageUrls.first
+                                          : post.imageUrl!,
+                                      width: 76,
+                                      height: 76,
+                                      borderRadius: 10,
+                                      memCacheWidth: 200,
+                                      heroTag: 'post_image_${post.id}_0',
                                     ),
-                                  ),
+                                    if (post.imageUrls.length > 1)
+                                      Positioned(
+                                        right: 4,
+                                        bottom: 4,
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 4, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: Colors.black54,
+                                            borderRadius:
+                                                BorderRadius.circular(4),
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              const Icon(Icons.copy,
+                                                  size: 8, color: Colors.white),
+                                              const SizedBox(width: 2),
+                                              Text(
+                                                '${post.imageUrls.length}',
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 8,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
                               ],
-                            ),
-                          ],
                             ],
                           ),
                           if (widget.searchQuery != null &&
                               widget.searchQuery!.isNotEmpty &&
-                              !post.title.toLowerCase().contains(widget.searchQuery!.toLowerCase()) &&
-                              post.content.toLowerCase().contains(widget.searchQuery!.toLowerCase()))
+                              !post.title.toLowerCase().contains(
+                                  widget.searchQuery!.toLowerCase()) &&
+                              post.content
+                                  .toLowerCase()
+                                  .contains(widget.searchQuery!.toLowerCase()))
                             _ContentSnippet(
                               content: post.content,
                               query: widget.searchQuery!,
@@ -276,7 +295,47 @@ class _PostCardState extends ConsumerState<PostCard> {
                       ),
                     ],
                     const SizedBox(height: 14),
+                    if (widget.showFirstVoteCoachmark)
+                      _FirstVoteCoachmark(
+                        onDismiss: widget.onDismissFirstVoteCoachmark,
+                      ),
                     VoteBar(post: post, isCompact: true),
+                    if (widget.onVote != null) ...[
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _FeedVoteButton(
+                              key: const ValueKey('feed_vote_hakli_button'),
+                              label: 'HaklÄ±',
+                              icon: Icons.check_circle_outline,
+                              color: Theme.of(context).brightness ==
+                                      Brightness.dark
+                                  ? AppColors.darkHakli
+                                  : AppColors.hakli,
+                              selected: post.myVote == VoteType.hakli,
+                              onPressed: () =>
+                                  widget.onVote?.call(VoteType.hakli),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _FeedVoteButton(
+                              key: const ValueKey('feed_vote_haksiz_button'),
+                              label: 'HaksÄ±z',
+                              icon: Icons.cancel_outlined,
+                              color: Theme.of(context).brightness ==
+                                      Brightness.dark
+                                  ? AppColors.darkHaksiz
+                                  : AppColors.haksiz,
+                              selected: post.myVote == VoteType.haksiz,
+                              onPressed: () =>
+                                  widget.onVote?.call(VoteType.haksiz),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                     const SizedBox(height: 14),
                     Wrap(
                       spacing: 16,
@@ -310,9 +369,130 @@ class _PostCardState extends ConsumerState<PostCard> {
   }
 }
 
+class _FirstVoteCoachmark extends StatelessWidget {
+  const _FirstVoteCoachmark({this.onDismiss});
+
+  final VoidCallback? onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Semantics(
+        label: 'Ilk oyunu at ipucu',
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+          decoration: BoxDecoration(
+            color: colorScheme.primaryContainer,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: colorScheme.primary.withValues(alpha: 0.18),
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.touch_app_outlined,
+                size: 20,
+                color: colorScheme.onPrimaryContainer,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Ilk oyunu at',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                            color: colorScheme.onPrimaryContainer,
+                            fontWeight: FontWeight.w800,
+                          ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Hakli ya da Haksiz sec.',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: colorScheme.onPrimaryContainer,
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                key: const ValueKey('first_vote_coachmark_dismiss'),
+                tooltip: 'Kapat',
+                constraints: const BoxConstraints(
+                  minWidth: 44,
+                  minHeight: 44,
+                ),
+                onPressed: onDismiss,
+                icon: const Icon(Icons.close, size: 18),
+                color: colorScheme.onPrimaryContainer,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FeedVoteButton extends StatelessWidget {
+  const _FeedVoteButton({
+    super.key,
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final String label;
+  final IconData icon;
+  final Color color;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final foreground = selected ? Colors.white : color;
+    return SizedBox(
+      height: 44,
+      child: OutlinedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 18),
+        label: Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: foreground,
+          backgroundColor: selected ? color : color.withValues(alpha: 0.08),
+          side: BorderSide(color: color.withValues(alpha: selected ? 1 : 0.32)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          textStyle: Theme.of(context)
+              .textTheme
+              .labelLarge
+              ?.copyWith(fontWeight: FontWeight.w800),
+        ),
+      ),
+    );
+  }
+}
+
 class _MoreMenu extends ConsumerWidget {
-  const _MoreMenu({required this.post});
+  const _MoreMenu({required this.post, this.onDeleted});
+
   final Post post;
+  final VoidCallback? onDeleted;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -460,6 +640,7 @@ class _MoreMenu extends ConsumerWidget {
               try {
                 await ref.read(postRepositoryProvider).deletePost(post.id);
                 ref.read(feedProvider.notifier).removePost(post.id);
+                onDeleted?.call();
                 messenger.showSnackBar(
                   const SnackBar(content: Text('Gönderi silindi.')),
                 );
@@ -592,7 +773,8 @@ class _ContentSnippet extends StatelessWidget {
     final start = (idx - _contextPad).clamp(0, content.length);
     final end = (idx + query.length + _contextPad).clamp(0, content.length);
     final raw = content.substring(start, end).trim();
-    final snippet = '${start > 0 ? '…' : ''}$raw${end < content.length ? '…' : ''}';
+    final snippet =
+        '${start > 0 ? '…' : ''}$raw${end < content.length ? '…' : ''}';
 
     return Padding(
       padding: const EdgeInsets.only(top: 4),

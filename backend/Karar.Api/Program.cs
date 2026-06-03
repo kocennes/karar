@@ -3625,6 +3625,15 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
         );
     }
 
+    if (userId is not null && await IsBlockedByPostAuthorAsync(connection, transaction, id, userId.Value))
+    {
+        await transaction.RollbackAsync();
+        return Results.Json(
+            new ErrorEnvelope(new ErrorBody("BLOCKED_BY_AUTHOR", "Bu içeriğe oy veremezsiniz.")),
+            statusCode: StatusCodes.Status403Forbidden
+        );
+    }
+
     var (oldVote, oldTotal, curHakli, curHaksiz, categoryId, postCreatedAt) = await GetVoteContextAsync(connection, transaction, id, effectiveDeviceId.Value);
 
     if (postCreatedAt != DateTimeOffset.MinValue && postCreatedAt.AddDays(7) <= DateTimeOffset.UtcNow)
@@ -4139,6 +4148,16 @@ app.MapPost("/api/v1/posts/{id:guid}/comments", async (
         await transaction.RollbackAsync();
         return Unauthorized();
     }
+
+    if (userId is not null && await IsBlockedByPostAuthorAsync(connection, transaction, id, userId.Value))
+    {
+        await transaction.RollbackAsync();
+        return Results.Json(
+            new ErrorEnvelope(new ErrorBody("BLOCKED_BY_AUTHOR", "Bu içeriğe yorum yapamazsınız.")),
+            statusCode: StatusCodes.Status403Forbidden
+        );
+    }
+
     await using var command = new NpgsqlCommand(
         """
         INSERT INTO comments (
@@ -4213,7 +4232,7 @@ app.MapPost("/api/v1/posts/{id:guid}/comments", async (
 
     if (status == "active")
     {
-        await commentNotificationBatcher.HandleNewCommentAsync(id, effectiveDeviceId.Value, commentId, request.ParentId);
+        await commentNotificationBatcher.HandleNewCommentAsync(id, effectiveDeviceId.Value, commentId, request.ParentId, userId);
         sseManager.Broadcast(id, "new_comment", new { commentId, postId = id });
 
         // Record category affinity for logged-in user
@@ -14397,6 +14416,34 @@ static async Task<bool> IsPostOwnerAsync(
     command.Parameters.AddWithValue("postId", postId);
     command.Parameters.AddWithValue("deviceId", deviceId);
     command.Parameters.AddWithValue("userId", (object?)userId ?? DBNull.Value);
+    return (bool)(await command.ExecuteScalarAsync() ?? false);
+}
+
+// Returns true when the post author has blocked actorUserId.
+// Only meaningful for registered users — anonymous devices are not in blocked_users.
+static async Task<bool> IsBlockedByPostAuthorAsync(
+    NpgsqlConnection connection,
+    NpgsqlTransaction? transaction,
+    Guid postId,
+    Guid actorUserId
+)
+{
+    await using var command = new NpgsqlCommand(
+        """
+        SELECT EXISTS (
+            SELECT 1
+            FROM blocked_users bu
+            JOIN posts p ON p.user_id = bu.blocker_user_id
+            WHERE p.id = @postId
+              AND bu.blocked_user_id = @actorUserId
+              AND p.user_id IS NOT NULL
+        )
+        """,
+        connection,
+        transaction
+    );
+    command.Parameters.AddWithValue("postId", postId);
+    command.Parameters.AddWithValue("actorUserId", actorUserId);
     return (bool)(await command.ExecuteScalarAsync() ?? false);
 }
 

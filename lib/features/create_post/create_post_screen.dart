@@ -315,6 +315,9 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
                               .read(analyticsServiceProvider)
                               .logCreatePostContentStarted();
                         }
+                        ref
+                            .read(createPostProvider.notifier)
+                            .checkToxicity(text);
                       },
                       decoration: InputDecoration(
                         hintText: 'Durumu anlat... Diğer taraf ne yaptı?',
@@ -329,6 +332,33 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
                         ),
                       ),
                     ),
+                    if (state.toxicityScore >= 0.5)
+                      Container(
+                        margin: const EdgeInsets.only(top: 8),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.shade100,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.amber.shade300),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.warning_amber_rounded,
+                                color: Colors.amber.shade900, size: 20),
+                            const SizedBox(width: 12),
+                            const Expanded(
+                              child: Text(
+                                'Bu içerik topluluk kurallarına aykırı olabilir.',
+                                style: TextStyle(
+                                  color: Colors.black87,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     const SizedBox(height: 8),
 
                     // Image picker with web drag-drop support
@@ -439,7 +469,9 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
 
                     // Submit
                     FilledButton.icon(
-                      onPressed: state.isLoading ? null : _submit,
+                      onPressed: state.isLoading || state.toxicityScore >= 0.8
+                          ? null
+                          : _submit,
                       icon: state.isLoading
                           ? const SizedBox(
                               width: 18,
@@ -450,8 +482,8 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
                               ),
                             )
                           : const Icon(Icons.send),
-                      label:
-                          Text(state.isLoading ? 'Paylaşılıyor...' : 'Paylaş'),
+                      label: Text(
+                          state.isLoading ? 'Paylaşılıyor...' : 'Karar Al'),
                     ),
                   ],
                 ),

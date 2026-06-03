@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:in_app_review/in_app_review.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/ads/ad_service.dart';
 import '../../core/api/api_exception.dart';
@@ -57,15 +58,13 @@ class SettingsScreen extends ConsumerWidget {
               subtitle: 'Tüm push bildirimlerini aç/kapat',
               trailing: Switch(
                 value: prefs.pushEnabled,
-                onChanged: (v) => ref
-                    .read(userPreferencesProvider.notifier)
-                    .update((s) => s.copyWith(pushEnabled: v)),
+                onChanged: (v) => _setPushEnabled(context, ref, v),
               ),
             ),
             _SettingsTile(
               icon: Icons.volume_up_outlined,
               title: 'Bildirim sesi',
-              subtitle: 'Bildirim alındığında ses çal',
+              subtitle: 'Ses ve kanal ayarını cihazdan yönet',
               trailing: Switch(
                 value: prefs.soundEnabled,
                 onChanged: prefs.pushEnabled
@@ -74,6 +73,7 @@ class SettingsScreen extends ConsumerWidget {
                         .update((s) => s.copyWith(soundEnabled: v))
                     : null,
               ),
+              onTap: () => ref.read(notificationServiceProvider).openSettings(),
             ),
             _SettingsTile(
               icon: Icons.emoji_events_outlined,
@@ -184,18 +184,21 @@ class SettingsScreen extends ConsumerWidget {
               future: ref.read(notificationServiceProvider).isDenied(),
               builder: (context, snapshot) {
                 if (snapshot.data == true) {
+                  final notifications = ref.read(notificationServiceProvider);
                   return _SettingsTile(
                     icon: Icons.notifications_off_outlined,
                     title: 'Bildirimler kapalı',
-                    subtitle: 'Postların oylanınca haber alamazsın.',
+                    subtitle: notifications.deniedPermissionHelpText,
                     titleColor: Theme.of(context).colorScheme.error,
-                    trailing: TextButton(
-                      onPressed: () =>
-                          ref.read(notificationServiceProvider).openSettings(),
-                      child: const Text('Ayarlara Git'),
-                    ),
-                    onTap: () =>
-                        ref.read(notificationServiceProvider).openSettings(),
+                    trailing: notifications.canOpenPlatformNotificationSettings
+                        ? TextButton(
+                            onPressed: () => notifications.openSettings(),
+                            child: const Text('Ayarlara Git'),
+                          )
+                        : null,
+                    onTap: notifications.canOpenPlatformNotificationSettings
+                        ? () => notifications.openSettings()
+                        : null,
                   );
                 }
                 return const SizedBox.shrink();
@@ -242,6 +245,12 @@ class SettingsScreen extends ConsumerWidget {
 
             // ── Gizlilik ────────────────────────────────────────────────────────
             const _SectionHeader('Gizlilik'),
+            _SettingsTile(
+              icon: Icons.shield_outlined,
+              title: 'Gizlilik Özeti',
+              subtitle: 'Ne topluyoruz, neden ve ne kadar süre?',
+              onTap: () => context.push('/legal/privacy-summary'),
+            ),
             _SettingsTile(
               icon: Icons.how_to_vote_outlined,
               title: 'Oy gizliliği',
@@ -316,7 +325,8 @@ class SettingsScreen extends ConsumerWidget {
                       await ref
                           .read(authServiceProvider)
                           .clearPendingEmailChange();
-                      ref.read(pendingEmailChangeProvider.notifier).state = null;
+                      ref.read(pendingEmailChangeProvider.notifier).state =
+                          null;
                     },
                   );
                 },
@@ -407,17 +417,32 @@ class SettingsScreen extends ConsumerWidget {
                 onTap: () => context.push('/settings/moderation-history'),
               ),
 
-            // ── Uygulama ────────────────────────────────────────────────────────
-            const _SectionHeader('Uygulama'),
+            // ── Destek ──────────────────────────────────────────────────────────
+            const _SectionHeader('Destek'),
             const _SettingsTile(
               icon: Icons.star_outline,
               title: 'Uygulamayı değerlendir',
               onTap: _rateApp,
             ),
             _SettingsTile(
+              icon: Icons.help_outline,
+              title: 'Sık Sorulan Sorular',
+              subtitle: 'Merak ettiklerini buradan öğren',
+              onTap: () => context.push('/legal/faq'),
+            ),
+            _SettingsTile(
               icon: Icons.bug_report_outlined,
               title: 'Hata bildir',
               onTap: () => context.push('/settings/feedback'),
+            ),
+            _SettingsTile(
+              icon: Icons.mail_outline,
+              title: 'İletişim',
+              subtitle: 'destek@karar.app',
+              onTap: () async {
+                final uri = Uri(scheme: 'mailto', path: 'destek@karar.app');
+                if (await canLaunchUrl(uri)) await launchUrl(uri);
+              },
             ),
             _SettingsTile(
               icon: Icons.language_outlined,
@@ -568,6 +593,122 @@ class SettingsScreen extends ConsumerWidget {
         ThemeMode.dark => Icons.dark_mode_outlined,
         ThemeMode.system => Icons.brightness_auto_outlined,
       };
+
+  Future<void> _setPushEnabled(
+    BuildContext context,
+    WidgetRef ref,
+    bool enabled,
+  ) async {
+    if (!enabled) {
+      await _showReduceOrDisableSheet(context, ref);
+      return;
+    }
+
+    final preferences = ref.read(userPreferencesProvider.notifier);
+    final notifications = ref.read(notificationServiceProvider);
+    await preferences.update((s) => s.copyWith(pushEnabled: enabled));
+    await notifications.maybeRequestPermission(force: true);
+    final denied = await notifications.isDenied();
+    if (!context.mounted || !denied) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text(
+          'Bildirimler kapali. Istersen cihaz ayarlarindan tekrar acabilirsin.',
+        ),
+        action: SnackBarAction(
+          label: 'Ayarlar',
+          onPressed: () => notifications.openSettings(),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showReduceOrDisableSheet(
+      BuildContext context, WidgetRef ref) async {
+    final result = await showModalBottomSheet<_PushAction>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Bildirimleri azalt mı, yoksa tamamen kapat mı?',
+                style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Bildirimleri tamamen kapatırsan yorum, yanıt ve önemli güncellemeleri kaçırabilirsin.',
+                style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+              const SizedBox(height: 16),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.notifications_paused_outlined,
+                    color: Theme.of(ctx).colorScheme.primary),
+                title: const Text('Daha az bildirim al'),
+                subtitle: const Text(
+                    'Sadece yorumlar ve bahsedilmeler — trend ve özet bildirimleri kapanır'),
+                onTap: () => Navigator.pop(ctx, _PushAction.reduce),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.notifications_off_outlined,
+                    color: Theme.of(ctx).colorScheme.error),
+                title: Text('Bildirimleri tamamen kapat',
+                    style: TextStyle(color: Theme.of(ctx).colorScheme.error)),
+                subtitle: const Text('Hiçbir push bildirimi almayacaksın'),
+                onTap: () => Navigator.pop(ctx, _PushAction.disable),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.close_outlined),
+                title: const Text('Vazgeç'),
+                onTap: () => Navigator.pop(ctx, _PushAction.cancel),
+              ),
+              const SizedBox(height: 4),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (!context.mounted) return;
+    final notifications = ref.read(notificationServiceProvider);
+
+    switch (result) {
+      case _PushAction.reduce:
+        await ref.read(userPreferencesProvider.notifier).update(
+              (s) => s.copyWith(
+                notifyOnTrend: false,
+                notifyOnDigest: false,
+                verdictMilestone: false,
+              ),
+            );
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                  'Bildirimler azaltıldı. Sadece yorum ve bahsedilmeler gelecek.'),
+            ),
+          );
+        }
+      case _PushAction.disable:
+        await ref
+            .read(userPreferencesProvider.notifier)
+            .update((s) => s.copyWith(pushEnabled: false));
+        await notifications.deleteCurrentToken();
+      case _PushAction.cancel || null:
+        break;
+    }
+  }
 
   static Future<void> _rateApp() async {
     final review = InAppReview.instance;
@@ -771,7 +912,9 @@ class SettingsScreen extends ConsumerWidget {
             onPressed: () async {
               Navigator.pop(ctx);
               try {
-                // For underage closure, we just use deleteAccount but might add a specific reason later
+                await ref
+                    .read(notificationServiceProvider)
+                    .deleteCurrentToken();
                 await ref.read(authServiceProvider).deleteAccount();
                 ref.read(currentUserProvider.notifier).state = null;
                 if (context.mounted) {
@@ -814,36 +957,36 @@ class SettingsScreen extends ConsumerWidget {
               errorText = null;
             });
             try {
+              await ref.read(notificationServiceProvider).deleteCurrentToken();
               await ref.read(authServiceProvider).deleteAccount(
                     password: isPasswordAccount ? passwordCtrl.text : null,
                   );
               ref.read(currentUserProvider.notifier).state = null;
               if (!ctx.mounted) return;
               Navigator.pop(ctx);
-              if (context.mounted) {
-                await showDialog<void>(
-                  context: context,
-                  barrierDismissible: false,
-                  builder: (dialogCtx) => PopScope(
-                    canPop: false,
-                    child: AlertDialog(
-                      title: const Text('Hesabın kapatıldı'),
-                      content: const Text(
-                        '30 gün içinde geri alabilirsin. Hesabı yeniden etkinleştirmek için e-postana gönderilen linki kullan.',
-                      ),
-                      actions: [
-                        FilledButton(
-                          onPressed: () {
-                            Navigator.pop(dialogCtx);
-                            context.go('/');
-                          },
-                          child: const Text('Ana sayfaya dön'),
-                        ),
-                      ],
+              if (!context.mounted) return;
+              await showDialog<void>(
+                context: context,
+                barrierDismissible: false,
+                builder: (dialogCtx) => PopScope(
+                  canPop: false,
+                  child: AlertDialog(
+                    title: const Text('Hesabın kapatıldı'),
+                    content: const Text(
+                      'Oturumun kapatıldı. 30 gün içinde e-postana gönderilen link ile hesabını geri alabilirsin. Bu süre sonunda kimlik bilgilerin kalıcı olarak silinir; paylaştığın içerikler anonim olarak platformda kalır.',
                     ),
+                    actions: [
+                      FilledButton(
+                        onPressed: () {
+                          Navigator.pop(dialogCtx);
+                          if (context.mounted) context.go('/auth/login');
+                        },
+                        child: const Text('Tamam'),
+                      ),
+                    ],
                   ),
-                );
-              }
+                ),
+              );
             } on ApiException catch (e) {
               if (!ctx.mounted) return;
               setState(() {
@@ -854,7 +997,7 @@ class SettingsScreen extends ConsumerWidget {
               if (!ctx.mounted) return;
               setState(() {
                 isDeleting = false;
-                errorText = 'Hesap silinemedi. Tekrar dene.';
+                errorText = 'Hesap silinemedi. Lütfen tekrar dene.';
               });
             }
           }
@@ -866,7 +1009,10 @@ class SettingsScreen extends ConsumerWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Bu işlem hesabını kapatır. 30 gün sonra kimlik bilgilerin anonimleştirilir.',
+                  'Bu işlem geri alınabilir (30 gün). Onaylarsan:\n'
+                  '• Oturumun hemen kapatılır.\n'
+                  '• Kullanıcı adın, e-posta ve şifren 30 gün sonra silinir.\n'
+                  '• Paylaştığın içerikler anonim olarak kalır.',
                 ),
                 if (isPasswordAccount) ...[
                   const SizedBox(height: 16),
@@ -876,7 +1022,7 @@ class SettingsScreen extends ConsumerWidget {
                     obscureText: true,
                     autofocus: true,
                     decoration: InputDecoration(
-                        labelText: 'Şifre', errorText: errorText),
+                        labelText: 'Şifreni gir', errorText: errorText),
                     onSubmitted: (_) {
                       if (!isDeleting) submit();
                     },
@@ -884,18 +1030,24 @@ class SettingsScreen extends ConsumerWidget {
                 ] else if (errorText != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 12),
-                    child: Text(errorText!,
-                        style:
-                            TextStyle(color: Theme.of(ctx).colorScheme.error)),
+                    child: Text(
+                      errorText!,
+                      style: TextStyle(color: Theme.of(ctx).colorScheme.error),
+                    ),
                   ),
               ],
             ),
             actions: [
               TextButton(
-                  onPressed: isDeleting ? null : () => Navigator.pop(ctx),
-                  child: const Text('Vazgeç')),
+                onPressed: isDeleting ? null : () => Navigator.pop(ctx),
+                child: const Text('Vazgeç'),
+              ),
               FilledButton.tonalIcon(
                 onPressed: isDeleting ? null : submit,
+                style: FilledButton.styleFrom(
+                  backgroundColor: Theme.of(ctx).colorScheme.errorContainer,
+                  foregroundColor: Theme.of(ctx).colorScheme.onErrorContainer,
+                ),
                 icon: isDeleting
                     ? const SizedBox(
                         width: 18,
@@ -964,6 +1116,8 @@ class _SettingsTile extends StatelessWidget {
     );
   }
 }
+
+enum _PushAction { reduce, disable, cancel }
 
 class _PendingEmailBanner extends StatelessWidget {
   const _PendingEmailBanner({

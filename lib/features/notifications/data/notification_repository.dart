@@ -71,6 +71,13 @@ class NotificationRepository {
     );
   }
 
+  Future<void> mute(String duration) async {
+    await _apiClient.postJson<void>(
+      '/api/v1/notifications/mute',
+      body: {'duration': duration},
+    );
+  }
+
   NotificationItem _fromJson(Map<String, Object?> json) {
     return NotificationItem(
       id: json['id'] as String,

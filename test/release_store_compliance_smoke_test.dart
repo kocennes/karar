@@ -39,12 +39,38 @@ void main() {
 
       expect(report, contains('widget.repository.report'));
       expect(report, contains('/legal/community'));
+      expect(report, contains("'personal_info'"));
+      expect(report, contains("'misinformation'"));
+      expect(report, contains("'illegal'"));
+      expect(report, isNot(contains("'doxxing'")));
+      expect(report, isNot(contains("'fake_story'")));
+      expect(report, isNot(contains("'illegal_content'")));
       expect(postDetail, contains('ContentUnavailableView'));
       expect(postDetail, contains('under_review'));
       expect(postDetail, contains('auto_hidden'));
       expect(postDetail, contains('_confirmBlock'));
       expect(authService, contains('/blocked'));
       expect(settings, contains('/settings/blocked-users'));
+    });
+
+    test('account deletion flow satisfies App Store 5.1.1 and KVKK', () {
+      final settings = _read('lib/features/settings/settings_screen.dart');
+      final authService = _read('lib/core/auth/auth_service.dart');
+
+      expect(settings, contains('deleteAccount'),
+          reason: 'Settings screen must call deleteAccount');
+      expect(settings, contains('/auth/login'),
+          reason: 'After deletion, user must be redirected to login');
+      expect(settings, contains('anonim'),
+          reason: 'Dialog must explain content anonymisation (KVKK)');
+      expect(settings, contains('30 gün'),
+          reason: 'Dialog must mention 30-day grace period');
+      expect(settings, contains('Oturumun'),
+          reason: 'Dialog must state the session will be closed');
+      expect(authService, contains('deleteJson'),
+          reason: 'AuthService must call DELETE /api/v1/users/me via deleteJson');
+      expect(authService, contains('clearAuthTokens'),
+          reason: 'AuthService must clear tokens after deletion');
     });
 
     test('demo account and smoke release command are documented', () {

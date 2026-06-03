@@ -3,6 +3,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 
 import '../api/api_client.dart';
 import '../api/api_endpoints.dart';
+import '../api/api_exception.dart';
 import '../storage/secure_storage.dart';
 import '../web/tab_auth_sync.dart';
 
@@ -67,18 +68,24 @@ class AuthService {
     required SecureStorage storage,
     required ApiClient apiClient,
     void Function(LogoutReason)? onLogout,
+    Future<void> Function()? onBeforeLogout,
   })  : _storage = storage,
         _apiClient = apiClient,
+        _onBeforeLogout = onBeforeLogout,
         _onLogout = onLogout,
         _googleSignIn = GoogleSignIn(scopes: ['email']);
 
   final SecureStorage _storage;
   final ApiClient _apiClient;
   final GoogleSignIn _googleSignIn;
+  Future<void> Function()? _onBeforeLogout;
   void Function(LogoutReason)? _onLogout;
 
   void setOnLogout(void Function(LogoutReason) callback) =>
       _onLogout = callback;
+
+  void setOnBeforeLogout(Future<void> Function() callback) =>
+      _onBeforeLogout = callback;
 
   AuthUser? _currentUser;
   AuthUser? get currentUser => _currentUser;
@@ -200,6 +207,7 @@ class AuthService {
   }
 
   Future<void> logout({LogoutReason reason = LogoutReason.manual}) async {
+    await _onBeforeLogout?.call();
     final refreshToken = await _storage.readRefreshToken();
     if (refreshToken != null && reason == LogoutReason.manual) {
       try {
@@ -222,10 +230,13 @@ class AuthService {
       ApiEndpoints.userMe,
       body: password == null ? null : {'password': password},
     );
+    await _onBeforeLogout?.call();
     await _googleSignIn.signOut();
     await FirebaseAuth.instance.signOut();
     await _storage.clearAuthTokens();
     _currentUser = null;
+    TabAuthSync.notifyLoggedOut();
+    _onLogout?.call(LogoutReason.manual);
   }
 
   Future<String?> refreshAccessToken() async {
@@ -280,11 +291,18 @@ class AuthService {
   }
 
   Future<bool> isUsernameAvailable(String username) async {
-    final json = await _apiClient.getJson<Map<String, Object?>>(
-      ApiEndpoints.usernameAvailability,
-      query: {'username': username},
-    );
-    return json['available'] as bool? ?? false;
+    try {
+      await _apiClient.getJson<void>(
+        ApiEndpoints.authCheckUsername,
+        queryParams: {'username': username},
+      );
+      return true;
+    } on ApiException catch (e) {
+      if (e.statusCode == 409) return false;
+      rethrow;
+    } catch (_) {
+      rethrow;
+    }
   }
 
   Future<void> changePassword({
@@ -455,11 +473,34 @@ class AuthService {
         ApiEndpoints.authMigrateGuestData,
       );
 
+  Future<PolicyStatus> checkPolicyStatus() async {
+    final json = await _apiClient.getJson<Map<String, Object?>>(
+      ApiEndpoints.policyStatus,
+    );
+    return PolicyStatus.fromJson(json);
+  }
+
+  Future<void> acceptPolicy({
+    required int termsVersion,
+    required int privacyVersion,
+  }) =>
+      _apiClient.postJson<void>(
+        ApiEndpoints.acceptPolicy,
+        body: {'termsVersion': termsVersion, 'privacyVersion': privacyVersion},
+      );
+
   Future<ModerationSummary> fetchModerationHistory() async {
     final json = await _apiClient.getJson<Map<String, Object?>>(
       ApiEndpoints.userMeModerationHistory,
     );
     return ModerationSummary.fromJson(json);
+  }
+
+  Future<ReportHistoryPage> fetchReportHistory() async {
+    final json = await _apiClient.getJson<Map<String, Object?>>(
+      ApiEndpoints.userMeReports,
+    );
+    return ReportHistoryPage.fromJson(json);
   }
 
   Future<void> submitModerationAppeal({
@@ -474,6 +515,24 @@ class AuthService {
           'targetId': targetId,
           'message': message,
         },
+      );
+}
+
+class PolicyStatus {
+  const PolicyStatus({
+    required this.needsAcceptance,
+    required this.currentTermsVersion,
+    required this.currentPrivacyVersion,
+  });
+
+  final bool needsAcceptance;
+  final int currentTermsVersion;
+  final int currentPrivacyVersion;
+
+  factory PolicyStatus.fromJson(Map<String, Object?> json) => PolicyStatus(
+        needsAcceptance: json['needsAcceptance'] as bool? ?? false,
+        currentTermsVersion: json['currentTermsVersion'] as int? ?? 1,
+        currentPrivacyVersion: json['currentPrivacyVersion'] as int? ?? 1,
       );
 }
 
@@ -579,6 +638,61 @@ class ModerationEvent {
       createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.now(),
       appealStatus: json['appealStatus'] as String? ?? 'none',
+    );
+  }
+}
+
+class ReportHistoryPage {
+  const ReportHistoryPage({required this.reports});
+
+  final List<ReportHistoryItem> reports;
+
+  factory ReportHistoryPage.fromJson(Map<String, Object?> json) {
+    final rawReports = json['reports'] as List<Object?>? ?? [];
+    return ReportHistoryPage(
+      reports: rawReports
+          .cast<Map<String, Object?>>()
+          .map(ReportHistoryItem.fromJson)
+          .toList(),
+    );
+  }
+}
+
+class ReportHistoryItem {
+  const ReportHistoryItem({
+    required this.id,
+    required this.targetType,
+    required this.targetId,
+    required this.reason,
+    required this.status,
+    required this.publicStatus,
+    required this.createdAt,
+    this.targetPreview,
+    this.publicReason,
+  });
+
+  final String id;
+  final String targetType;
+  final String targetId;
+  final String reason;
+  final String status;
+  final String publicStatus;
+  final String? targetPreview;
+  final String? publicReason;
+  final DateTime createdAt;
+
+  factory ReportHistoryItem.fromJson(Map<String, Object?> json) {
+    return ReportHistoryItem(
+      id: json['id'] as String,
+      targetType: json['targetType'] as String? ?? 'post',
+      targetId: json['targetId'] as String? ?? '',
+      reason: json['reason'] as String? ?? 'other',
+      status: json['status'] as String? ?? 'pending',
+      publicStatus: json['publicStatus'] as String? ?? 'alındı',
+      targetPreview: json['targetPreview'] as String?,
+      publicReason: json['publicReason'] as String?,
+      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+          DateTime.now(),
     );
   }
 }

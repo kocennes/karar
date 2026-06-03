@@ -63,4 +63,23 @@ public sealed class NotificationRateLimiterTests
     {
         NotificationRateLimiter.GetPriority(type).Should().Be(expected);
     }
+
+    [Theory]
+    [InlineData("comment_on_post", "comments")]
+    [InlineData("reply_on_comment", "comments")]
+    [InlineData("mention", "comments")]
+    [InlineData("verdict_milestone", "verdicts")]
+    [InlineData("verdict_reminder", "verdicts")]
+    [InlineData("viral_post_owner", "verdicts")]
+    [InlineData("trend_alert", "trends")]
+    [InlineData("follow_new_post", "trends")]
+    [InlineData("follow", "social")]
+    [InlineData("weekly_digest", "digest")]
+    [InlineData("moderation_result", "system")]
+    [InlineData("system_announcement", "system")]
+    [InlineData("crisis_support", "system")]
+    public void GetNotificationCategory_MapsAllKnownTypes(string type, string expected)
+    {
+        NotificationRateLimiter.GetNotificationCategory(type).Should().Be(expected);
+    }
 }

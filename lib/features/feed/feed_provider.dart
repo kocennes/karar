@@ -26,6 +26,7 @@ class FeedState {
     this.categoryId,
     this.newPostsCount = 0,
     this.rankingLabel,
+    this.isFallback = false,
   }) : postMap = {for (final p in posts) p.id: p};
 
   final List<Post> posts;
@@ -40,6 +41,10 @@ class FeedState {
   final int? categoryId;
   final int newPostsCount;
   final String? rankingLabel;
+
+  /// True when the main feed returned empty and we are showing popular/trending
+  /// posts as a ghost-town fallback instead.
+  final bool isFallback;
 
   FeedState copyWith({
     List<Post>? posts,
@@ -56,6 +61,7 @@ class FeedState {
     bool clearCategoryId = false,
     int? newPostsCount,
     String? rankingLabel,
+    bool? isFallback,
   }) =>
       FeedState(
         posts: posts ?? this.posts,
@@ -70,6 +76,7 @@ class FeedState {
         categoryId: clearCategoryId ? null : (categoryId ?? this.categoryId),
         newPostsCount: newPostsCount ?? this.newPostsCount,
         rankingLabel: rankingLabel ?? this.rankingLabel,
+        isFallback: isFallback ?? this.isFallback,
       );
 }
 
@@ -123,6 +130,23 @@ class FeedNotifier extends Notifier<FeedState> {
     } catch (_) {}
   }
 
+  Future<void> _fetchFallback() async {
+    try {
+      final result = await _repo.fetchFeed(page: 1, sort: 'trending');
+      final muted = ref.read(mutedCategoriesProvider);
+      final filtered =
+          result.posts.where((p) => !muted.contains(p.category.id)).toList();
+      state = state.copyWith(
+        posts: filtered,
+        isLoading: false,
+        isFallback: filtered.isNotEmpty,
+        hasMore: false,
+      );
+    } catch (_) {
+      state = state.copyWith(isLoading: false);
+    }
+  }
+
   PostRepository get _repo => ref.read(postRepositoryProvider);
   FeedCache get _cache => const FeedCache();
 
@@ -135,14 +159,15 @@ class FeedNotifier extends Notifier<FeedState> {
       sort: sort,
       newPostsCount: 0,
       rankingLabel: feedRankingLabelFor(sort: sort, categoryId: categoryId),
+      isFallback: false,
     );
     return _fetch(page: 1, categoryId: categoryId, sort: sort);
   }
 
   Future<void> refresh({bool silent = false}) {
     if (!silent) {
-      state =
-          state.copyWith(isLoading: true, clearError: true, newPostsCount: 0);
+      state = state.copyWith(
+          isLoading: true, clearError: true, newPostsCount: 0, isFallback: false);
     } else {
       state = state.copyWith(newPostsCount: 0);
     }
@@ -166,6 +191,11 @@ class FeedNotifier extends Notifier<FeedState> {
     if (!AppRuntime.useRemoteApi) {
       await Future<void>.delayed(const Duration(milliseconds: 500));
       var results = List.of(samplePosts);
+
+      // Muted categories filter
+      final muted = ref.read(mutedCategoriesProvider);
+      results = results.where((p) => !muted.contains(p.category.id)).toList();
+
       if (effectiveCategoryId != null && effectiveCategoryId != 0) {
         results =
             results.where((p) => p.category.id == effectiveCategoryId).toList();
@@ -224,17 +254,22 @@ class FeedNotifier extends Notifier<FeedState> {
       // Diversity pass / Impression filtering
       final history = ref.read(historyProvider.notifier);
       final suppressed = ref.read(sessionSuppressedCategoriesProvider);
+      final muted = ref.read(mutedCategoriesProvider);
 
       final filteredPosts = result.posts.where((p) {
         if (p.isOwner) return true;
         // Suppress category based on Phase 3 Real-time feedback
         if (suppressed.contains(p.category.id)) return false;
 
+        // Muted categories filter
+        if (muted.contains(p.category.id)) return false;
+
         // Max 3 impressions filter based on docs/recommendation-system.md
         return history.getImpressionCount(p.id) < 3;
       }).toList();
 
       if (page == 1) {
+        final shouldFallback = filteredPosts.isEmpty;
         await _cache.write(
           sort: effectiveSort,
           categoryId: effectiveCategoryId,
@@ -242,12 +277,16 @@ class FeedNotifier extends Notifier<FeedState> {
         );
         state = state.copyWith(
           posts: filteredPosts,
-          isLoading: false,
+          isLoading: shouldFallback,
           page: 1,
           hasMore: result.hasMore,
           rankingLabel: result.rankingLabel,
           clearError: true,
+          isFallback: false,
         );
+        if (shouldFallback) {
+          await _fetchFallback();
+        }
       } else {
         state = state.copyWith(
           posts: [...state.posts, ...filteredPosts],

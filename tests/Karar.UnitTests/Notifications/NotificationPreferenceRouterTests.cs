@@ -85,6 +85,41 @@ public sealed class NotificationPreferenceRouterTests
         NotificationPreferenceRouter.IsCategoryEnabled(type, enabled).Should().BeTrue();
     }
 
+    [Fact]
+    public void PushDecision_Allow_HasNoSuppressionReason()
+    {
+        var decision = PushDecision.Allow();
+
+        decision.Allowed.Should().BeTrue();
+        decision.IsDeferred.Should().BeFalse();
+        decision.Reason.Should().Be("allowed");
+        decision.SuggestedRetryDelay.Should().BeNull();
+    }
+
+    [Fact]
+    public void PushDecision_Suppress_RepresentsPermanentPreferenceSuppression()
+    {
+        var decision = PushDecision.Suppress("push_disabled");
+
+        decision.Allowed.Should().BeFalse();
+        decision.IsDeferred.Should().BeFalse();
+        decision.Reason.Should().Be("push_disabled");
+        decision.SuggestedRetryDelay.Should().BeNull();
+    }
+
+    [Fact]
+    public void PushDecision_Defer_RepresentsTemporaryMuteOrQuietHoursSuppression()
+    {
+        var delay = TimeSpan.FromHours(2);
+
+        var decision = PushDecision.Defer("muted", delay);
+
+        decision.Allowed.Should().BeFalse();
+        decision.IsDeferred.Should().BeTrue();
+        decision.Reason.Should().Be("muted");
+        decision.SuggestedRetryDelay.Should().Be(delay);
+    }
+
     // Local re-implementation of the deterministic logic with injectable "now".
     private static TimeSpan? ComputeDelay(string startStr, string endStr, DateTime utcNow)
     {

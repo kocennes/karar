@@ -36,6 +36,7 @@ class CategoryScreen extends ConsumerWidget {
         ),
         centerTitle: true,
         actions: [
+          _MuteButton(categoryId: categoryId),
           _FollowButton(categoryId: categoryId),
           const SizedBox(width: 4),
         ],
@@ -95,6 +96,54 @@ class _FollowButton extends ConsumerWidget {
         style: TextStyle(
           color: isFollowed ? AppColors.primary : null,
           fontWeight: isFollowed ? FontWeight.w600 : null,
+        ),
+      ),
+    );
+  }
+}
+
+class _MuteButton extends ConsumerWidget {
+  const _MuteButton({required this.categoryId});
+
+  final int categoryId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final mutedCategories = ref.watch(mutedCategoriesProvider);
+    final isMuted = mutedCategories.contains(categoryId);
+
+    return TextButton.icon(
+      onPressed: () {
+        final user = ref.read(currentUserProvider);
+        if (user == null) {
+          LoginNudge.show(
+            context,
+            title: 'Kategoriyi sessize al',
+            message: 'Bu kategoriyi ana akışınızda gizlemek için giriş yapın.',
+            returnTo: '/categories/$categoryId',
+          );
+          return;
+        }
+        ref.read(mutedCategoriesProvider.notifier).toggle(categoryId);
+        final nowMuted = !isMuted;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                nowMuted ? 'Kategori sessize alındı.' : 'Ses açıldı.'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      },
+      icon: Icon(
+        isMuted ? Icons.volume_off : Icons.volume_up_outlined,
+        size: 20,
+        color: isMuted ? AppColors.haksiz : null,
+      ),
+      label: Text(
+        isMuted ? 'Sesi Aç' : 'Sessize Al',
+        style: TextStyle(
+          color: isMuted ? AppColors.haksiz : null,
+          fontWeight: isMuted ? FontWeight.w600 : null,
         ),
       ),
     );

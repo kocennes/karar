@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 abstract final class AppConfig {
   static const apiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
@@ -15,6 +17,13 @@ abstract final class AppConfig {
         (uri == null || uri.scheme.toLowerCase() != 'https')) {
       throw StateError(
         'Production API_BASE_URL must use HTTPS when '
+        'REQUIRE_SECURE_API_TRANSPORT=true.',
+      );
+    }
+
+    if (kIsWeb && requireSecureApiTransport && webVapidKey.isEmpty) {
+      throw StateError(
+        'Production WEB_VAPID_KEY must be set when '
         'REQUIRE_SECURE_API_TRANSPORT=true.',
       );
     }

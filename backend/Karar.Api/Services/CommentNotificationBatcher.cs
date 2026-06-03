@@ -19,7 +19,12 @@ public sealed class CommentNotificationBatcher(
         configuration.GetConnectionString("Postgres")
         ?? throw new InvalidOperationException("ConnectionStrings:Postgres is missing."));
 
-    public async Task HandleNewCommentAsync(Guid postId, Guid commenterDeviceId, Guid commentId, Guid? parentCommentId = null)
+    public async Task HandleNewCommentAsync(
+        Guid postId,
+        Guid commenterDeviceId,
+        Guid commentId,
+        Guid? parentCommentId = null,
+        Guid? commenterUserId = null)
     {
         if (!await ShouldNotifyAsync(postId, commentId))
         {
@@ -29,12 +34,18 @@ public sealed class CommentNotificationBatcher(
         // Notify parent comment author on reply (before post-owner batch so order is clear)
         if (parentCommentId is not null)
         {
-            await NotifyReplyAuthorAsync(postId, parentCommentId.Value, commenterDeviceId, commentId);
+            await NotifyReplyAuthorAsync(postId, parentCommentId.Value, commenterDeviceId, commentId, commenterUserId);
         }
 
         // Notify post owner (batched)
         var ownerDeviceId = await GetPostOwnerDeviceIdAsync(postId);
         if (ownerDeviceId is null || ownerDeviceId == commenterDeviceId)
+        {
+            return;
+        }
+
+        // Suppress notification when post author has blocked the commenter
+        if (commenterUserId is not null && await IsBlockedByPostOwnerAsync(postId, commenterUserId.Value))
         {
             return;
         }
@@ -76,18 +87,49 @@ public sealed class CommentNotificationBatcher(
         }
     }
 
-    private async Task NotifyReplyAuthorAsync(Guid postId, Guid parentCommentId, Guid commenterDeviceId, Guid replyCommentId)
+    private async Task NotifyReplyAuthorAsync(
+        Guid postId,
+        Guid parentCommentId,
+        Guid commenterDeviceId,
+        Guid replyCommentId,
+        Guid? commenterUserId = null)
     {
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand(
-            "SELECT device_id FROM comments WHERE id = @parentId AND status = 'active'",
+            "SELECT device_id, user_id FROM comments WHERE id = @parentId AND status = 'active'",
             connection);
         command.Parameters.AddWithValue("parentId", parentCommentId);
-        var result = await command.ExecuteScalarAsync();
-
-        if (result is not Guid parentAuthorDeviceId || parentAuthorDeviceId == commenterDeviceId)
+        await using var reader = await command.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
             return;
+
+        if (reader.IsDBNull(0))
+            return;
+        var parentAuthorDeviceId = reader.GetGuid(0);
+        var parentAuthorUserId = reader.IsDBNull(1) ? (Guid?)null : reader.GetGuid(1);
+        await reader.CloseAsync();
+
+        if (parentAuthorDeviceId == commenterDeviceId)
+            return;
+
+        // Suppress reply notification when parent comment author has blocked the replier
+        if (commenterUserId is not null && parentAuthorUserId is not null)
+        {
+            await using var blockCmd = new NpgsqlCommand(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM blocked_users
+                    WHERE blocker_user_id = @parentAuthorUserId
+                      AND blocked_user_id = @commenterUserId
+                )
+                """,
+                connection);
+            blockCmd.Parameters.AddWithValue("parentAuthorUserId", parentAuthorUserId.Value);
+            blockCmd.Parameters.AddWithValue("commenterUserId", commenterUserId.Value);
+            if ((bool)(await blockCmd.ExecuteScalarAsync() ?? false))
+                return;
+        }
 
         // Use a Redis key to deduplicate reply notifications per reply comment
         var dedupKey = $"notif:reply_sent:{replyCommentId:N}";
@@ -178,6 +220,26 @@ public sealed class CommentNotificationBatcher(
         command.Parameters.AddWithValue("postId", postId);
         var result = await command.ExecuteScalarAsync();
         return result is Guid ownerDeviceId ? ownerDeviceId : null;
+    }
+
+    private async Task<bool> IsBlockedByPostOwnerAsync(Guid postId, Guid commenterUserId)
+    {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT EXISTS (
+                SELECT 1 FROM blocked_users bu
+                JOIN posts p ON p.user_id = bu.blocker_user_id
+                WHERE p.id = @postId
+                  AND bu.blocked_user_id = @commenterUserId
+                  AND p.user_id IS NOT NULL
+            )
+            """,
+            connection);
+        command.Parameters.AddWithValue("postId", postId);
+        command.Parameters.AddWithValue("commenterUserId", commenterUserId);
+        return (bool)(await command.ExecuteScalarAsync() ?? false);
     }
 
     private async Task<bool> ShouldNotifyAsync(Guid postId, Guid commentId)

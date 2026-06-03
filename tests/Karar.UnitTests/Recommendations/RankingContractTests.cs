@@ -102,7 +102,7 @@ public sealed class RankingContractTests
         DiscoverFeedBlock.Should().Contain("\"controversial\"",
             because: "votes > 40 AND balance < 20% yields 'controversial'");
         DiscoverFeedBlock.Should().Contain("\"fresh\"",
-            because: "age < 12h AND votes <= 10 yields 'fresh'");
+            because: "age < 2h AND votes <= 10 yields 'fresh'");
         DiscoverFeedBlock.Should().Contain("\"trending\"",
             because: "'trending' is the catch-all default reason");
     }
@@ -120,9 +120,9 @@ public sealed class RankingContractTests
             because: "controversial requires > 40 total votes");
         DiscoverFeedBlock.Should().Contain("0.2",
             because: "controversial requires hakli/haksiz balance < 20%");
-        // Fresh: age < 12 hours, <= 10 votes
-        DiscoverFeedBlock.Should().Contain("FromHours(12)",
-            because: "fresh threshold is posts younger than 12 hours");
+        // Fresh: age < 2 hours, <= 10 votes
+        DiscoverFeedBlock.Should().Contain("FromHours(2)",
+            because: "fresh threshold is posts younger than 2 hours per ranking-model.md §5 unified definition");
         DiscoverFeedBlock.Should().Contain("10",
             because: "fresh requires <= 10 votes");
     }

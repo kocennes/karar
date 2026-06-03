@@ -56,17 +56,19 @@ public sealed class VoteBrigadeGuardTests
         code.Should().Contain("COUNT(DISTINCT v.device_id)", "must count distinct devices in IP block");
         code.Should().Contain("v.voter_ip_block = @ipBlock", "must filter by IP block");
         code.Should().Contain("@windowMinutes * INTERVAL '1 minute'", "must use parameterised window");
-        code.Should().Contain("v.is_quarantined = FALSE", "must skip already-quarantined votes");
+        code.Should().Contain("COUNT(DISTINCT v.device_id)", "cluster detection must count stored device votes in the window");
     }
 
     [Fact]
-    public void ServiceCode_QuarantinesIpBlockVotesOnDetection()
+    public void ServiceCode_SuppressesIpBlockVotesOnDetection()
     {
         var code = ReadGuard();
 
-        code.Should().Contain("QuarantineByIpBlockAsync", "must call IP block quarantine on detection");
-        code.Should().Contain("is_quarantined = TRUE", "quarantine must set is_quarantined flag");
-        code.Should().Contain("quarantined     = TRUE", "quarantine must also set quarantined column (brigade job compat)");
+        code.Should().Contain("SuppressByIpBlockAsync", "must call IP block suppression on detection");
+        code.Should().Contain("is_suppressed = TRUE", "suppression must set is_suppressed flag");
+        code.Should().Contain("suppression_reason = 'brigade_ip_block'", "audit/debug reason must be stored");
+        code.Should().Contain("is_quarantined = TRUE", "suppressed votes must also stay out of legacy ranking paths");
+        code.Should().Contain("quarantined = TRUE", "suppression must also set quarantined column (brigade job compat)");
     }
 
     // ── Service code: fingerprint prefix detection ──────────────────────────
@@ -82,12 +84,22 @@ public sealed class VoteBrigadeGuardTests
     }
 
     [Fact]
-    public void ServiceCode_QuarantinesByFingerprintPrefixOnDetection()
+    public void ServiceCode_SuppressesByFingerprintPrefixOnDetection()
     {
         var code = ReadGuard();
 
-        code.Should().Contain("QuarantineByFingerprintPrefixAsync", "must call fingerprint quarantine method");
+        code.Should().Contain("SuppressByFingerprintPrefixAsync", "must call fingerprint suppression method");
         code.Should().Contain("LEFT(d.fingerprint, @prefixLen) = @fpPrefix", "must match fingerprint prefix in UPDATE");
+        code.Should().Contain("suppression_reason = 'brigade_fingerprint_prefix'", "audit/debug reason must be stored");
+    }
+
+    [Fact]
+    public void ServiceCode_DetectsOnlyAfterThresholdIsExceeded()
+    {
+        var code = ReadGuard();
+
+        code.Should().Contain("ipCount > SuppressThreshold", "5 votes are allowed; the 6th cluster vote is suppressed");
+        code.Should().Contain("fpResult.Count > SuppressThreshold", "5 votes are allowed; the 6th cluster vote is suppressed");
     }
 
     // ── Service code: admin alert ───────────────────────────────────────────
@@ -130,8 +142,31 @@ public sealed class VoteBrigadeGuardTests
     {
         var voteBlock = SliceVoteBlock();
 
-        voteBlock.Should().Contain("!brigadeResult.Detected",
+        voteBlock.Should().Contain("var voteIsSuppressed = brigadeResult.Detected",
+            "suppression state must be explicit in endpoint side effects");
+        voteBlock.Should().Contain("!voteIsSuppressed",
             "MarkPostDirtyAsync must be skipped when brigade is detected");
+    }
+
+    [Fact]
+    public void VoteEndpoint_SkipsAffinityWhenVoteIsSuppressed()
+    {
+        var voteBlock = SliceVoteBlock();
+
+        voteBlock.Should().Contain("!voteIsSuppressed && userId is not null",
+            "suppressed votes must not influence user affinity");
+        voteBlock.Should().Contain("!voteIsSuppressed && deviceId is not null",
+            "suppressed votes must not influence device affinity");
+    }
+
+    [Fact]
+    public void VoteEndpoint_RecalculatesCountersAfterSuppression()
+    {
+        var voteBlock = SliceVoteBlock();
+
+        voteBlock.IndexOf("brigadeGuard.CheckAndSuppressAsync(", StringComparison.Ordinal)
+            .Should().BeLessThan(voteBlock.IndexOf("UpdateVoteCountersReturningAsync(", StringComparison.Ordinal),
+                "counters must be recomputed after suppression is applied");
     }
 
     [Fact]
@@ -155,22 +190,35 @@ public sealed class VoteBrigadeGuardTests
     // ── Migration ──────────────────────────────────────────────────────────
 
     [Fact]
-    public void Migration_V56_CreatesIpBlockBrigadeIndex()
+    public void Migration_V57_AddsVoteSuppressionState()
     {
-        var migration = TestRepoPaths.ReadText("backend", "migrations", "V56__vote_brigade_inline_guard.sql");
+        var migration = TestRepoPaths.ReadText("backend", "migrations", "V57__vote_suppression_state.sql");
 
-        migration.Should().Contain("idx_votes_brigade_ip_window", "IP block window index must be created");
-        migration.Should().Contain("voter_ip_block", "index must cover voter_ip_block column");
-        migration.Should().Contain("is_quarantined = FALSE", "partial index must exclude already-quarantined votes");
+        migration.Should().Contain("ADD COLUMN IF NOT EXISTS is_suppressed", "suppressed state must be persisted");
+        migration.Should().Contain("suppression_reason", "debug/audit reason must be persisted");
+        migration.Should().Contain("suppressed_at", "suppression time must be persisted");
     }
 
     [Fact]
-    public void Migration_V56_CreatesPostTimeWindowIndex()
+    public void Migration_V57_CreatesSuppressionIndexes()
     {
-        var migration = TestRepoPaths.ReadText("backend", "migrations", "V56__vote_brigade_inline_guard.sql");
+        var migration = TestRepoPaths.ReadText("backend", "migrations", "V57__vote_suppression_state.sql");
 
-        migration.Should().Contain("idx_votes_brigade_post_time",
-            "post-time window index must be created for fingerprint join");
+        migration.Should().Contain("idx_votes_unsuppressed_post_type",
+            "counter recomputation must have an unsuppressed vote index");
+        migration.Should().Contain("idx_votes_brigade_ip_suppression_window",
+            "IP block brigade lookups must stay indexed");
+        migration.Should().Contain("idx_votes_brigade_unsuppressed_post_time",
+            "fingerprint suppression updates must stay indexed");
+    }
+
+    [Fact]
+    public void Migration_V57_TrendScoreExcludesSuppressedVotes()
+    {
+        var migration = TestRepoPaths.ReadText("backend", "migrations", "V57__vote_suppression_state.sql");
+
+        migration.Should().Contain("v.is_suppressed = FALSE",
+            "suppressed votes must be excluded from refresh_trend_scores");
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
@@ -22,6 +24,8 @@ class CreatePostState {
     this.pollOptions = const [],
     this.isUnlisted = false,
     this.isAnonymous = true,
+    this.toxicityScore = 0.0,
+    this.isToxicityLoading = false,
   });
 
   final int? selectedCategoryId;
@@ -36,6 +40,8 @@ class CreatePostState {
   final List<String> pollOptions;
   final bool isUnlisted;
   final bool isAnonymous;
+  final double toxicityScore;
+  final bool isToxicityLoading;
 
   static const int maxTags = 3;
   static const int maxPollOptions = 4;
@@ -59,6 +65,8 @@ class CreatePostState {
     List<String>? pollOptions,
     bool? isUnlisted,
     bool? isAnonymous,
+    double? toxicityScore,
+    bool? isToxicityLoading,
   }) =>
       CreatePostState(
         selectedCategoryId: clearCategoryId
@@ -76,6 +84,8 @@ class CreatePostState {
         pollOptions: pollOptions ?? this.pollOptions,
         isUnlisted: isUnlisted ?? this.isUnlisted,
         isAnonymous: isAnonymous ?? this.isAnonymous,
+        toxicityScore: toxicityScore ?? this.toxicityScore,
+        isToxicityLoading: isToxicityLoading ?? this.isToxicityLoading,
       );
 
   bool get isDailyPostLimit =>
@@ -84,8 +94,32 @@ class CreatePostState {
 }
 
 class CreatePostNotifier extends Notifier<CreatePostState> {
+  Timer? _toxicityTimer;
+
   @override
-  CreatePostState build() => const CreatePostState();
+  CreatePostState build() {
+    ref.onDispose(() => _toxicityTimer?.cancel());
+    return const CreatePostState();
+  }
+
+  void checkToxicity(String content) {
+    _toxicityTimer?.cancel();
+    if (content.trim().isEmpty) {
+      state = state.copyWith(toxicityScore: 0.0, isToxicityLoading: false);
+      return;
+    }
+
+    _toxicityTimer = Timer(const Duration(milliseconds: 800), () async {
+      state = state.copyWith(isToxicityLoading: true);
+      try {
+        final score =
+            await ref.read(postRepositoryProvider).checkToxicity(content);
+        state = state.copyWith(toxicityScore: score, isToxicityLoading: false);
+      } catch (_) {
+        state = state.copyWith(isToxicityLoading: false);
+      }
+    });
+  }
 
   void selectCategory(int categoryId) {
     state = state.copyWith(selectedCategoryId: categoryId);
@@ -227,6 +261,13 @@ class CreatePostNotifier extends Notifier<CreatePostState> {
     required bool acceptedTerms,
     required bool acceptedCommunityGuidelines,
   }) async {
+    if (state.toxicityScore >= 0.8) {
+      state = state.copyWith(
+        error: 'Bu içerik topluluk kurallarına aykırı olduğu için paylaşılamaz.',
+      );
+      return false;
+    }
+
     final categoryId = state.selectedCategoryId;
     if (categoryId == null) {
       state = state.copyWith(error: 'Lütfen bir kategori seçin.');

@@ -197,7 +197,7 @@ public sealed class NotificationDispatcherTests
     [InlineData("trend_alert", "33333333-3333-3333-3333-333333333333", "/posts/33333333-3333-3333-3333-333333333333")]
     [InlineData("follow_new_post", "44444444-4444-4444-4444-444444444444", "/posts/44444444-4444-4444-4444-444444444444")]
     [InlineData("weekly_digest", null, "/notifications")]
-    [InlineData("moderation_result", null, "/profile")]
+    [InlineData("moderation_result", null, "/settings/moderation-history")]
     [InlineData("system_announcement", null, "/notifications")]
     public void BuildDeepLink_ReturnsCorrectPath(string type, string? postIdStr, string expectedPath)
     {

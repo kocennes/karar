@@ -1,11 +1,16 @@
+import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../core/providers.dart';
 import '../../shared/models/post.dart';
 import 'share_card_widget.dart';
 
-class SharePickerSheet extends StatelessWidget {
+class SharePickerSheet extends ConsumerStatefulWidget {
   const SharePickerSheet({super.key, required this.post});
 
   final Post post;
@@ -17,19 +22,50 @@ class SharePickerSheet extends StatelessWidget {
     );
   }
 
-  String get _postUrl => 'https://karar.app/posts/${post.id}?ref=share';
+  @override
+  ConsumerState<SharePickerSheet> createState() => _SharePickerSheetState();
+}
+
+class _SharePickerSheetState extends ConsumerState<SharePickerSheet> {
+  bool _storyLoading = false;
+
+  String get _postUrl => 'https://karar.app/posts/${widget.post.id}?ref=share';
 
   Future<void> _shareLink(BuildContext context) async {
-    Navigator.pop(context);
-    final total = post.totalVotes;
+    final total = widget.post.totalVotes;
     String stats = '';
     if (total >= 10) {
-      stats = '$total kişi oyladı · %${post.hakliPercent} Haklı · ';
+      stats = '$total kişi oyladı · %${widget.post.hakliPercent} Haklı · ';
     }
-    await Share.share(
-      '${post.title}\n\n${stats}Senin kararın ne? Karar ver: $_postUrl',
-      subject: 'Karar: ${post.title}',
-    );
+    try {
+      final result = await Share.share(
+        '${widget.post.title}\n\n${stats}Senin kararın ne? Karar ver: $_postUrl',
+        subject: 'Karar: ${widget.post.title}',
+      );
+      if (kIsWeb && result.status == ShareResultStatus.unavailable) {
+        await _copyShareLinkFallback(context);
+        return;
+      }
+      if (!context.mounted) return;
+      Navigator.pop(context);
+    } catch (_) {
+      if (!kIsWeb) return;
+      await _copyShareLinkFallback(context);
+    }
+  }
+
+  Future<void> _copyShareLinkFallback(BuildContext context) async {
+    try {
+      await Clipboard.setData(ClipboardData(text: _postUrl));
+      if (!context.mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Link kopyalandi.')),
+      );
+    } catch (_) {
+      if (!context.mounted) return;
+      _showClipboardFallback(context);
+    }
   }
 
   Future<void> _copyLink(BuildContext context) async {
@@ -41,7 +77,6 @@ class SharePickerSheet extends StatelessWidget {
         const SnackBar(content: Text('Link kopyalandı.')),
       );
     } catch (_) {
-      // W29: clipboard permission denied — show selectable URL fallback
       if (!context.mounted) return;
       _showClipboardFallback(context);
     }
@@ -79,9 +114,44 @@ class SharePickerSheet extends StatelessWidget {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         fullscreenDialog: true,
-        builder: (_) => _CardPreviewScreen(post: post),
+        builder: (_) => _CardPreviewScreen(post: widget.post),
       ),
     );
+  }
+
+  Future<void> _shareStory(BuildContext context) async {
+    // Web'de story paylaşımı desteklenmez
+    if (kIsWeb) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Hikaye paylaşımı mobil uygulamada kullanılabilir.')),
+      );
+      return;
+    }
+    setState(() => _storyLoading = true);
+    try {
+      final bytes = await ref
+          .read(postRepositoryProvider)
+          .fetchStoryImageBytes(widget.post.id);
+      if (!context.mounted) return;
+      Navigator.pop(context);
+      await Share.shareXFiles(
+        [
+          XFile.fromData(
+            bytes,
+            name: 'karar_story.png',
+            mimeType: 'image/png',
+          ),
+        ],
+        text: _postUrl,
+      );
+    } catch (_) {
+      if (!context.mounted) return;
+      setState(() => _storyLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Hikaye görseli yüklenemedi.')),
+      );
+    }
   }
 
   @override
@@ -96,7 +166,10 @@ class SharePickerSheet extends StatelessWidget {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
+                color: Theme.of(context)
+                    .colorScheme
+                    .onSurfaceVariant
+                    .withValues(alpha: 0.4),
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -120,6 +193,13 @@ class SharePickerSheet extends StatelessWidget {
                   label: 'Kart\nOluştur',
                   onTap: () => _showCardPreview(context),
                 ),
+                const SizedBox(width: 16),
+                _OptionButton(
+                  icon: Icons.auto_stories_outlined,
+                  label: 'Hikaye\nPaylaş',
+                  onTap: _storyLoading ? null : () => _shareStory(context),
+                  loading: _storyLoading,
+                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -141,29 +221,39 @@ class _OptionButton extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.onTap,
+    this.loading = false,
   });
 
   final IconData icon;
   final String label;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
+  final bool loading;
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Container(
-        width: 120,
-        padding: const EdgeInsets.symmetric(vertical: 16),
+        width: 100,
+        padding: const EdgeInsets.symmetric(vertical: 14),
         decoration: BoxDecoration(
-          border: Border.all(
-            color: Theme.of(context).colorScheme.outlineVariant,
-          ),
+          border: Border.all(color: scheme.outlineVariant),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Column(
           children: [
-            Icon(icon, size: 28),
+            loading
+                ? SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: scheme.primary,
+                    ),
+                  )
+                : Icon(icon, size: 28),
             const SizedBox(height: 8),
             Text(
               label,
@@ -196,7 +286,10 @@ class _CardPreviewScreenState extends State<_CardPreviewScreen> {
       final bytes = await captureShareCard(_repaintKey);
       if (bytes == null) return;
       await Share.shareXFiles(
-        [XFile.fromData(Uint8List.fromList(bytes), name: 'karar.png', mimeType: 'image/png')],
+        [
+          XFile.fromData(Uint8List.fromList(bytes),
+              name: 'karar.png', mimeType: 'image/png')
+        ],
         text: 'karar.app/posts/${widget.post.id}',
       );
     } finally {

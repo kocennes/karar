@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'auth/auth_service.dart';
 import 'analytics/analytics_service.dart';
+import 'analytics/judgment_loop_tracker.dart';
 import 'analytics/performance_service.dart';
 import 'analytics/session_tracker.dart';
 import 'app_review/rating_service.dart';
@@ -70,6 +71,7 @@ final pendingEmailChangeProvider = StateProvider<String?>((ref) => null);
 
 // Maintenance mode — set to true when backend returns 503
 final maintenanceProvider = StateProvider<bool>((ref) => false);
+final maintenanceMessageProvider = StateProvider<String?>((ref) => null);
 
 // Post taslak servisi — SharedPreferences üzerinde çalışır, singleton
 final postDraftServiceProvider = Provider<PostDraftService>(
@@ -79,4 +81,8 @@ final postDraftServiceProvider = Provider<PostDraftService>(
 // Firebase Remote Config — uygulama genelinde feature flag yönetimi
 final remoteConfigProvider = Provider<RemoteConfigService>(
   (_) => RemoteConfigService(),
+);
+
+final judgmentLoopTrackerProvider = Provider<JudgmentLoopTracker>(
+  (_) => JudgmentLoopTracker(),
 );

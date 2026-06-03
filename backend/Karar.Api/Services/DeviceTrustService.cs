@@ -228,7 +228,31 @@ public sealed class DeviceTrustService
         command.Parameters.AddWithValue("voteBreadthCount", signals.VoteBreadthCount);
         command.Parameters.AddWithValue("isSuspicious", isSuspicious);
         command.Parameters.AddWithValue("reason", (object?)reason ?? DBNull.Value);
+
         await command.ExecuteNonQueryAsync();
+        await RecordTrustScoreHistoryAsync(connection, transaction, deviceId, score, reason);
+    }
+
+    internal static async Task RecordTrustScoreHistoryAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        Guid deviceId,
+        double score,
+        string? reason
+    )
+    {
+        await using var histCmd = new NpgsqlCommand(
+            """
+            INSERT INTO device_trust_score_history (device_id, score, reason)
+            VALUES (@deviceId, @score, @reason)
+            """,
+            connection,
+            transaction
+        );
+        histCmd.Parameters.AddWithValue("deviceId", deviceId.ToString());
+        histCmd.Parameters.AddWithValue("score", score);
+        histCmd.Parameters.AddWithValue("reason", (object?)reason ?? DBNull.Value);
+        await histCmd.ExecuteNonQueryAsync();
     }
 
     private static string BuildSuspiciousReason(DeviceTrustSignals signals)

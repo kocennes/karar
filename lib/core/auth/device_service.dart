@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../api/api_client.dart';
+import '../api/api_endpoints.dart';
 import 'device_token_store.dart';
 
 class DeviceService {
@@ -30,9 +31,13 @@ class DeviceService {
 
   Future<void> registerFcmToken(String token) async {
     await apiClient.putJson<void>(
-      '/api/v1/devices/fcm-token',
+      ApiEndpoints.fcmToken,
       body: {'token': token, 'platform': _platform()},
     );
+  }
+
+  Future<void> deleteFcmToken() async {
+    await apiClient.deleteJson<void>(ApiEndpoints.fcmToken);
   }
 
   String _fingerprint() => 'karar-${_platform()}-dev';

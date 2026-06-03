@@ -52,6 +52,21 @@ public sealed class VoteEndpointSecurityTests
         upsertBlock.Should().Contain("DO UPDATE SET");
     }
 
+    [Fact]
+    public void VoteUpsert_ResetsSuppressionBeforeReevaluationButKeepsUniqueConstraint()
+    {
+        var programText = ReadProgram();
+        var upsertBlock = SliceBlock(
+            programText,
+            "static async Task UpsertVoteAsync",
+            "static async Task UpdateVoteCountersAsync");
+
+        upsertBlock.Should().Contain("ON CONFLICT (post_id, device_id)");
+        upsertBlock.Should().Contain("is_suppressed = FALSE");
+        upsertBlock.Should().Contain("suppression_reason = NULL");
+        upsertBlock.Should().Contain("suppressed_at = NULL");
+    }
+
     // ── Suspicious device quarantine ───────────────────────────────────────
 
     [Fact]
@@ -78,6 +93,32 @@ public sealed class VoteEndpointSecurityTests
         // don't artificially inflate trend scores.
         programText.Should().Contain("v.is_quarantined = FALSE",
             "trend score SQL must exclude quarantined (suspicious device) votes");
+    }
+
+    [Fact]
+    public void VoteCounters_CountOnlyUnsuppressedVotes()
+    {
+        var programText = ReadProgram();
+        var counterBlock = SliceBlock(
+            programText,
+            "static async Task<(int Hakli, int Haksiz)> UpdateVoteCountersReturningAsync",
+            "static async Task UpsertVoteAsync");
+
+        counterBlock.Should().Contain("v.vote_type = 'hakli'");
+        counterBlock.Should().Contain("v.vote_type = 'haksiz'");
+        counterBlock.Should().Contain("v.is_suppressed = FALSE",
+            "normal votes count, suppressed brigade votes do not");
+        counterBlock.Should().NotContain("vote_count_hakli + @hakliDelta",
+            "counter updates must be recomputed from DB state after suppression");
+    }
+
+    [Fact]
+    public void TrendScoreCalculation_ExcludesSuppressedVotes()
+    {
+        var programText = ReadProgram();
+
+        programText.Should().Contain("v.is_suppressed = FALSE",
+            "suppressed brigade votes must not inflate ranking or inline trend_score");
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────

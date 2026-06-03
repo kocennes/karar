@@ -509,6 +509,87 @@ public sealed class RedisService : IDisposable
         }
     }
 
+    // Keşfet feed — görülen post ID'leri (7 günlük kayan pencere, maks 500 ID)
+    // SADD tabanlı: her Keşfet isteğinde yeni görülenler eklenir; client aynı içeriği tekrar görmez.
+    private static string SeenDiscoverKey(Guid deviceId) => $"notif:seen:{deviceId}";
+    private static readonly TimeSpan SeenDiscoverWindow = TimeSpan.FromDays(7);
+    private const int SeenDiscoverMaxSize = 500;
+
+    public async Task AddSeenDiscoverPostsAsync(Guid deviceId, IEnumerable<Guid> postIds)
+    {
+        try
+        {
+            var key = SeenDiscoverKey(deviceId);
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var entries = postIds.Select(id => new SortedSetEntry(id.ToString(), now)).ToArray();
+            if (entries.Length == 0) return;
+            await _db.SortedSetAddAsync(key, entries, SortedSetWhen.Always);
+            await _db.KeyExpireAsync(key, SeenDiscoverWindow);
+            // Sliding window: eski kayıtları çıkar, max 500 ID tut
+            var size = await _db.SortedSetLengthAsync(key);
+            if (size > SeenDiscoverMaxSize)
+                await _db.SortedSetRemoveRangeByRankAsync(key, 0, size - SeenDiscoverMaxSize - 1);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "SeenDiscoverPosts add başarısız: {DeviceId}", deviceId);
+        }
+    }
+
+    public async Task<HashSet<Guid>> GetSeenDiscoverPostIdsAsync(Guid deviceId)
+    {
+        try
+        {
+            var key = SeenDiscoverKey(deviceId);
+            var cutoff = DateTimeOffset.UtcNow.Subtract(SeenDiscoverWindow).ToUnixTimeSeconds();
+            var members = await _db.SortedSetRangeByScoreAsync(key, cutoff, double.PositiveInfinity);
+            var result = new HashSet<Guid>(members.Length);
+            foreach (var m in members)
+                if (Guid.TryParse((string?)m, out var id)) result.Add(id);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "SeenDiscoverPosts get başarısız: {DeviceId}", deviceId);
+            return [];
+        }
+    }
+
+    // UCB skoru caching — cold-start Stage 1 post başına 1 saatlik TTL
+    // key: ucb:{postId}
+    private static string UcbScoreKey(Guid postId) => $"ucb:{postId}";
+    private static readonly TimeSpan UcbScoreTtl = TimeSpan.FromHours(1);
+
+    public async Task SetUcbScoreAsync(Guid postId, double score)
+    {
+        try
+        {
+            await _db.StringSetAsync(
+                UcbScoreKey(postId),
+                score.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                UcbScoreTtl);
+        }
+        catch { }
+    }
+
+    public async Task<double?> GetUcbScoreAsync(Guid postId)
+    {
+        try
+        {
+            var val = await _db.StringGetAsync(UcbScoreKey(postId));
+            if (!val.HasValue) return null;
+            return double.TryParse(
+                (string?)val,
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var score) ? score : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public ISubscriber GetSubscriber() => _redis.GetSubscriber();
 
     public async Task PublishUserEventAsync(Guid userId, object payload)

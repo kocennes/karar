@@ -3,24 +3,31 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:karar/core/api/api_client.dart';
 import 'package:karar/features/notifications/data/notification_repository.dart';
 
-Dio _mockDio(Map<String, dynamic> responseBody) {
+Dio _mockDio(
+  Map<String, dynamic> responseBody, {
+  void Function(RequestOptions options)? onRequest,
+}) {
   final dio = Dio(BaseOptions(baseUrl: 'http://localhost'));
   dio.interceptors.add(
     InterceptorsWrapper(
-      onRequest: (options, handler) => handler.resolve(
-        Response(
-          requestOptions: options,
-          statusCode: 200,
-          data: responseBody,
-        ),
-      ),
+      onRequest: (options, handler) {
+        onRequest?.call(options);
+        handler.resolve(
+          Response(
+            requestOptions: options,
+            statusCode: options.method == 'GET' ? 200 : 204,
+            data: responseBody,
+          ),
+        );
+      },
     ),
   );
   return dio;
 }
 
 void main() {
-  test('NotificationRepository parses unread count from API contract', () async {
+  test('NotificationRepository parses unread count from API contract',
+      () async {
     final repository = NotificationRepository(
       apiClient: ApiClient(
         dio: _mockDio({
@@ -47,5 +54,48 @@ void main() {
     expect(page.items.single.id, 'notification-1');
     expect(page.items.single.postId, 'post-1');
     expect(page.unreadCount, 1);
+  });
+
+  test('NotificationRepository fetches unread count from badge sync endpoint',
+      () async {
+    final repository = NotificationRepository(
+      apiClient: ApiClient(
+        dio: _mockDio({'unreadCount': 3}),
+      ),
+    );
+
+    final unreadCount = await repository.fetchUnreadCount();
+
+    expect(unreadCount, 3);
+  });
+
+  test('NotificationRepository records opened lifecycle event', () async {
+    RequestOptions? request;
+    final repository = NotificationRepository(
+      apiClient: ApiClient(
+        dio: _mockDio({}, onRequest: (options) => request = options),
+      ),
+    );
+
+    await repository.markOpened('notification-1');
+
+    expect(request?.method, 'POST');
+    expect(request?.path, '/api/v1/notifications/notification-1/opened');
+  });
+
+  test('NotificationRepository mutes notifications with backend duration',
+      () async {
+    RequestOptions? request;
+    final repository = NotificationRepository(
+      apiClient: ApiClient(
+        dio: _mockDio({}, onRequest: (options) => request = options),
+      ),
+    );
+
+    await repository.mute('7d');
+
+    expect(request?.method, 'POST');
+    expect(request?.path, '/api/v1/notifications/mute');
+    expect(request?.data, {'duration': '7d'});
   });
 }

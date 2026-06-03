@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -57,6 +59,10 @@ Widget _buildApp(List<Override> overrides) {
     GoRoute(
         path: '/posts/:id',
         builder: (_, __) => const Scaffold(body: SizedBox())),
+    GoRoute(
+      path: '/settings/moderation-history',
+      builder: (_, __) => const Scaffold(body: Text('Moderasyon geçmişi')),
+    ),
   ]);
   return ProviderScope(
     overrides: overrides,
@@ -77,6 +83,31 @@ void main() {
     'viral_post_owner',
     'weekly_digest',
   ];
+
+  test(
+    'NotificationsScreen contract: in-app opens are tracked and source-tagged',
+    () {
+      final text = File('lib/features/notifications/notifications_screen.dart')
+          .readAsStringSync();
+
+      expect(text, contains('logNotificationOpened'));
+      expect(text, contains('source=notification'));
+      expect(text, contains('_withNotificationSource'));
+    },
+  );
+
+  test('NotificationsScreen contract: notification center controls are wired',
+      () {
+    final text = File('lib/features/notifications/notifications_screen.dart')
+        .readAsStringSync();
+
+    expect(text, contains('_NotificationControls'));
+    expect(text, contains('Bildirim izni ver'));
+    expect(text, contains('Bildirim sesini aç'));
+    expect(text, contains('Sessize al'));
+    expect(text, contains("context.push('/settings')"));
+    expect(text, contains("mute(duration)"));
+  });
 
   testWidgets(
     'NotificationsScreen: all notification types visible in in-app center',
@@ -138,6 +169,32 @@ void main() {
       expect(find.text('Başlık verdict_milestone'), findsOneWidget);
       // Unread count appears in app bar title
       expect(find.text('Bildirimler (1)'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'NotificationsScreen: moderation result exposes appeal action',
+    (tester) async {
+      final fixedState = NotificationsState(
+        items: [_item('1', 'moderation_result')],
+        unreadCount: 0,
+        isLoading: false,
+      );
+
+      await tester.pumpWidget(_buildApp([
+        currentUserProvider.overrideWith((ref) => _fakeUser),
+        notificationsProvider
+            .overrideWith(() => _FixedNotificationsNotifier(fixedState)),
+        digestPostsProvider.overrideWith((ref) => Future.value(<Post>[])),
+      ]));
+      await tester.pump();
+
+      expect(find.text('İtiraz Et'), findsOneWidget);
+
+      await tester.tap(find.text('İtiraz Et'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Moderasyon geçmişi'), findsOneWidget);
     },
   );
 

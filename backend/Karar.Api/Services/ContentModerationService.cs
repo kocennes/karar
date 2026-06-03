@@ -15,6 +15,25 @@ public sealed class ContentModerationService
         RegexOptions.Compiled | RegexOptions.IgnoreCase
     );
 
+    // ── Doxxing: raw-text patterns (digit normalization must NOT run here) ──────
+    // TC Kimlik: 11 haneli, ilk basamak 0 olamaz
+    private static readonly Regex TcKimlikPattern = new(
+        @"\b[1-9]\d{10}\b",
+        RegexOptions.Compiled
+    );
+
+    // IBAN: TR + 24 rakam (boşluklu veya boşluksuz)
+    private static readonly Regex IbanPattern = new(
+        @"\bTR\s?\d{2}[\s\d]{22,30}\b",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase
+    );
+
+    // Kredi/banka kartı: 16 rakam, aralarında boşluk veya tire olabilir
+    private static readonly Regex CreditCardPattern = new(
+        @"\b\d{4}[\s\-]\d{4}[\s\-]\d{4}[\s\-]\d{4}\b",
+        RegexOptions.Compiled
+    );
+
     // Soft-identifying field patterns
     private static readonly Regex AgePattern = new(
         @"\b(\d{1,2}\s*(yaş(ında|ındaki|lı|li)?|yıl(lık|lığında)?)|"
@@ -62,9 +81,45 @@ public sealed class ContentModerationService
 
     private static readonly string[] AutoRejectTerms =
     [
+        // Önceden var olan — şiddet ve istismar
         "çocuk istismarı",
         "intihar yöntemi",
-        "bomba yapımı"
+        "bomba yapımı",
+
+        // Başkasına yönelik zarar çağrısı (cinayete teşvik / açık tehdit)
+        "kendini öldür",
+        "kendını oldur",
+        "git öl",
+        "git ol",
+        "öl git",
+        "ol git",
+        "defol git öl",
+        "seni öldüreceğim",
+        "seni oldüreceğim",
+        "sizi öldüreceğim",
+        "öldüreceğim seni",
+
+        // Cinsel taciz — açık cinsel tehdit ve hakaret kalıpları
+        "tecavüz edeceğim",
+        "tecavuz edecegim",
+        "sana tecavüz",
+        "cinsel saldırı yapacağım",
+
+        // Kimlik temelli nefret söylemi — etnik/dini/cinsiyet slurları
+        // (Bu terimler bağımsız olarak nefret içeriklidir; bağlam önemli değildir)
+        "ermenileri öldür",
+        "kürtleri öldür",
+        "yahudileri öldür",
+        "rumları öldür",
+        "müslümanları öldür",
+        "hristiyanları öldür",
+        "kafiri öldür",
+        "gavuru öldür",
+        "kadını dövün",
+        "kadınları dövün",
+        "eşcinselleri öldür",
+        "ibneyi öldür",
+        "lezbiyeni öldür",
     ];
 
     private static readonly string[] NormalizedAutoRejectTerms =
@@ -89,6 +144,17 @@ public sealed class ContentModerationService
             .NormalizeForModeration(text)
             .ToLowerInvariant();
 
+        // Kriz sinyali: Perspective API öncesinde çalışır, cezalandırıcı değil destek odaklı.
+        // Diğer moderasyon kurallarından bağımsız olarak işaretlenir.
+        var isCrisis = CrisisKeywordDetector.Detect(text);
+
+        // Doxxing: TC kimlik / IBAN / kredi kartı — rakamlar normalize edilmeden önce raw text üzerinde kontrol.
+        // Bu kalıplar rakam içerdiğinden normalizer'ın rakam→harf dönüşümü (0→o, 5→s) uygulanmamalı.
+        if (TcKimlikPattern.IsMatch(text) || IbanPattern.IsMatch(text) || CreditCardPattern.IsMatch(text))
+        {
+            return ModerationDecision.Reject("CONTENT_REJECTED", "İçerik politikası gereği bu metin yayınlanamaz.");
+        }
+
         if (NormalizedAutoRejectTerms.Any(normalized.Contains))
         {
             return ModerationDecision.Reject("CONTENT_REJECTED", "İçerik politikası gereği bu metin yayınlanamaz.");
@@ -96,17 +162,22 @@ public sealed class ContentModerationService
 
         if (TurkishPhonePattern.IsMatch(normalized) || EmailPattern.IsMatch(normalized))
         {
-            return ModerationDecision.Review("Kişisel bilgi olabilecek veri tespit edildi.");
+            return ModerationDecision.Review("Kişisel bilgi olabilecek veri tespit edildi.", isCrisis);
         }
 
         if (NormalizedReviewTerms.Any(normalized.Contains))
         {
-            return ModerationDecision.Review("İçerik moderasyon incelemesine alındı.");
+            return ModerationDecision.Review("İçerik moderasyon incelemesine alındı.", isCrisis);
         }
 
         if (HasSoftIdentifyingCombination(normalized))
         {
-            return ModerationDecision.Review("İçerik birden fazla kişisel tanımlayıcı bilgi içeriyor.");
+            return ModerationDecision.Review("İçerik birden fazla kişisel tanımlayıcı bilgi içeriyor.", isCrisis);
+        }
+
+        if (isCrisis)
+        {
+            return ModerationDecision.CrisisReview();
         }
 
         return ModerationDecision.Active();
@@ -134,14 +205,18 @@ public sealed record ModerationDecision(
     string Status,
     bool IsRejected,
     string? Code,
-    string Message
+    string Message,
+    bool IsCrisisFlagged = false
 )
 {
     public static ModerationDecision Active() =>
         new("active", false, null, "İçerik yayınlandı.");
 
-    public static ModerationDecision Review(string message) =>
-        new("under_review", false, null, message);
+    public static ModerationDecision Review(string message, bool isCrisisFlagged = false) =>
+        new("under_review", false, null, message, isCrisisFlagged);
+
+    public static ModerationDecision CrisisReview() =>
+        new("under_review", false, "CRISIS_FLAGGED", "İçerik moderasyon incelemesine alındı.", true);
 
     public static ModerationDecision Reject(string code, string message) =>
         new("rejected", true, code, message);

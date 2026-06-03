@@ -62,6 +62,13 @@ class MyPostsNotifier extends Notifier<MyPostsState> {
     state = state.copyWith(sort: sort);
     await load();
   }
+
+  void removePost(String postId) {
+    state = state.copyWith(
+      posts: state.posts.where((post) => post.id != postId).toList(),
+      error: null,
+    );
+  }
 }
 
 final myPostsProvider = NotifierProvider<MyPostsNotifier, MyPostsState>(

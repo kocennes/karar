@@ -168,6 +168,38 @@ public sealed class HiddenContentVisibilityTests
             "owner feed must not filter to active-only; owner should see their under_review and auto_hidden posts");
     }
 
+    // ── Notifications (deep-link target guard) ─────────────────────────────
+
+    [Fact]
+    public void NotificationsEndpoint_ExcludesDeepLinksToRemovedPosts()
+    {
+        var block = SliceEndpointBlock(
+            ProgramText,
+            "app.MapGet(\"/api/v1/notifications\", async (",
+            "app.MapPut(\"/api/v1/notifications/read-all\", async ("
+        );
+
+        block.Should().Contain("n.post_id IS NULL OR p.status = 'active'",
+            "notifications whose target post is removed/hidden must be excluded from the list");
+    }
+
+    // ── Public User Comments ───────────────────────────────────────────────
+
+    [Fact]
+    public void PublicUserCommentsEndpoint_ExcludesCommentsOnNonActivePosts()
+    {
+        var block = SliceEndpointBlock(
+            ProgramText,
+            "app.MapGet(\"/api/v1/users/{username}/comments\", async (",
+            "app.MapGet(\"/api/v1/users/me/karma-history\", async ("
+        );
+
+        block.Should().Contain("cm.status = 'active'",
+            "public user comments must exclude deleted/hidden comments");
+        block.Should().Contain("p.status = 'active'",
+            "public user comments must exclude comments whose parent post is removed/hidden");
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────
 
     private static string SliceEndpointBlock(string text, string startMarker, string endMarker)

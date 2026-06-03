@@ -57,6 +57,10 @@ app.*.map.json
 # MacOS related
 .DS_Store
 
+# Production/Staging config overrides — credentials Render env vars'dan gelir, dosyaya yazılmaz.
+# Birisi yanlışlıkla credentials'lı dosya oluşturursa commit'lenmesin.
+appsettings.Production.json
+
 # Hassas / iç dokümanlar — GitHub'a push'lanmaz
 yapılanlar
 docs/

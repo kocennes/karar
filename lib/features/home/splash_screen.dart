@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/auth/auth_service.dart';
 import '../../core/notifications/notification_permission_dialog.dart';
 import '../../core/providers.dart';
 import '../../core/theme/app_colors.dart';
@@ -39,6 +40,24 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
     if (!onboardingDone) {
       context.go('/onboarding');
       return;
+    }
+
+    // Politika versiyonu kontrolü — sadece giriş yapmış kullanıcılar için
+    final authService = ref.read(authServiceProvider);
+    if (authService.isLoggedIn) {
+      try {
+        final policyStatus = await authService.checkPolicyStatus();
+        if (!mounted) return;
+        if (policyStatus.needsAcceptance) {
+          await context.push<void>(
+            '/policy-acceptance',
+            extra: (policyStatus, authService),
+          );
+          if (!mounted) return;
+        }
+      } catch (_) {
+        // Politika kontrolü başarısız olursa kullanıcıyı bloklama
+      }
     }
 
     // 3. açılışta bildirim izni ön dialogu (F13)

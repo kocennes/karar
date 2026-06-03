@@ -39,13 +39,13 @@ public sealed class NotificationPreferenceRouter(ILogger<NotificationPreferenceR
 
         if (prefs.PushEnabled == false)
         {
-            return PushDecision.Block();
+            return PushDecision.Suppress("push_disabled");
         }
 
         if (prefs.MutedUntil.HasValue && prefs.MutedUntil.Value > DateTimeOffset.UtcNow)
         {
             var muteRemaining = prefs.MutedUntil.Value - DateTimeOffset.UtcNow;
-            return PushDecision.Block(muteRemaining);
+            return PushDecision.Defer("muted", muteRemaining);
         }
 
         // Quiet hours check
@@ -54,13 +54,13 @@ public sealed class NotificationPreferenceRouter(ILogger<NotificationPreferenceR
             var delay = GetQuietHoursDelay(prefs.QuietHoursStart, prefs.QuietHoursEnd);
             if (delay.HasValue)
             {
-                return PushDecision.Block(delay);
+                return PushDecision.Defer("quiet_hours", delay.Value);
             }
         }
 
         return IsCategoryEnabled(notificationType, prefs)
             ? PushDecision.Allow()
-            : PushDecision.Block();
+            : PushDecision.Suppress("category_disabled");
     }
 
     /// <summary>
@@ -158,8 +158,13 @@ public sealed class NotificationPreferenceRouter(ILogger<NotificationPreferenceR
     };
 }
 
-public readonly record struct PushDecision(bool Allowed, TimeSpan? SuggestedRetryDelay)
+public readonly record struct PushDecision(
+    bool Allowed,
+    TimeSpan? SuggestedRetryDelay,
+    string Reason,
+    bool IsDeferred)
 {
-    public static PushDecision Allow() => new(true, null);
-    public static PushDecision Block(TimeSpan? retryDelay = null) => new(false, retryDelay);
+    public static PushDecision Allow() => new(true, null, "allowed", false);
+    public static PushDecision Suppress(string reason) => new(false, null, reason, false);
+    public static PushDecision Defer(string reason, TimeSpan retryDelay) => new(false, retryDelay, reason, true);
 }

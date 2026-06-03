@@ -14,6 +14,7 @@ import '../../shared/data/sample_posts.dart';
 import '../../shared/models/post.dart';
 import '../../shared/widgets/rate_limit_ui.dart';
 import '../feed/feed_provider.dart';
+import '../profile/my_posts_provider.dart';
 
 class PostDetailState {
   const PostDetailState({
@@ -679,12 +680,14 @@ class PostDetailNotifier extends FamilyNotifier<PostDetailState, String> {
 
     if (!AppRuntime.useRemoteApi) {
       ref.read(feedProvider.notifier).removePost(current.id);
+      ref.invalidate(myPostsProvider);
       return true;
     }
 
     try {
       await ref.read(postRepositoryProvider).deletePost(current.id);
       ref.read(feedProvider.notifier).removePost(current.id);
+      ref.invalidate(myPostsProvider);
       return true;
     } catch (_) {
       state = state.copyWith(error: 'Gönderi silinemedi.');

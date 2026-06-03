@@ -37,7 +37,9 @@ public sealed record PostDto(
     [property: JsonPropertyName("ranking_label")]
     string? RankingLabel = null,
     IReadOnlyList<string>? Tags = null,
-    string? AiSummary = null
+    string? AiSummary = null,
+    [property: JsonIgnore]
+    Guid? RankingAuthorKey = null
 );
 
 public sealed record CommentDto(

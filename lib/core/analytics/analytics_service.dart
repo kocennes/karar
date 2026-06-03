@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:firebase_analytics/firebase_analytics.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/api_client.dart';
 import '../api/api_endpoints.dart';
+import 'judgment_loop_tracker.dart';
 
 class AnalyticsService {
   AnalyticsService({ApiClient? apiClient}) : _apiClient = apiClient;
@@ -294,6 +296,53 @@ class AnalyticsService {
     await _a?.logEvent(
       name: 'push_notification_opened',
       parameters: {'type': type},
+    );
+  }
+
+  Future<void> logNotificationPermissionGranted(
+      {String source = 'unknown'}) async {
+    await _a?.logEvent(
+      name: 'notification_permission_granted',
+      parameters: {'source': source},
+    );
+  }
+
+  Future<void> logNotificationPermissionDenied(
+      {String source = 'unknown'}) async {
+    await _a?.logEvent(
+      name: 'notification_permission_denied',
+      parameters: {'source': source},
+    );
+  }
+
+  Future<void> logNotificationMarkedRead(
+      {required String notificationId, required String type}) async {
+    await _a?.logEvent(
+      name: 'notification_marked_read',
+      parameters: {'notification_id': notificationId, 'type': type},
+    );
+  }
+
+  Future<void> logNotificationDismissed(
+      {required String notificationId, required String type}) async {
+    await _a?.logEvent(
+      name: 'notification_dismissed',
+      parameters: {'notification_id': notificationId, 'type': type},
+    );
+  }
+
+  Future<void> logNotificationOpened({
+    required String notificationId,
+    required String type,
+    String surface = 'in_app_center',
+  }) async {
+    await _a?.logEvent(
+      name: 'notification_opened',
+      parameters: {
+        'notification_id': notificationId,
+        'type': type,
+        'surface': surface,
+      },
     );
   }
 
@@ -627,6 +676,89 @@ class AnalyticsService {
         'milestone': milestone,
       },
     );
+  }
+
+  // ── Meaningful Dwell ────────────────────────────────────────────────────────
+
+  Future<void> logMeaningfulDwell({
+    required String postId,
+    required int dwellSeconds,
+    required String source,
+  }) async {
+    await _a?.logEvent(
+      name: 'meaningful_dwell',
+      parameters: {
+        'post_id': postId,
+        'dwell_seconds': dwellSeconds,
+        'source': source,
+      },
+    );
+  }
+
+  // ── Completed Judgment Loop ──────────────────────────────────────────────────
+
+  Future<void> logCompletedJudgmentLoop({
+    required String postId,
+    required String source,
+    required int dwellSeconds,
+    required int loopDurationSeconds,
+    required bool votedBeforeResult,
+  }) async {
+    await _logFirebaseEventBestEffort(
+      name: 'completed_judgment_loop',
+      parameters: {
+        'post_id': postId,
+        'source': source,
+        'dwell_seconds': dwellSeconds,
+        'loop_duration_seconds': loopDurationSeconds,
+        'voted_before_result': votedBeforeResult,
+      },
+    );
+
+    await _incrementWeeklyLoopsCount();
+
+    if (_apiClient == null) return;
+    unawaited(
+      _apiClient.postJson<void>(
+        ApiEndpoints.loopCompleted,
+        body: {
+          'postId': postId,
+          'source': source,
+          'dwellSeconds': dwellSeconds,
+          'loopDurationSeconds': loopDurationSeconds,
+        },
+      ).catchError((_) {}),
+    );
+  }
+
+  static const _kWeeklyLoopsCountKey = 'analytics_weekly_loops_count';
+  static const _kLastResetMondayKey = 'analytics_last_reset_monday';
+
+  static String _mondayKey(DateTime now) {
+    final monday = now.subtract(Duration(days: now.weekday - 1));
+    return '${monday.year}-${monday.month.toString().padLeft(2, '0')}-${monday.day.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _incrementWeeklyLoopsCount() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final now = DateTime.now();
+      final currentMonday = _mondayKey(now);
+      final storedMonday = prefs.getString(_kLastResetMondayKey) ?? '';
+
+      int count;
+      if (storedMonday != currentMonday) {
+        count = 1;
+        await prefs.setString(_kLastResetMondayKey, currentMonday);
+      } else {
+        count = (prefs.getInt(_kWeeklyLoopsCountKey) ?? 0) + 1;
+      }
+      await prefs.setInt(_kWeeklyLoopsCountKey, count);
+      await _a?.setUserProperty(
+        name: 'weekly_loops_count',
+        value: count.toString(),
+      );
+    } catch (_) {}
   }
 
   Future<void> setAnalyticsEnabled(bool enabled) async {

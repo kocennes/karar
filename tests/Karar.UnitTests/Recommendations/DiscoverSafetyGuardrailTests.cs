@@ -42,6 +42,22 @@ public sealed class DiscoverSafetyGuardrailTests
     }
 
     [Fact]
+    public void DiscoverSections_FreshPool_Uses2HourWindow()
+    {
+        var programText = TestRepoPaths.ReadText("backend", "Karar.Api", "Program.cs");
+
+        var freshBlock = SliceEndpointBlock(
+            programText,
+            "app.MapGet(\"/api/v1/posts/discover\", async (",
+            "IReadOnlyList<PostDto>? cityTrending = null;");
+
+        freshBlock.Should().Contain("'2 hours'",
+            because: "discover sections fresh pool must use a 2-hour window consistent with the unified fresh slot definition in ranking-model.md §5");
+        freshBlock.Should().NotContain("'12 hours'",
+            because: "12-hour window is inconsistent with the 2-hour fresh slot rule; using 12 hours would surface stale posts labelled 'fresh'");
+    }
+
+    [Fact]
     public void CityTrendingQuery_ContainsSafetyGuardrails()
     {
         var programText = TestRepoPaths.ReadText("backend", "Karar.Api", "Program.cs");

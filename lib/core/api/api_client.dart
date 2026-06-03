@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 
@@ -86,6 +87,18 @@ class ApiClient {
           options: Options(headers: await _headersWithAdmin(adminToken)),
         ),
       );
+
+  Future<Uint8List> getBytes(String path) async {
+    final headers = await _authHeaders();
+    final response = await _dio.get<List<int>>(
+      path,
+      options: Options(
+        responseType: ResponseType.bytes,
+        headers: headers,
+      ),
+    );
+    return Uint8List.fromList(response.data ?? []);
+  }
 
   Future<T> postJson<T>(String path, {Object? body, String? adminToken}) =>
       _request<T>(

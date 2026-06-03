@@ -8,6 +8,7 @@ ALTER TABLE notifications
         'verdict_milestone',
         'verdict_reminder',
         'moderation_result',
+        'crisis_support',
         'mention',
         'follow',
         'follow_new_post',

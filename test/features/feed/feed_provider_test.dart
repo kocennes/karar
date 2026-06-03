@@ -47,4 +47,30 @@ void main() {
       expect(feedRankingLabelFor(sort: 'new', categoryId: 3), 'category_new');
     });
   });
+
+  group('FeedState.isFallback', () {
+    test('isFallback defaults to false', () {
+      expect(FeedState().isFallback, isFalse);
+    });
+
+    test('copyWith sets isFallback to true', () {
+      expect(FeedState().copyWith(isFallback: true).isFallback, isTrue);
+    });
+
+    test('copyWith resets isFallback to false', () {
+      final state = FeedState(isFallback: true);
+      expect(state.copyWith(isFallback: false).isFallback, isFalse);
+    });
+
+    test('copyWith preserves isFallback when not provided', () {
+      final state = FeedState(isFallback: true);
+      expect(state.copyWith(isLoading: false).isFallback, isTrue);
+    });
+
+    test('isFallback is false on fresh state from copyWith load reset', () {
+      final fallback = FeedState(isFallback: true);
+      final reloaded = fallback.copyWith(isLoading: true, isFallback: false);
+      expect(reloaded.isFallback, isFalse);
+    });
+  });
 }

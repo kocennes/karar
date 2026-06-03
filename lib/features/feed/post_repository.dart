@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -134,6 +136,7 @@ class PostRepository {
       fresh: _readPostList(json['fresh']),
       cityTrending: _readPostList(json['cityTrending']),
       city: json['city'] as String?,
+      serendipity: _readPostList(json['serendipity']),
       trendTopics: topicsRaw
           .cast<Map<String, Object?>>()
           .map((t) => TrendTopic(
@@ -330,6 +333,21 @@ class PostRepository {
       '/api/v1/posts/$postId',
       body: {'title': title, 'content': content},
     );
+  }
+
+  Future<Uint8List> fetchStoryImageBytes(String postId) =>
+      _apiClient.getBytes(ApiEndpoints.postStoryImage(postId));
+
+  Future<double> checkToxicity(String content) async {
+    try {
+      final json = await _apiClient.postJson<Map<String, Object?>>(
+        ApiEndpoints.moderationCheck,
+        body: {'content': content},
+      );
+      return (json['toxicityScore'] as num?)?.toDouble() ?? 0.0;
+    } catch (_) {
+      return 0.0;
+    }
   }
 
   Future<Post> refreshAiSummary(String postId) async {
