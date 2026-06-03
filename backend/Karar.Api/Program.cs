@@ -3240,17 +3240,26 @@ app.MapDelete("/api/v1/posts/{id:guid}/save", async (
 });
 
 // "İlgilenmiyorum" — negatif feed geri bildirimi, 30 gün Redis'te tutulur
+// Reason: not_interested gönderilirken isteğe bağlı sebep kodu (toksik|tekrarlı|ilgilenmiyorum|siyasi_fazla|kalitesiz_yorum)
 app.MapPost("/api/v1/posts/{id:guid}/feedback", async (
     Guid id,
     PostFeedbackRequest request,
     HttpRequest httpRequest,
     RequestDevice requestDevice,
-    RedisService redis
+    RedisService redis,
+    Db db,
+    JwtService jwtService
 ) =>
 {
     if (request.Type is not ("not_interested" or "seen_too_much" or "sensitive"))
     {
         return BadRequest("INVALID_FEEDBACK_TYPE", "Geçersiz geri bildirim türü.");
+    }
+
+    if (request.Reason is not null &&
+        request.Reason is not ("toksik" or "tekrarlı" or "ilgilenmiyorum" or "siyasi_fazla" or "kalitesiz_yorum"))
+    {
+        return BadRequest("INVALID_FEEDBACK_REASON", "Geçersiz geri bildirim sebebi.");
     }
 
     var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
@@ -3262,6 +3271,27 @@ app.MapPost("/api/v1/posts/{id:guid}/feedback", async (
     if (request.Type == "not_interested" || request.Type == "seen_too_much")
     {
         await redis.MarkNotInterestedAsync(deviceId.Value, id);
+    }
+
+    // Sebep bilgisi varsa discover_events'e kaydet (admin moderation dashboard için)
+    if (request.Reason is not null)
+    {
+        var userId = GetOptionalUserId(httpRequest, jwtService);
+        var metadata = JsonSerializer.Serialize(new { feedback_reason = request.Reason, feedback_type = request.Type });
+        await using var connection = await db.OpenConnectionAsync();
+        await using var cmd = new NpgsqlCommand(
+            """
+            INSERT INTO discover_events (post_id, device_id, user_id, event_type, metadata)
+            VALUES (@postId, @deviceId, @userId, 'not_interested', @metadata::jsonb)
+            ON CONFLICT DO NOTHING
+            """,
+            connection
+        );
+        cmd.Parameters.AddWithValue("postId", id);
+        cmd.Parameters.AddWithValue("deviceId", (object)deviceId.Value);
+        cmd.Parameters.AddWithValue("userId", (object?)userId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("metadata", metadata);
+        await cmd.ExecuteNonQueryAsync();
     }
 
     return Results.NoContent();
@@ -5249,6 +5279,7 @@ app.MapPost("/api/v1/admin/auth/login", async (
     }
 
     var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+    var ipBlock = IpAddressPrivacy.ToNetworkBlock(httpContext.Connection.RemoteIpAddress) ?? "unknown";
     var bfIdentity = BruteForceService.IdentityFor(ip, "admin-login");
 
     if (await bruteForce.IsLockedOutAsync(bfIdentity))
@@ -5260,7 +5291,7 @@ app.MapPost("/api/v1/admin/auth/login", async (
     {
         await bruteForce.RecordFailedAttemptAsync(bfIdentity);
         await using var connection = await db.OpenConnectionAsync();
-        await LogAdminActionAsync(connection, null!, request.Email, "login_failed", "auth", null, $"IP: {ip}");
+        await LogAdminActionAsync(connection, null!, request.Email, "login_failed", "auth", null, $"IP block: {ipBlock}");
         return Unauthorized();
     }
 
@@ -14008,30 +14039,7 @@ static async Task<ReportThresholdDecision> EvaluateReportThresholdAsync(
 
 static string? GetClientIpBlock(HttpRequest request)
 {
-    var ip = request.HttpContext.Connection.RemoteIpAddress;
-    if (ip is null)
-    {
-        return null;
-    }
-
-    if (ip.IsIPv4MappedToIPv6)
-    {
-        ip = ip.MapToIPv4();
-    }
-
-    var bytes = ip.GetAddressBytes();
-    if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && bytes.Length == 4)
-    {
-        return $"{bytes[0]}.{bytes[1]}.{bytes[2]}.0/24";
-    }
-
-    if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 && bytes.Length == 16)
-    {
-        return string.Join(':', Enumerable.Range(0, 4)
-            .Select(i => BitConverter.ToUInt16(bytes.Skip(i * 2).Take(2).Reverse().ToArray(), 0).ToString("x"))) + "::/64";
-    }
-
-    return null;
+    return IpAddressPrivacy.ToNetworkBlock(request.HttpContext.Connection.RemoteIpAddress);
 }
 
 static async Task AutoHideReportedTargetAsync(

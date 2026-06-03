@@ -619,7 +619,7 @@ class PostRepository {
       {String reason = 'not_interested'}) async {
     await _apiClient.postJson<void>(
       '/api/v1/posts/$postId/feedback',
-      body: {'type': reason},
+      body: {'type': 'not_interested', 'reason': reason},
     );
   }
 

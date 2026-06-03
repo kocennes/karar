@@ -9,6 +9,7 @@ import '../../shared/models/post.dart';
 import '../../shared/widgets/karar_avatar.dart';
 import '../../shared/widgets/post_image.dart';
 import '../../shared/widgets/highlight_text.dart';
+import '../../shared/widgets/feedback_reason_bottom_sheet.dart';
 import 'feed_provider.dart';
 import '../report/report_bottom_sheet.dart';
 import '../post_detail/vote_bar.dart';
@@ -508,32 +509,12 @@ class _MoreMenu extends ConsumerWidget {
       onSelected: (value) => _handleAction(context, ref, value),
       itemBuilder: (context) => [
         const PopupMenuItem(
-          value: 'not_interested',
+          value: 'azalt',
           child: Row(
             children: [
               Icon(Icons.do_not_disturb_alt_outlined, size: 18),
               SizedBox(width: 8),
-              Text('İlgilenmiyorum'),
-            ],
-          ),
-        ),
-        const PopupMenuItem(
-          value: 'seen_too_much',
-          child: Row(
-            children: [
-              Icon(Icons.visibility_off_outlined, size: 18),
-              SizedBox(width: 8),
-              Text('Çok sık görüyorum'),
-            ],
-          ),
-        ),
-        const PopupMenuItem(
-          value: 'low_quality',
-          child: Row(
-            children: [
-              Icon(Icons.thumb_down_alt_outlined, size: 18),
-              SizedBox(width: 8),
-              Text('Düşük kaliteli'),
+              Text('Bunu azalt'),
             ],
           ),
         ),
@@ -580,10 +561,8 @@ class _MoreMenu extends ConsumerWidget {
   }
 
   void _handleAction(BuildContext context, WidgetRef ref, String action) {
-    if (action == 'not_interested' ||
-        action == 'seen_too_much' ||
-        action == 'low_quality') {
-      _markNotInterested(context, ref, action);
+    if (action == 'azalt') {
+      _showFeedbackReasonSheet(context, ref);
     } else if (action == 'report') {
       ReportBottomSheet.show(
         context,
@@ -598,22 +577,24 @@ class _MoreMenu extends ConsumerWidget {
     }
   }
 
-  void _markNotInterested(BuildContext context, WidgetRef ref, String reason) {
+  Future<void> _showFeedbackReasonSheet(
+      BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final reason = await FeedbackReasonBottomSheet.show(context);
+    if (reason == null) return;
+    _markNotInterested(messenger, ref, reason);
+  }
+
+  void _markNotInterested(
+      ScaffoldMessengerState messenger, WidgetRef ref, String reason) {
     final feedNotifier = ref.read(feedProvider.notifier);
     final postIndex =
         ref.read(feedProvider).posts.indexWhere((p) => p.id == post.id);
     feedNotifier.markNotInterested(post.id, reason: reason);
 
-    String message = 'Artık bu gönderiyi görmeyeceksin.';
-    if (reason == 'seen_too_much') {
-      message = 'Geri bildirimin için teşekkürler. Akışın güncelleniyor.';
-    } else if (reason == 'low_quality') {
-      message = 'Düşük kaliteli içerikleri filtrelememize yardımcı oldun.';
-    }
-
-    ScaffoldMessenger.of(context).showSnackBar(
+    messenger.showSnackBar(
       SnackBar(
-        content: Text(message),
+        content: const Text('Artık bu gönderiyi görmeyeceksin.'),
         action: SnackBarAction(
           label: 'Geri Al',
           onPressed: () {

@@ -142,7 +142,8 @@ public sealed record AdminThrottleCategoryRequest(
 );
 
 public sealed record PostFeedbackRequest(
-    [Required] string Type
+    [Required] string Type,
+    string? Reason = null
 );
 
 public sealed record DiscoverEventRequest(

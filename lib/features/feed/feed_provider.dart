@@ -383,22 +383,16 @@ class FeedNotifier extends Notifier<FeedState> {
     if (post == null) return null;
     removePost(postId);
 
-    // Phase 3: Real-time Suppressor
-    // Suppress category for this session on strong negative signals.
-    if (reason == 'not_interested' || reason == 'seen_too_much') {
-      ref
-          .read(sessionSuppressedCategoriesProvider.notifier)
-          .suppress(post.category.id);
-    }
+    // Suppress category for this session on all explicit negative feedback signals.
+    ref
+        .read(sessionSuppressedCategoriesProvider.notifier)
+        .suppress(post.category.id);
 
     if (AppRuntime.useRemoteApi) {
-      // low_quality is local-only feedback; don't persist to backend.
-      if (reason != 'low_quality') {
-        try {
-          await _repo.markNotInterested(postId, reason: reason);
-        } catch (_) {
-          // Silently fail — local removal already gives user the right UX
-        }
+      try {
+        await _repo.markNotInterested(postId, reason: reason);
+      } catch (_) {
+        // Silently fail — local removal already gives user the right UX
       }
     }
     return post;
