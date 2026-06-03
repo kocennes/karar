@@ -29,7 +29,7 @@ public sealed class AccountDeletionContractTests
     {
         var service = TestRepoPaths.ReadText("backend", "Karar.Api", "Services", "DataRetentionService.cs");
 
-        service.Should().Contain("deleted_at < NOW() - INTERVAL '30 days'");
+        service.Should().Contain("deleted_at < NOW() - (@thresholdDays * INTERVAL '1 day')");
         service.Should().Contain("username = 'silinen_'");
         service.Should().Contain("email = 'deleted-'");
         service.Should().Contain("password_hash = NULL");

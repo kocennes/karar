@@ -6,15 +6,10 @@ namespace Karar.Api.Services;
 public sealed class DataRetentionService(
     Db db,
     AffinityService affinity,
-    IConfiguration configuration,
     ILogger<DataRetentionService> logger) : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromDays(1);
     private DateTime _lastWeeklyDecay = DateTime.MinValue;
-
-    // Security audit log retention: default 365 days in DB (already archived to GCS by AuditLogExportJob)
-    private int AuditLogRetentionDays =>
-        configuration.GetValue("AuditLogs:RetentionDays", 365);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -24,21 +19,17 @@ public sealed class DataRetentionService(
         {
             try
             {
-                var anonymizedUsers = await AnonymizeDeletedUsersAsync(stoppingToken);
+                var auditRetentionDays    = await GetSettingAsync("audit_log_retention_days",          365, stoppingToken);
+                var anonymizeDays         = await GetSettingAsync("deleted_user_anonymization_days",    30,  stoppingToken);
+
+                var anonymizedUsers = await AnonymizeDeletedUsersAsync(anonymizeDays, stoppingToken);
                 if (anonymizedUsers > 0)
-                {
-                    logger.LogInformation("Anonymized {Count} deleted users", anonymizedUsers);
-                }
+                    logger.LogInformation("Anonymized {Count} deleted users (threshold: {Days}d)", anonymizedUsers, anonymizeDays);
 
-                var purgedAuditLogs = await PurgeAuditLogsAsync(stoppingToken);
+                var purgedAuditLogs = await PurgeAuditLogsAsync(auditRetentionDays, stoppingToken);
                 if (purgedAuditLogs > 0)
-                {
-                    logger.LogInformation(
-                        "Purged {Count} admin_actions records older than {Days} days from DB (archived to GCS)",
-                        purgedAuditLogs, AuditLogRetentionDays);
-                }
+                    logger.LogInformation("Purged {Count} admin_actions older than {Days}d from DB (archived to GCS)", purgedAuditLogs, auditRetentionDays);
 
-                // Weekly category affinity decay (0.9× every 7 days) — hem user hem device tablosu
                 if (DateTime.UtcNow - _lastWeeklyDecay >= TimeSpan.FromDays(7))
                 {
                     await affinity.ApplyWeeklyDecayAsync();
@@ -56,7 +47,7 @@ public sealed class DataRetentionService(
         }
     }
 
-    private async Task<int> AnonymizeDeletedUsersAsync(CancellationToken ct)
+    private async Task<int> AnonymizeDeletedUsersAsync(int thresholdDays, CancellationToken ct)
     {
         await using var connection = await db.OpenConnectionAsync();
         await using var command = new NpgsqlCommand(
@@ -65,7 +56,7 @@ public sealed class DataRetentionService(
                 SELECT id, device_id
                 FROM users
                 WHERE deleted_at IS NOT NULL
-                  AND deleted_at < NOW() - INTERVAL '30 days'
+                  AND deleted_at < NOW() - (@thresholdDays * INTERVAL '1 day')
                   AND email NOT LIKE 'deleted-%@deleted.karar.local'
                 LIMIT 500
             ),
@@ -90,32 +81,41 @@ public sealed class DataRetentionService(
                 WHERE d.id = u.device_id
                 RETURNING d.id
             )
-            SELECT
-                (SELECT COUNT(*) FROM anonymized_users) AS user_count,
-                (SELECT COUNT(*) FROM anonymized_devices) AS device_count
+            SELECT (SELECT COUNT(*) FROM anonymized_users)
             """,
             connection
         );
-
+        command.Parameters.AddWithValue("thresholdDays", thresholdDays);
         return Convert.ToInt32(await command.ExecuteScalarAsync(ct));
     }
 
-    // Purge security audit logs (admin_actions) older than retention period from DB.
-    // AuditLogExportJob archives these to GCS first; this keeps the DB lean.
-    private async Task<int> PurgeAuditLogsAsync(CancellationToken ct)
+    // Purge admin_actions older than retention period. AuditLogExportJob archives to GCS first.
+    private async Task<int> PurgeAuditLogsAsync(int retentionDays, CancellationToken ct)
     {
-        var retentionDays = AuditLogRetentionDays;
-        if (retentionDays <= 0)
-            return 0;
+        if (retentionDays <= 0) return 0;
 
         await using var connection = await db.OpenConnectionAsync();
         await using var command = new NpgsqlCommand(
-            """
-            DELETE FROM admin_actions
-            WHERE created_at < NOW() - (@retentionDays * INTERVAL '1 day')
-            """,
+            "DELETE FROM admin_actions WHERE created_at < NOW() - (@days * INTERVAL '1 day')",
             connection);
-        command.Parameters.AddWithValue("retentionDays", retentionDays);
+        command.Parameters.AddWithValue("days", retentionDays);
         return await command.ExecuteNonQueryAsync(ct);
+    }
+
+    private async Task<int> GetSettingAsync(string key, int defaultValue, CancellationToken ct)
+    {
+        try
+        {
+            await using var connection = await db.OpenConnectionAsync();
+            await using var cmd = new NpgsqlCommand(
+                "SELECT value FROM platform_settings WHERE key = @key", connection);
+            cmd.Parameters.AddWithValue("key", key);
+            var result = await cmd.ExecuteScalarAsync(ct) as string;
+            return result != null && int.TryParse(result, out var val) ? val : defaultValue;
+        }
+        catch
+        {
+            return defaultValue;
+        }
     }
 }

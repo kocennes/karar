@@ -13393,6 +13393,102 @@ app.MapPost("/api/v1/auth/recover-account", async (
     return Results.Ok(new { message = "Hesabiniz basariyla geri alindi. Uygulamayi acarak giris yapabilirsiniz." });
 }).RequireRateLimiting("auth-strict");
 
+// ── ADMIN PLATFORM SETTINGS — RETENTION POLICY ────────────────────────────
+
+app.MapGet("/api/v1/admin/settings/retention", async (
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth
+) =>
+{
+    if (RequireAdmin(httpRequest, adminAuth) is { } unauthorized) return unauthorized;
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var cmd = new NpgsqlCommand(
+        """
+        SELECT key, value, updated_at, updated_by
+        FROM platform_settings
+        WHERE key IN ('audit_log_retention_days', 'deleted_user_anonymization_days')
+        """,
+        connection
+    );
+
+    var settings = new Dictionary<string, string>();
+    string? updatedAt = null;
+    string? updatedBy = null;
+
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        settings[reader.GetString(0)] = reader.GetString(1);
+        var rowUpdatedAt = reader.GetFieldValue<DateTimeOffset>(2).ToString("o");
+        if (updatedAt is null || string.Compare(rowUpdatedAt, updatedAt, StringComparison.Ordinal) > 0)
+        {
+            updatedAt = rowUpdatedAt;
+            updatedBy = reader.IsDBNull(3) ? null : reader.GetString(3);
+        }
+    }
+
+    return Results.Ok(new
+    {
+        auditLogRetentionDays = settings.TryGetValue("audit_log_retention_days", out var v1) && int.TryParse(v1, out var d1) ? d1 : 365,
+        deletedUserAnonymizationDays = settings.TryGetValue("deleted_user_anonymization_days", out var v2) && int.TryParse(v2, out var d2) ? d2 : 30,
+        updatedAt,
+        updatedBy
+    });
+});
+
+app.MapPut("/api/v1/admin/settings/retention", async (
+    HttpRequest httpRequest,
+    Db db,
+    AdminAuthService adminAuth
+) =>
+{
+    if (RequireAdmin(httpRequest, adminAuth) is { } unauthorized) return unauthorized;
+
+    RetentionSettingsRequest? body;
+    try { body = await httpRequest.ReadFromJsonAsync<RetentionSettingsRequest>(); }
+    catch { return BadRequest("INVALID_BODY", "Geçersiz istek gövdesi."); }
+
+    if (body is null) return BadRequest("INVALID_BODY", "Geçersiz istek gövdesi.");
+    if (body.AuditLogRetentionDays is < 30 or > 3650)
+        return BadRequest("INVALID_VALUE", "Denetim logu saklama süresi 30-3650 gün arasında olmalı.");
+    if (body.DeletedUserAnonymizationDays is < 30 or > 365)
+        return BadRequest("INVALID_VALUE", "Kullanıcı anonimleştirme süresi 30-365 gün arasında olmalı (KVKK).");
+
+    var adminEmail = adminAuth.TryGetAdminEmail(httpRequest) ?? "unknown";
+    await using var connection = await db.OpenConnectionAsync();
+    await using var transaction = await connection.BeginTransactionAsync();
+
+    await using var upsertCmd = new NpgsqlCommand(
+        """
+        INSERT INTO platform_settings (key, value, updated_at, updated_by) VALUES
+            ('audit_log_retention_days',        @auditDays,      NOW(), @updatedBy),
+            ('deleted_user_anonymization_days', @anonymizeDays,  NOW(), @updatedBy)
+        ON CONFLICT (key) DO UPDATE
+            SET value = EXCLUDED.value, updated_at = NOW(), updated_by = EXCLUDED.updated_by
+        """,
+        connection,
+        transaction
+    );
+    upsertCmd.Parameters.AddWithValue("auditDays", body.AuditLogRetentionDays.ToString());
+    upsertCmd.Parameters.AddWithValue("anonymizeDays", body.DeletedUserAnonymizationDays.ToString());
+    upsertCmd.Parameters.AddWithValue("updatedBy", adminEmail);
+    await upsertCmd.ExecuteNonQueryAsync();
+
+    await LogAdminActionAsync(connection, transaction, adminEmail, "update_retention_settings", "platform", null,
+        $"audit_log={body.AuditLogRetentionDays}d, user_anonymization={body.DeletedUserAnonymizationDays}d");
+    await transaction.CommitAsync();
+
+    return Results.Ok(new
+    {
+        auditLogRetentionDays = body.AuditLogRetentionDays,
+        deletedUserAnonymizationDays = body.DeletedUserAnonymizationDays,
+        updatedAt = DateTimeOffset.UtcNow.ToString("o"),
+        updatedBy = adminEmail
+    });
+});
+
 await app.RunAsync();
 
 }

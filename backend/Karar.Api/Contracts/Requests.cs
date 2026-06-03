@@ -308,3 +308,8 @@ public sealed record ApplyEnforcementRequest(
     DateTimeOffset? ExpiresAt = null    // temp_ban için
 );
 
+
+public sealed record RetentionSettingsRequest(
+    [Required, Range(30, 3650)] int AuditLogRetentionDays,
+    [Required, Range(30, 365)]  int DeletedUserAnonymizationDays
+);
