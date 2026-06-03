@@ -7,9 +7,9 @@ class AppColors {
   static const hakliDim = Color(0xFF14532D);
   static const haksizDim = Color(0xFF7F1D1D);
 
-  // Vote colors — dark mode (lightened for 6:1+ contrast on dark surfaces).
-  static const darkHakli = Color(0xFF4ADE80);
-  static const darkHaksiz = Color(0xFFEF4444);
+  // Vote colors — dark mode (muted for comfortable contrast on dark surfaces).
+  static const darkHakli = Color(0xFF34D399);  // emerald-400 — less neon than lime
+  static const darkHaksiz = Color(0xFFF87171); // red-400 — softer than red-500
 
   // Brand and CTA colors.
   static const primary = Color(0xFF4F46E5);

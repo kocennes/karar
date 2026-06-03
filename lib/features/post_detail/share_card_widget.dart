@@ -68,7 +68,7 @@ class _CardBody extends StatelessWidget {
                       Text(
                         '✅ Haklı  ${_fmt(post.voteCountHakli)}',
                         style: const TextStyle(
-                          color: Color(0xFF22C55E),
+                          color: AppColors.darkHakli,
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
                         ),
@@ -77,7 +77,7 @@ class _CardBody extends StatelessWidget {
                       Text(
                         '❌ Haksız  ${_fmt(post.voteCountHaksiz)}',
                         style: const TextStyle(
-                          color: Color(0xFFEF4444),
+                          color: AppColors.darkHaksiz,
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
                         ),
@@ -139,11 +139,11 @@ class _VoteBar extends StatelessWidget {
               children: [
                 Expanded(
                   flex: hakliPct,
-                  child: const ColoredBox(color: Color(0xFF22C55E)),
+                  child: const ColoredBox(color: AppColors.darkHakli),
                 ),
                 Expanded(
                   flex: 100 - hakliPct,
-                  child: const ColoredBox(color: Color(0xFFEF4444)),
+                  child: const ColoredBox(color: AppColors.darkHaksiz),
                 ),
               ],
             ),
@@ -154,7 +154,7 @@ class _VoteBar extends StatelessWidget {
           Text(
             '%$hakliPct Haklı',
             style: const TextStyle(
-              color: Color(0xFF22C55E),
+              color: AppColors.darkHakli,
               fontSize: 12,
               fontWeight: FontWeight.w700,
             ),

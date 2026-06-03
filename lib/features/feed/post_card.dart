@@ -313,7 +313,7 @@ class _PostCardState extends ConsumerState<PostCard> {
                           Expanded(
                             child: _FeedVoteButton(
                               key: const ValueKey('feed_vote_hakli_button'),
-                              label: 'HaklÄ±',
+                              label: 'Haklı',
                               icon: Icons.check_circle_outline,
                               color: Theme.of(context).brightness ==
                                       Brightness.dark
@@ -328,7 +328,7 @@ class _PostCardState extends ConsumerState<PostCard> {
                           Expanded(
                             child: _FeedVoteButton(
                               key: const ValueKey('feed_vote_haksiz_button'),
-                              label: 'HaksÄ±z',
+                              label: 'Haksız',
                               icon: Icons.cancel_outlined,
                               color: Theme.of(context).brightness ==
                                       Brightness.dark
@@ -386,7 +386,7 @@ class _FirstVoteCoachmark extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Semantics(
-        label: 'Ilk oyunu at ipucu',
+        label: 'İlk oyunu at ipucu',
         child: Container(
           width: double.infinity,
           padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
@@ -411,7 +411,7 @@ class _FirstVoteCoachmark extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Ilk oyunu at',
+                      'İlk oyunu at',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.labelLarge?.copyWith(
@@ -421,7 +421,7 @@ class _FirstVoteCoachmark extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Hakli ya da Haksiz sec.',
+                      'Haklı ya da Haksız seç.',
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
