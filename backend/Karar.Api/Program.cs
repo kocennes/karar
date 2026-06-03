@@ -5284,7 +5284,8 @@ app.MapPost("/api/v1/admin/auth/login", async (
     Db db,
     RedisService redis,
     EmailService emailService,
-    ILogger<Program> logger
+    ILogger<Program> logger,
+    IConfiguration config
 ) =>
 {
     if (ValidateRequest(request) is { } validationError)
@@ -5315,9 +5316,11 @@ app.MapPost("/api/v1/admin/auth/login", async (
         return Unauthorized();
     }
 
-    // SMTP yapılandırılmamışsa OTP adımını atla; IP allowlist ve strong password güvenliği sağlar.
-    // SMTP yapılandırıldığında e-posta OTP otomatik devreye girer.
-    if (!emailService.IsConfigured)
+    // OTP atla: email yapılandırılmamışsa veya Admin:SkipEmailOtp=true ise.
+    // TODO: Admin:SkipEmailOtp=false yaparak email OTP'yi tekrar devreye al.
+    var skipOtp = !emailService.IsConfigured
+        || (config["Admin:SkipEmailOtp"] == "true");
+    if (skipOtp)
     {
         await bruteForce.ClearAsync(bfIdentity);
         return Results.Ok(new AdminLoginResponse(
