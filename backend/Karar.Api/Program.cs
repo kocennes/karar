@@ -8791,6 +8791,115 @@ app.MapGet("/api/v1/users/me", async (
     ));
 });
 
+app.MapPost("/api/v1/users/me/migrate-guest-data", async (
+    HttpRequest httpRequest,
+    Db db,
+    JwtService jwtService
+) =>
+{
+    var principal = GetJwtPrincipal(httpRequest, jwtService);
+    if (principal is null) return Unauthorized();
+    var userId = GetUserId(principal);
+
+    if (!httpRequest.Headers.TryGetValue("X-Device-Token", out var tokenValues))
+    {
+        return Unauthorized();
+    }
+
+    var deviceToken = tokenValues.ToString();
+    if (string.IsNullOrWhiteSpace(deviceToken))
+    {
+        return Unauthorized();
+    }
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var transaction = await connection.BeginTransactionAsync();
+
+    await using var findDevice = new NpgsqlCommand(
+        """
+        SELECT d.id
+        FROM devices d
+        JOIN users u ON u.device_id = d.id
+        WHERE d.device_token = @deviceToken
+          AND u.id = @userId
+          AND u.deleted_at IS NULL
+        """,
+        connection,
+        transaction
+    );
+    findDevice.Parameters.AddWithValue("deviceToken", deviceToken);
+    findDevice.Parameters.AddWithValue("userId", userId);
+
+    var deviceResult = await findDevice.ExecuteScalarAsync();
+    if (deviceResult is not Guid deviceId)
+    {
+        await transaction.RollbackAsync();
+        return Unauthorized();
+    }
+
+    await using var updatePosts = new NpgsqlCommand(
+        """
+        UPDATE posts
+        SET user_id = @userId,
+            updated_at = NOW()
+        WHERE device_id = @deviceId
+          AND user_id IS NULL
+        """,
+        connection,
+        transaction
+    );
+    updatePosts.Parameters.AddWithValue("userId", userId);
+    updatePosts.Parameters.AddWithValue("deviceId", deviceId);
+    await updatePosts.ExecuteNonQueryAsync();
+
+    await using var updateComments = new NpgsqlCommand(
+        """
+        UPDATE comments
+        SET user_id = @userId,
+            updated_at = NOW()
+        WHERE device_id = @deviceId
+          AND user_id IS NULL
+        """,
+        connection,
+        transaction
+    );
+    updateComments.Parameters.AddWithValue("userId", userId);
+    updateComments.Parameters.AddWithValue("deviceId", deviceId);
+    await updateComments.ExecuteNonQueryAsync();
+
+    await using var updateVotes = new NpgsqlCommand(
+        """
+        UPDATE votes
+        SET user_id = @userId,
+            updated_at = NOW()
+        WHERE device_id = @deviceId
+          AND user_id IS NULL
+        """,
+        connection,
+        transaction
+    );
+    updateVotes.Parameters.AddWithValue("userId", userId);
+    updateVotes.Parameters.AddWithValue("deviceId", deviceId);
+    await updateVotes.ExecuteNonQueryAsync();
+
+    await using var updateReports = new NpgsqlCommand(
+        """
+        UPDATE reports
+        SET reporter_user_id = @userId
+        WHERE reporter_device_id = @deviceId
+          AND reporter_user_id IS NULL
+        """,
+        connection,
+        transaction
+    );
+    updateReports.Parameters.AddWithValue("userId", userId);
+    updateReports.Parameters.AddWithValue("deviceId", deviceId);
+    await updateReports.ExecuteNonQueryAsync();
+
+    await transaction.CommitAsync();
+    return Results.NoContent();
+});
+
 app.MapGet("/api/v1/users/username-availability", async (
     string username,
     HttpRequest httpRequest,
@@ -13922,7 +14031,7 @@ static string? GetClientIpBlock(HttpRequest request)
             .Select(i => BitConverter.ToUInt16(bytes.Skip(i * 2).Take(2).Reverse().ToArray(), 0).ToString("x"))) + "::/64";
     }
 
-    return ip.ToString();
+    return null;
 }
 
 static async Task AutoHideReportedTargetAsync(

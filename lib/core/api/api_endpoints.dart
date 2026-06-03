@@ -70,7 +70,8 @@ abstract final class ApiEndpoints {
   static const String userMeModerationAppeals =
       '/api/v1/users/me/moderation-appeals';
 
-  static const String authMigrateGuestData = '/api/v1/auth/migrate-guest-data';
+  static const String authMigrateGuestData =
+      '/api/v1/users/me/migrate-guest-data';
   static const String moderationCheck = '/api/v1/moderation/check';
   static const String moderationTransparency =
       '/api/v1/moderation/transparency';

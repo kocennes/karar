@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:karar/core/api/api_client.dart';
+import 'package:karar/core/api/api_endpoints.dart';
 import 'package:karar/core/api/api_exception.dart';
 
 Dio _mockDio({required int statusCode, required Map<String, dynamic> body}) {
@@ -20,6 +21,13 @@ Dio _mockDio({required int statusCode, required Map<String, dynamic> body}) {
 }
 
 void main() {
+  test('guest data migration uses the authenticated user endpoint', () {
+    expect(
+      ApiEndpoints.authMigrateGuestData,
+      '/api/v1/users/me/migrate-guest-data',
+    );
+  });
+
   test('ApiClient sends device token header when no access token', () async {
     String? capturedHeader;
 
