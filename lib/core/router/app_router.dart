@@ -88,7 +88,7 @@ GoRouter buildRouter(AppServices services) => GoRouter(
                 ),
               ],
             ),
-            // Profile tab
+            // Profile tab — index 3
             StatefulShellBranch(
               routes: [
                 GoRoute(
@@ -127,19 +127,25 @@ GoRouter buildRouter(AppServices services) => GoRouter(
                 ),
               ],
             ),
+            // Search tab (desktop sidebar only, not in mobile bottom nav) — index 4
+            StatefulShellBranch(
+              routes: [
+                GoRoute(
+                  path: '/search',
+                  builder: (_, __) => const SearchScreen(),
+                ),
+              ],
+            ),
+            // Discover tab (desktop sidebar only, not in mobile bottom nav) — index 5
+            StatefulShellBranch(
+              routes: [
+                GoRoute(
+                  path: '/discover',
+                  builder: (_, __) => const DiscoverScreen(),
+                ),
+              ],
+            ),
           ],
-        ),
-
-        // ── Search ───────────────────────────────────────────────────────────
-        GoRoute(
-          path: '/search',
-          builder: (_, __) => const SearchScreen(),
-        ),
-
-        // ── Discover ─────────────────────────────────────────────────────────
-        GoRoute(
-          path: '/discover',
-          builder: (_, __) => const DiscoverScreen(),
         ),
 
         // ── Category feed (F11) ──────────────────────────────────────────────

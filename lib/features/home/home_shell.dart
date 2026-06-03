@@ -13,6 +13,7 @@ import '../../shared/widgets/kvkk_banner.dart';
 import '../../shared/widgets/login_nudge.dart';
 import '../feed/feed_provider.dart';
 import '../notifications/notifications_provider.dart';
+import 'widgets/karar_side_nav.dart';
 
 class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key, required this.navigationShell});
@@ -128,8 +129,10 @@ class _HomeShellState extends ConsumerState<HomeShell>
   }
 
   void _onDestinationSelected(int index) {
-    // Restricted branches: Create (1), Profile (2), Notifications (3)
-    if (index > 0) {
+    // Auth required only for Create (1), Notifications (2), Profile (3).
+    // Feed (0), Search (4), Discover (5) are public.
+    const authRequired = {1, 2, 3};
+    if (authRequired.contains(index)) {
       final isLoggedIn = ref.read(currentUserProvider) != null;
       if (!isLoggedIn) {
         final (title, message) = switch (index) {
@@ -192,7 +195,11 @@ class _HomeShellState extends ConsumerState<HomeShell>
       bottomNavigationBar: context.isDesktop
           ? null
           : NavigationBar(
-              selectedIndex: widget.navigationShell.currentIndex,
+              // Branches 4 (search) and 5 (discover) are desktop-only;
+              // fall back to Feed tab highlight on mobile.
+              selectedIndex: widget.navigationShell.currentIndex < 4
+                  ? widget.navigationShell.currentIndex
+                  : 0,
               onDestinationSelected: _onDestinationSelected,
               destinations: [
                 const NavigationDestination(
@@ -204,13 +211,15 @@ class _HomeShellState extends ConsumerState<HomeShell>
                     selectedIcon: Icon(Icons.edit),
                     label: 'Paylaş'),
                 NavigationDestination(
-                  icon: _NotificationIcon(
-                    icon: Icons.notifications_outlined,
-                    unreadCount: unreadCount,
+                  icon: Badge.count(
+                    count: unreadCount.clamp(0, 99),
+                    isLabelVisible: unreadCount > 0,
+                    child: const Icon(Icons.notifications_outlined),
                   ),
-                  selectedIcon: _NotificationIcon(
-                    icon: Icons.notifications,
-                    unreadCount: unreadCount,
+                  selectedIcon: Badge.count(
+                    count: unreadCount.clamp(0, 99),
+                    isLabelVisible: unreadCount > 0,
+                    child: const Icon(Icons.notifications),
                   ),
                   label: 'Bildirimler',
                 ),
@@ -227,20 +236,24 @@ class _HomeShellState extends ConsumerState<HomeShell>
 
     return CallbackShortcuts(
       bindings: {
+        // 1=Ana Sayfa, 2=Arama, 3=Keşfet, 4=Bildirimler, 5=Oluştur
         const SingleActivator(LogicalKeyboardKey.digit1): () {
           widget.navigationShell.goBranch(0);
         },
         const SingleActivator(LogicalKeyboardKey.digit2): () {
-          widget.navigationShell.goBranch(1);
+          widget.navigationShell.goBranch(4);
         },
         const SingleActivator(LogicalKeyboardKey.digit3): () {
-          widget.navigationShell.goBranch(2);
+          widget.navigationShell.goBranch(5);
         },
         const SingleActivator(LogicalKeyboardKey.digit4): () {
-          widget.navigationShell.goBranch(3);
+          widget.navigationShell.goBranch(2);
+        },
+        const SingleActivator(LogicalKeyboardKey.digit5): () {
+          widget.navigationShell.goBranch(1);
         },
         const SingleActivator(LogicalKeyboardKey.slash): () {
-          context.push('/search');
+          widget.navigationShell.goBranch(4);
         },
         const SingleActivator(LogicalKeyboardKey.keyN): () {
           widget.navigationShell.goBranch(1);
@@ -365,36 +378,11 @@ class _HomeShellState extends ConsumerState<HomeShell>
     if (context.isDesktop) {
       return Row(
         children: [
-          NavigationRail(
-            extended: true,
-            minExtendedWidth: 220,
-            selectedIndex: widget.navigationShell.currentIndex,
-            onDestinationSelected: _onDestinationSelected,
-            destinations: [
-              const NavigationRailDestination(
-                  icon: Icon(Icons.home_outlined),
-                  selectedIcon: Icon(Icons.home),
-                  label: Text('Ana Sayfa')),
-              const NavigationRailDestination(
-                  icon: Icon(Icons.edit_outlined),
-                  selectedIcon: Icon(Icons.edit),
-                  label: Text('Yaz')),
-              NavigationRailDestination(
-                icon: _NotificationIcon(
-                  icon: Icons.notifications_outlined,
-                  unreadCount: unreadCount,
-                ),
-                selectedIcon: _NotificationIcon(
-                  icon: Icons.notifications,
-                  unreadCount: unreadCount,
-                ),
-                label: const Text('Bildirimler'),
-              ),
-              const NavigationRailDestination(
-                  icon: Icon(Icons.person_outline),
-                  selectedIcon: Icon(Icons.person),
-                  label: Text('Profil')),
-            ],
+          KararSideNav(
+            currentIndex: widget.navigationShell.currentIndex,
+            onSelectIndex: _onDestinationSelected,
+            unreadCount: unreadCount,
+            collapsed: !context.isSideNavExpanded,
           ),
           const VerticalDivider(width: 1),
           Expanded(child: widget.navigationShell),
@@ -406,21 +394,3 @@ class _HomeShellState extends ConsumerState<HomeShell>
   }
 }
 
-class _NotificationIcon extends StatelessWidget {
-  const _NotificationIcon({
-    required this.icon,
-    required this.unreadCount,
-  });
-
-  final IconData icon;
-  final int unreadCount;
-
-  @override
-  Widget build(BuildContext context) {
-    return Badge.count(
-      count: unreadCount.clamp(0, 99),
-      isLabelVisible: unreadCount > 0,
-      child: Icon(icon),
-    );
-  }
-}
