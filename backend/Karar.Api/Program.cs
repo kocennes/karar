@@ -993,6 +993,13 @@ app.MapPut("/api/v1/devices/fcm-token", async (
     RequestDevice requestDevice
 ) =>
 {
+    // Kimlik önce: kimliği olmayan çağıran gövde doğrulamasından (400) önce 401 alır.
+    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    if (deviceId is null)
+    {
+        return Unauthorized();
+    }
+
     if (ValidateRequest(request) is { } validationError)
     {
         return validationError;
@@ -1001,12 +1008,6 @@ app.MapPut("/api/v1/devices/fcm-token", async (
     if (!IsSupportedPlatform(request.Platform))
     {
         return BadRequest("INVALID_PLATFORM", "Platform android, ios veya web olmalı.");
-    }
-
-    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
-    if (deviceId is null)
-    {
-        return Unauthorized();
     }
 
     await using var connection = await db.OpenConnectionAsync();
@@ -2652,6 +2653,14 @@ app.MapPost("/api/v1/posts", async (
         return BadRequest("INVALID_REQUEST", "Gönderi içeriği okunamadı.");
     }
 
+    // Kimlik önce: kimliği olmayan çağıran gövde doğrulamasından (400) önce 401 alır.
+    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    var userId = GetOptionalUserId(httpRequest, jwtService);
+    if (deviceId is null && userId is null)
+    {
+        return Unauthorized();
+    }
+
     if (ValidateRequest(request) is { } validationError)
     {
         return validationError;
@@ -2673,13 +2682,6 @@ app.MapPost("/api/v1/posts", async (
         // Fail closed: SafeSearch yapılandırılmamışsa görsel hiç denetlenemez; herkese açık depoya yüklenmez.
         if (storageService.IsEnabled && !safeSearch.IsEnabled)
             return BadRequest("IMAGE_MODERATION_UNAVAILABLE", "Görsel denetimi şu anda kullanılamıyor. Görseli kaldırıp tekrar dene.");
-    }
-
-    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
-    var userId = GetOptionalUserId(httpRequest, jwtService);
-    if (deviceId is null && userId is null)
-    {
-        return Unauthorized();
     }
 
     await using var connection = await db.OpenConnectionAsync();
@@ -3223,16 +3225,17 @@ app.MapPut("/api/v1/posts/{id:guid}", async (
     SloMetrics sloMetrics
 ) =>
 {
-    if (ValidateRequest(request) is { } validationError)
-    {
-        return validationError;
-    }
-
+    // Kimlik önce: kimliği olmayan çağıran gövde doğrulamasından (400) önce 401 alır.
     var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
     var userId = GetOptionalUserId(httpRequest, jwtService);
     if (deviceId is null && userId is null)
     {
         return Unauthorized();
+    }
+
+    if (ValidateRequest(request) is { } validationError)
+    {
+        return validationError;
     }
 
     // Düzenleme, oluşturma ile aynı moderasyondan geçer (anahtar kelime/PII/tehdit, Perspective, kriz).
@@ -3494,6 +3497,14 @@ app.MapPost("/api/v1/posts/discover/events", async (
     RedisService redis
 ) =>
 {
+    // Kimlik önce: kimliği olmayan çağıran gövde doğrulamasından (400) önce 401 alır.
+    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    var userId = GetOptionalUserId(httpRequest, jwtService);
+    if (deviceId is null && userId is null)
+    {
+        return Unauthorized();
+    }
+
     if (ValidateRequest(request) is { } validationError)
     {
         return validationError;
@@ -3520,13 +3531,6 @@ app.MapPost("/api/v1/posts/discover/events", async (
     if (request.EventType == "dwell" && request.DwellSeconds is null)
     {
         return BadRequest("DWELL_SECONDS_REQUIRED", "Dwell event için süre gerekli.");
-    }
-
-    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
-    var userId = GetOptionalUserId(httpRequest, jwtService);
-    if (deviceId is null && userId is null)
-    {
-        return Unauthorized();
     }
 
     var metadata = string.IsNullOrWhiteSpace(request.Metadata) ? "{}" : request.Metadata;
@@ -3810,6 +3814,14 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
 {
     await AddVoteTimingJitterAsync(httpRequest.HttpContext.RequestAborted);
 
+    // Kimlik önce: kimliği olmayan çağıran gövde doğrulamasından (400) önce 401 alır.
+    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    var userId = GetOptionalUserId(httpRequest, jwtService);
+    if (deviceId is null && userId is null)
+    {
+        return Unauthorized();
+    }
+
     if (ValidateRequest(request) is { } validationError)
     {
         return validationError;
@@ -3818,13 +3830,6 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
     if (request.VoteType is not ("hakli" or "haksiz"))
     {
         return BadRequest("INVALID_VOTE_TYPE", "Oy tipi hakli veya haksiz olmalı.");
-    }
-
-    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
-    var userId = GetOptionalUserId(httpRequest, jwtService);
-    if (deviceId is null && userId is null)
-    {
-        return Unauthorized();
     }
 
     await using var connection = await db.OpenConnectionAsync();
@@ -4634,17 +4639,19 @@ app.MapPut("/api/v1/comments/{id:guid}", async (
     SloMetrics sloMetrics
 ) =>
 {
-    if (ValidateRequest(request) is { } validationError)
-    {
-        return validationError;
-    }
-
+    // Kimlik önce: kimliği olmayan çağıran gövde doğrulamasından (400) önce 401 alır.
     var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
     var userId = GetOptionalUserId(httpRequest, jwtService);
     if (deviceId is null && userId is null)
     {
         return Unauthorized();
     }
+
+    if (ValidateRequest(request) is { } validationError)
+    {
+        return validationError;
+    }
+
     var deviceParam = deviceId ?? Guid.Empty;
     var userParam = userId ?? Guid.Empty;
 
@@ -4860,6 +4867,13 @@ app.MapPost("/api/v1/reports", async (
     ComplianceLogService complianceLog
 ) =>
 {
+    // Kimlik önce: kimliği olmayan çağıran gövde doğrulamasından (400) önce 401 alır.
+    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    if (deviceId is null)
+    {
+        return Unauthorized();
+    }
+
     if (ValidateRequest(request) is { } validationError)
     {
         return validationError;
@@ -4873,12 +4887,6 @@ app.MapPost("/api/v1/reports", async (
     if (request.Reason is not ("hate_speech" or "harassment" or "personal_info" or "misinformation" or "spam" or "self_harm" or "illegal" or "other"))
     {
         return BadRequest("INVALID_REPORT_REASON", "Geçersiz rapor sebebi.");
-    }
-
-    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
-    if (deviceId is null)
-    {
-        return Unauthorized();
     }
 
     // Cihaz bazlı sliding window: saatte max 10 rapor (Redis-backed, çok instance'lı deploy'da paylaşılır)
@@ -8521,6 +8529,13 @@ app.MapPost("/api/v1/auth/register", async (
     RedisService redis
 ) =>
 {
+    // Kimlik önce: kimliği olmayan çağıran gövde doğrulamasından (400) önce 401 alır.
+    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    if (deviceId is null)
+    {
+        return Unauthorized();
+    }
+
     if (ValidateRequest(request) is { } validationError)
     {
         return validationError;
@@ -8530,12 +8545,6 @@ app.MapPost("/api/v1/auth/register", async (
     if (request.Gender is not ("male" or "female" or "other" or "prefer_not_to_say"))
     {
         return BadRequest("INVALID_GENDER", "Geçersiz cinsiyet değeri.");
-    }
-
-    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
-    if (deviceId is null)
-    {
-        return Unauthorized();
     }
 
     if (!request.AcceptedTerms || !request.AcceptedCommunityGuidelines)
@@ -10679,9 +10688,9 @@ app.MapPost("/api/v1/auth/2fa/enable", async (
     RedisService redis
 ) =>
 {
-    if (ValidateRequest(request) is { } validationError) return validationError;
     var principal = GetJwtPrincipal(httpRequest, jwtService);
     if (principal is null) return Unauthorized();
+    if (ValidateRequest(request) is { } validationError) return validationError;
     var userId = GetUserId(principal);
 
     await using var connection = await db.OpenConnectionAsync();
@@ -11634,10 +11643,9 @@ app.MapPut("/api/v1/users/me/password", async (
     JwtService jwtService
 ) =>
 {
-    if (ValidateRequest(request) is { } validationError) return validationError;
-
     var principal = GetJwtPrincipal(httpRequest, jwtService);
     if (principal is null) return Unauthorized();
+    if (ValidateRequest(request) is { } validationError) return validationError;
     var userId = GetUserId(principal);
 
     await using var connection = await db.OpenConnectionAsync();
@@ -14261,9 +14269,9 @@ app.MapPost("/api/v1/auth/change-email/request", async (
     RedisService redis
 ) =>
 {
-    if (ValidateRequest(request) is { } ve) return ve;
     var principal = GetJwtPrincipal(httpRequest, jwtService);
     if (principal is null) return Unauthorized();
+    if (ValidateRequest(request) is { } ve) return ve;
     var userId = GetUserId(principal);
 
     var newEmail = request.NewEmail.ToLowerInvariant();
@@ -14332,9 +14340,9 @@ app.MapPost("/api/v1/auth/change-email/confirm", async (
     RedisService redis
 ) =>
 {
-    if (ValidateRequest(request) is { } ve) return ve;
     var principal = GetJwtPrincipal(httpRequest, jwtService);
     if (principal is null) return Unauthorized();
+    if (ValidateRequest(request) is { } ve) return ve;
     var userId = GetUserId(principal);
 
     var newEmail = request.NewEmail.ToLowerInvariant();
