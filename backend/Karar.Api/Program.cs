@@ -8957,12 +8957,15 @@ app.MapPost("/api/v1/auth/refresh", async (
     await using var connection = await db.OpenConnectionAsync();
     await using var transaction = await connection.BeginTransactionAsync();
 
+    // İptal edilmiş token'lar da okunur (reuse tespiti); FOR UPDATE eşzamanlı rotasyonları sıraya sokar.
     await using var findCmd = new NpgsqlCommand(
         """
-        SELECT rt.id, rt.user_id, rt.expires_at, u.username, u.email, u.karma, u.auth_provider, u.is_banned
+        SELECT rt.id, rt.user_id, rt.expires_at, u.username, u.email, u.karma, u.auth_provider, u.is_banned,
+               rt.revoked_at, rt.rotated_at, COALESCE(rt.family_id, rt.id), NOW()
         FROM refresh_tokens rt
         JOIN users u ON u.id = rt.user_id
-        WHERE rt.token_hash = @hash AND rt.revoked_at IS NULL
+        WHERE rt.token_hash = @hash
+        FOR UPDATE OF rt
         """,
         connection,
         transaction
@@ -8984,34 +8987,76 @@ app.MapPost("/api/v1/auth/refresh", async (
     var karma = reader.GetInt32(5);
     var authProvider = reader.GetString(6);
     var isBanned = reader.GetBoolean(7);
+    DateTimeOffset? revokedAt = reader.IsDBNull(8) ? null : reader.GetFieldValue<DateTimeOffset>(8);
+    DateTimeOffset? rotatedAt = reader.IsDBNull(9) ? null : reader.GetFieldValue<DateTimeOffset>(9);
+    var familyId = reader.GetGuid(10);
+    var dbNow = reader.GetFieldValue<DateTimeOffset>(11);
     await reader.CloseAsync();
 
-    if (expiresAt < DateTimeOffset.UtcNow || isBanned)
+    var familyHasActiveToken = false;
+    if (revokedAt is not null && rotatedAt is not null)
+    {
+        await using var familyCmd = new NpgsqlCommand(
+            "SELECT EXISTS (SELECT 1 FROM refresh_tokens WHERE user_id = @userId AND (id = @familyId OR family_id = @familyId) AND revoked_at IS NULL)",
+            connection,
+            transaction
+        );
+        familyCmd.Parameters.AddWithValue("userId", userId);
+        familyCmd.Parameters.AddWithValue("familyId", familyId);
+        familyHasActiveToken = await familyCmd.ExecuteScalarAsync() is true;
+    }
+
+    var decision = RefreshTokenRotationPolicy.Classify(revokedAt, rotatedAt, familyHasActiveToken, dbNow);
+    if (decision == RefreshTokenRotationPolicy.Decision.ReuseDetected)
+    {
+        // Rotasyonla iptal edilmiş token tekrar sunuldu → sızmış olabilir: tüm aileyi kapat.
+        await using var revokeFamily = new NpgsqlCommand(
+            "UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = @userId AND (id = @familyId OR family_id = @familyId) AND revoked_at IS NULL",
+            connection,
+            transaction
+        );
+        revokeFamily.Parameters.AddWithValue("userId", userId);
+        revokeFamily.Parameters.AddWithValue("familyId", familyId);
+        await revokeFamily.ExecuteNonQueryAsync();
+        await transaction.CommitAsync();
+        return Unauthorized();
+    }
+
+    if (decision == RefreshTokenRotationPolicy.Decision.Reject || expiresAt < DateTimeOffset.UtcNow || isBanned)
     {
         await transaction.RollbackAsync();
         return Unauthorized();
     }
 
-    // Token rotation: eski iptal et, yeni ver
-    await using var revokeCmd = new NpgsqlCommand(
-        "UPDATE refresh_tokens SET revoked_at = NOW() WHERE id = @id",
-        connection,
-        transaction
-    );
-    revokeCmd.Parameters.AddWithValue("id", rtId);
-    await revokeCmd.ExecuteNonQueryAsync();
+    if (decision == RefreshTokenRotationPolicy.Decision.Rotate)
+    {
+        // Token rotation: eski iptal et (yalnızca hâlâ aktifse), yeni ver
+        await using var revokeCmd = new NpgsqlCommand(
+            "UPDATE refresh_tokens SET revoked_at = NOW(), rotated_at = NOW() WHERE id = @id AND revoked_at IS NULL",
+            connection,
+            transaction
+        );
+        revokeCmd.Parameters.AddWithValue("id", rtId);
+        if (await revokeCmd.ExecuteNonQueryAsync() != 1)
+        {
+            await transaction.RollbackAsync();
+            return Unauthorized();
+        }
+    }
+    // ConcurrentGrace: eski token az önce rotasyonla iptal edildi; aynı aileye yeni token verilir.
 
     var newAccessToken = jwtService.GenerateAccessToken(userId, username);
     var newRefreshToken = JwtService.GenerateRefreshToken();
     var newRefreshHash = JwtService.HashRefreshToken(newRefreshToken);
 
     await using var insertCmd = new NpgsqlCommand(
-        "INSERT INTO refresh_tokens (user_id, token_hash) VALUES (@userId, @hash)",
+        "INSERT INTO refresh_tokens (user_id, token_hash, family_id) VALUES (@userId, @hash, @familyId)",
         connection,
         transaction
     );
     insertCmd.Parameters.AddWithValue("userId", userId);
     insertCmd.Parameters.AddWithValue("hash", newRefreshHash);
+    insertCmd.Parameters.AddWithValue("familyId", familyId);
     await insertCmd.ExecuteNonQueryAsync();
 
     await transaction.CommitAsync();
@@ -10973,13 +11018,19 @@ app.MapPut("/api/v1/users/me/password", async (
         return BadRequest("WRONG_PASSWORD", "Mevcut şifre hatalı.");
 
     var newHash = PasswordService.Hash(request.NewPassword);
+    await using var transaction = await connection.BeginTransactionAsync();
     await using var updateCmd = new NpgsqlCommand(
         "UPDATE users SET password_hash = @hash, updated_at = NOW() WHERE id = @id",
-        connection
+        connection,
+        transaction
     );
     updateCmd.Parameters.AddWithValue("hash", newHash);
     updateCmd.Parameters.AddWithValue("id", userId);
     await updateCmd.ExecuteNonQueryAsync();
+
+    // Şifre değişince diğer oturumlar kapanır (istemcinin gönderdiği refresh token hariç).
+    await RevokeUserRefreshTokensAsync(connection, transaction, userId, request.RefreshToken);
+    await transaction.CommitAsync();
 
     return Results.NoContent();
 });
@@ -11089,13 +11140,17 @@ app.MapPost("/api/v1/auth/reset-password", async (
     await using var transaction = await connection.BeginTransactionAsync();
 
     await using var updateCmd = new NpgsqlCommand(
-        "UPDATE users SET password_hash = @hash, updated_at = NOW() WHERE email = @email AND auth_provider = 'password' AND deleted_at IS NULL",
+        "UPDATE users SET password_hash = @hash, updated_at = NOW() WHERE email = @email AND auth_provider = 'password' AND deleted_at IS NULL RETURNING id",
         connection,
         transaction
     );
     updateCmd.Parameters.AddWithValue("hash", newHash);
     updateCmd.Parameters.AddWithValue("email", email);
-    await updateCmd.ExecuteNonQueryAsync();
+    // Sıfırlama genelde hesap ele geçirildiği şüphesiyle yapılır: tüm açık oturumlar kapatılır.
+    if (await updateCmd.ExecuteScalarAsync() is Guid resetUserId)
+    {
+        await RevokeUserRefreshTokensAsync(connection, transaction, resetUserId);
+    }
 
     await using var cleanupCmd = new NpgsqlCommand(
         "DELETE FROM email_otps WHERE email = @email",
@@ -13712,6 +13767,9 @@ app.MapPost("/api/v1/auth/change-email/confirm", async (
     deleteOtp.Parameters.AddWithValue("key", otpKey);
     await deleteOtp.ExecuteNonQueryAsync();
 
+    // E-posta (hesap kurtarma kanalı) değişince diğer oturumlar kapanır (gönderilen refresh token hariç).
+    await RevokeUserRefreshTokensAsync(connection, tx, userId, request.RefreshToken);
+
     await tx.CommitAsync();
     await redis.GetDb().KeyDeleteAsync($"otp:chgemail:{userId}:{newEmail}");
     // Eski adrese bildirim: yetkisiz değişiklik fark edilebilsin.
@@ -15163,6 +15221,29 @@ static async Task<IResult?> RequireStepUpAsync(
         default:
             return BadRequest("REAUTH_UNAVAILABLE", "Bu işlem için hesabınızda şifre veya iki faktörlü doğrulama tanımlı olmalı.");
     }
+}
+
+// Kimlik bilgisi değişince (şifre sıfırlama/değiştirme, e-posta değişikliği) açık oturumlar kapatılır.
+// İstemci kendi refresh token'ını gönderirse yalnızca o oturum korunur.
+static async Task RevokeUserRefreshTokensAsync(
+    NpgsqlConnection connection,
+    NpgsqlTransaction transaction,
+    Guid userId,
+    string? keepRefreshToken = null
+)
+{
+    await using var command = new NpgsqlCommand(
+        "UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = @userId AND revoked_at IS NULL",
+        connection,
+        transaction
+    );
+    command.Parameters.AddWithValue("userId", userId);
+    if (!string.IsNullOrWhiteSpace(keepRefreshToken))
+    {
+        command.CommandText += " AND token_hash <> @keepHash";
+        command.Parameters.AddWithValue("keepHash", JwtService.HashRefreshToken(keepRefreshToken));
+    }
+    await command.ExecuteNonQueryAsync();
 }
 
 static async Task<CommentDto?> ReadCommentDtoAsync(
