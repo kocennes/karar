@@ -2684,16 +2684,16 @@ app.MapPost("/api/v1/posts", async (
         return BadRequest(moderation.Code ?? "CONTENT_REJECTED", moderation.Message);
     }
 
-    // Perspective API — runs after keyword check, overrides status if content is toxic
-    var perspectiveResult = await perspectiveService.AnalyzeAsync($"{request.Title}\n{request.Content}");
-    if (perspectiveResult is not null)
+    // Perspective API — runs after keyword check, overrides status if content is toxic.
+    // API yapılandırılmamış ya da çökükse karar Moderation:ToxicityUnavailableMode ile verilir
+    // (Production varsayılanı: incelemeye al); mantık PerspectiveApiService.ApplyToxicityResult'ta.
+    var toxicityCheck = await perspectiveService.AnalyzeAsync($"{request.Title}\n{request.Content}");
+    moderation = PerspectiveApiService.ApplyToxicityResult(moderation, toxicityCheck, perspectiveService.UnavailableMode);
+    if (moderation.IsRejected)
     {
-        var perspectiveStatus = PerspectiveApiService.DetermineStatus(perspectiveResult);
-        if (perspectiveStatus == "rejected")
-            return BadRequest("CONTENT_REJECTED", "İçerik politikası gereği bu metin yayınlanamaz.");
-        if (perspectiveStatus == "under_review" && moderation.Status == "active")
-            moderation = ModerationDecision.Review("İçerik moderasyon incelemesine alındı.");
+        return BadRequest(moderation.Code ?? "CONTENT_REJECTED", moderation.Message);
     }
+    var perspectiveResult = toxicityCheck.Result;
 
     // Görsel yükleme (GCS)
     string? imageUrl = null;
@@ -4188,6 +4188,8 @@ app.MapPost("/api/v1/posts/{id:guid}/comments", async (
     }
 
     var moderationStarted = TimeProvider.System.GetTimestamp();
+    // Not: Yorumlar Perspective'e gönderilmiyor (yalnızca anahtar kelime filtresi). Eklenirse karar,
+    // gönderi oluşturmadaki gibi PerspectiveApiService.ApplyToxicityResult üzerinden geçmeli.
     var moderation = moderationService.Analyze(request.Content);
     sloMetrics.RecordModeration(
         TimeProvider.System.GetElapsedTime(moderationStarted),

@@ -165,4 +165,66 @@ public sealed class ContentModerationServiceTests
 
         result.IsRejected.Should().BeTrue(because: "TC kimlik kontrolü digit normalizasyonundan önce çalışmalı");
     }
+
+    // ── Doxxing: telefon / e-posta — ham metin kontrolü ───────────────────────
+    // Normalizer rakamları ve '@' işaretini harfe çevirir (0→o, 1→l, 3→e, 5→s, 7→t, @→a).
+    // Bu yüzden telefon (5xx ile başlar) ve e-posta ('@' ister) kalıpları normalize metinde
+    // hiçbir zaman eşleşemez; ham metin üzerinde aranmaları gerekir. Cümlelerde başka bir
+    // inceleme tetikleyicisi (ör. "tehdit etti") bilinçli olarak yok: karar kalıptan gelmeli.
+
+    [Theory]
+    [InlineData("Beni 0532 123 45 67 numarasından arayabilirsiniz, haksız mıyım?")]
+    [InlineData("Beni +90 532 123 45 67 numarasından arayabilirsiniz, haksız mıyım?")]
+    [InlineData("Beni 05321234567 numarasından arayabilirsiniz, haksız mıyım?")]
+    [InlineData("Beni 0 (532) 123 45 67 numarasından arayabilirsiniz, haksız mıyım?")]
+    [InlineData("Beni 0532-123-45-67 numarasından arayabilirsiniz, haksız mıyım?")]
+    public void Analyze_ReturnsUnderReview_ForTurkishMobileNumber_WithoutOtherTriggers(string text)
+    {
+        var result = _service.Analyze(text);
+
+        result.Status.Should().Be("under_review", because: "telefon numarası tek başına kişisel bilgi incelemesi tetiklemeli");
+        result.IsRejected.Should().BeFalse();
+        result.Code.Should().BeNull();
+        result.Message.Should().Be("Kişisel bilgi olabilecek veri tespit edildi.",
+            because: "karar telefon kalıbından gelmeli, başka bir inceleme kuralından değil");
+    }
+
+    [Fact]
+    public void Analyze_ReturnsUnderReview_ForEmailAddress_WithoutOtherTriggers()
+    {
+        var result = _service.Analyze("Bana ali.veli@gmail.com üzerinden yazabilirsiniz, haksız mıyım?");
+
+        result.Status.Should().Be("under_review", because: "e-posta adresi tek başına kişisel bilgi incelemesi tetiklemeli");
+        result.IsRejected.Should().BeFalse();
+        result.Code.Should().BeNull();
+        result.Message.Should().Be("Kişisel bilgi olabilecek veri tespit edildi.");
+    }
+
+    [Fact]
+    public void Analyze_DoesNotDetect_ObfuscatedEmail_KnownLimitation()
+    {
+        // "[at]" / "[dot]" ile gizlenmiş e-posta bilinçli olarak kapsam dışı: EmailPattern gerçek '@' ister.
+        // Bu test mevcut davranışı belgeler; gizlenmiş e-posta tespiti eklenirse beklenti under_review olmalı.
+        var result = _service.Analyze("Bana ali [at] gmail [dot] com üzerinden yazabilirsiniz, haksız mıyım?");
+
+        result.Status.Should().Be("active");
+    }
+
+    [Fact]
+    public void Analyze_Rejects_TcKimlikLikeNumber_InRawText()
+    {
+        var result = _service.Analyze("Komşumun kimliğindeki numara 23456789012, herkes öğrensin.");
+
+        result.IsRejected.Should().BeTrue();
+        result.Code.Should().Be("CONTENT_REJECTED");
+    }
+
+    [Fact]
+    public void Analyze_Rejects_IbanWithSpaces_InRawText()
+    {
+        var result = _service.Analyze("Parayı TR12 0006 1005 1978 6457 8413 26 hesabına yatırmış, haklı mı?");
+
+        result.IsRejected.Should().BeTrue();
+        result.Code.Should().Be("CONTENT_REJECTED");
+    }
 }
