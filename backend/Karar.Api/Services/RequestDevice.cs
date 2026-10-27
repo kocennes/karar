@@ -26,11 +26,17 @@ public sealed class RequestDevice
         }
 
         await using var connection = await _db.OpenConnectionAsync();
+        // Kullanıcı banı, hesabın kayıtlı olduğu cihaza da uzanır; banlı kullanıcı çıkış yapıp aynı
+        // cihazdan misafir olarak devam edemez. Ban kaldırılınca cihaz kendiliğinden yeniden açılır.
         await using var command = new NpgsqlCommand(
             """
             UPDATE devices
             SET last_seen_at = NOW()
             WHERE device_token = @token AND is_banned = FALSE
+              AND NOT EXISTS (
+                  SELECT 1 FROM users u
+                  WHERE u.device_id = devices.id AND u.is_banned = TRUE
+              )
             RETURNING id
             """,
             connection

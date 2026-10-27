@@ -162,6 +162,7 @@ builder.Services.AddSingleton<ComplianceLogService>();
 builder.Services.AddSingleton<BusinessMetricsService>();
 builder.Services.AddKararObservability(builder.Configuration, builder.Environment);
 builder.Services.AddSingleton<SubnetBanService>();
+builder.Services.AddSingleton<IUserAccessStatusService, UserAccessStatusService>();
 builder.Services.AddSingleton<VoteBrigadeGuard>();
 builder.Services.AddScoped<RequestDevice>();
 builder.Services.AddRateLimiter(options =>
@@ -426,6 +427,7 @@ app.UseRateLimiter();
 app.UseMiddleware<DistributedRateLimitMiddleware>();
 app.UseMiddleware<AppAttestationMiddleware>();
 app.UseMiddleware<AdminSecurityMiddleware>();
+app.UseMiddleware<BannedUserMiddleware>();
 
 app.MapHealthChecks("/health/live", new HealthCheckOptions
 {
@@ -6776,6 +6778,17 @@ app.MapPost("/api/v1/admin/users/{id:guid}/strike", async (
         await tempBan.ExecuteNonQueryAsync();
     }
 
+    // Strike bana dönüştüyse admin kullanıcı banında olduğu gibi açık oturumlar da kapatılır.
+    if (autoAction is not null)
+    {
+        await using var revokeTokens = new NpgsqlCommand(
+            "UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = @userId AND revoked_at IS NULL",
+            connection, transaction
+        );
+        revokeTokens.Parameters.AddWithValue("userId", id);
+        await revokeTokens.ExecuteNonQueryAsync();
+    }
+
     var notifBody = autoAction switch
     {
         "permanent_ban" => "Platformun kullanim kurallarina tekrarlayan ihlaller nedeniyle hesabiniz kalici olarak askiya alinmistir.",
@@ -8513,7 +8526,7 @@ app.MapPost("/api/v1/auth/google", async (
     // Mevcut kullanıcı var mı? (google_id veya email ile bul)
     await using var findCmd = new NpgsqlCommand(
         """
-        SELECT id, username, email, karma, auth_provider
+        SELECT id, username, email, karma, auth_provider, is_banned, deleted_at
         FROM users
         WHERE google_id = @googleId OR (email = @email AND auth_provider = 'google')
         LIMIT 1
@@ -8540,8 +8553,23 @@ app.MapPost("/api/v1/auth/google", async (
         userEmail = findReader.GetString(2);
         karma = findReader.GetInt32(3);
         authProvider = findReader.GetString(4);
+        var isBanned = findReader.GetBoolean(5);
+        var isDeleted = !findReader.IsDBNull(6);
         isNewUser = false;
         await findReader.CloseAsync();
+
+        // Şifreli giriş ve refresh ile aynı kural: banlı veya silinmiş hesaba token verilmez.
+        if (isBanned)
+        {
+            await transaction.RollbackAsync();
+            return BadRequest("USER_BANNED", "Hesabınız askıya alınmıştır.");
+        }
+
+        if (isDeleted)
+        {
+            await transaction.RollbackAsync();
+            return BadRequest("ACCOUNT_DELETED", "Bu hesap silinmiş. Geri almak için e-postana gönderilen kurtarma bağlantısını kullanabilirsin.");
+        }
 
         await using var updateCmd = new NpgsqlCommand(
             "UPDATE users SET google_id = @googleId, updated_at = NOW() WHERE id = @id",
@@ -9562,7 +9590,7 @@ app.MapGet("/api/v1/users/me/moderation-history", async (
     var userId = GetUserId(principal);
 
     await using var connection = await db.OpenConnectionAsync();
-    var userDeviceId = await GetUserDeviceIdAsync(connection, userId);
+    var userDeviceId = await GetUserDeviceIdAsync(connection, userId, includeBannedDevice: true);
     if (userDeviceId is null) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
 
     await using var summaryCmd = new NpgsqlCommand(
@@ -9696,7 +9724,7 @@ app.MapGet("/api/v1/users/me/reports", async (
     var offset = (page - 1) * limit;
 
     await using var connection = await db.OpenConnectionAsync();
-    var effectiveDeviceId = deviceId ?? await GetUserDeviceIdAsync(connection, userId);
+    var effectiveDeviceId = deviceId ?? await GetUserDeviceIdAsync(connection, userId, includeBannedDevice: true);
     if (effectiveDeviceId is null) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
 
     await using var countCmd = new NpgsqlCommand(
@@ -9792,7 +9820,7 @@ app.MapPost("/api/v1/users/me/moderation-appeals", async (
     var message = request.Message.Trim();
 
     await using var connection = await db.OpenConnectionAsync();
-    var userDeviceId = await GetUserDeviceIdAsync(connection, userId);
+    var userDeviceId = await GetUserDeviceIdAsync(connection, userId, includeBannedDevice: true);
     if (userDeviceId is null) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
 
     var table = request.TargetType == "post" ? "posts" : "comments";
@@ -10806,7 +10834,7 @@ app.MapGet("/api/v1/users/me/saved", async (
     var offset = (page - 1) * limit;
     var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
     await using var connection = await db.OpenConnectionAsync();
-    var effectiveDeviceId = deviceId ?? await GetUserDeviceIdAsync(connection, userId);
+    var effectiveDeviceId = deviceId ?? await GetUserDeviceIdAsync(connection, userId, includeBannedDevice: true);
     var deviceParam = effectiveDeviceId ?? Guid.Empty;
 
     await using var countCmd = new NpgsqlCommand(
@@ -14821,11 +14849,21 @@ static Guid? GetOptionalUserId(HttpRequest request, JwtService jwtService)
 static async Task<Guid?> GetUserDeviceIdAsync(
     NpgsqlConnection connection,
     Guid userId,
-    NpgsqlTransaction? transaction = null
+    NpgsqlTransaction? transaction = null,
+    bool includeBannedDevice = false
 )
 {
+    // X-Device-Token düşürülüp yalnızca JWT gönderildiğinde banlı cihaza geri düşülmez. Yalnızca
+    // kullanıcının kendi geçmişini okuyan/itiraz eden endpoint'ler banlı cihazı da çözer.
     await using var command = new NpgsqlCommand(
-        "SELECT device_id FROM users WHERE id = @userId AND deleted_at IS NULL",
+        includeBannedDevice
+            ? "SELECT device_id FROM users WHERE id = @userId AND deleted_at IS NULL"
+            : """
+              SELECT u.device_id
+              FROM users u
+              JOIN devices d ON d.id = u.device_id
+              WHERE u.id = @userId AND u.deleted_at IS NULL AND d.is_banned = FALSE
+              """,
         connection,
         transaction
     );
