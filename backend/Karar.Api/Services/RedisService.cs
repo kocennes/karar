@@ -162,12 +162,13 @@ public sealed class RedisService : IDisposable
             local now = tonumber(ARGV[1])
             local window = tonumber(ARGV[2])
             local limit = tonumber(ARGV[3])
+            local member = ARGV[4]
 
             redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
             local count = redis.call('ZCARD', key)
 
             if count < limit then
-                redis.call('ZADD', key, now, now)
+                redis.call('ZADD', key, now, member)
                 redis.call('EXPIRE', key, math.ceil(window / 1000) + 1)
                 return 1
             end
@@ -178,7 +179,8 @@ public sealed class RedisService : IDisposable
         {
             var result = await _db.ScriptEvaluateAsync(script,
                 keys: new RedisKey[] { key },
-                values: new RedisValue[] { now, windowMs, limit });
+                // Üye benzersiz olmalı: aynı milisaniyedeki istekler tek kayda çökmesin (limit aşımı).
+                values: new RedisValue[] { now, windowMs, limit, $"{now}-{Guid.NewGuid():N}" });
 
             KararTelemetry.RecordRedisOperation("EVAL", true);
             return (int)result == 1;

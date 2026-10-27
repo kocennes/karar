@@ -8782,7 +8782,14 @@ app.MapPost("/api/v1/auth/login", async (
     await using var reader = await findCmd.ExecuteReaderAsync();
     if (!await reader.ReadAsync())
     {
+        // Bilinmeyen tanımlayıcı da hesap eşiğiyle sayılır: kilitlenme davranışı hesap varlığını sızdırmaz.
+        var unknownAccountIdentity = BruteForceService.AccountIdentityFor("login", identifier);
+        if (await bruteForce.IsLockedOutAsync(unknownAccountIdentity))
+        {
+            return TooManyRequests("ACCOUNT_LOCKED", "Çok fazla başarısız deneme. 15 dakika bekleyin.");
+        }
         await bruteForce.RecordFailedAttemptAsync(bfIdentity);
+        await bruteForce.RecordFailedAttemptAsync(unknownAccountIdentity, BruteForceService.MaxAccountAttempts);
         return BadRequest("INVALID_CREDENTIALS", "Kullanıcı adı veya şifre hatalı.");
     }
 
@@ -8798,6 +8805,13 @@ app.MapPost("/api/v1/auth/login", async (
     var totpSecret = reader.IsDBNull(9) ? null : reader.GetString(9);
     await reader.CloseAsync();
 
+    // Hedef hesap bazlı kilit: IP/cihaz döndürülerek aynı hesaba sınırsız tahmin yapılamaz.
+    var accountBfIdentity = BruteForceService.AccountIdentityFor("login", userId);
+    if (await bruteForce.IsLockedOutAsync(accountBfIdentity))
+    {
+        return TooManyRequests("ACCOUNT_LOCKED", "Çok fazla başarısız deneme. 15 dakika bekleyin.");
+    }
+
     if (isBanned)
     {
         return BadRequest("USER_BANNED", "Hesabınız askıya alınmıştır.");
@@ -8811,10 +8825,10 @@ app.MapPost("/api/v1/auth/login", async (
     if (passwordHash is null || !PasswordService.Verify(request.Password, passwordHash))
     {
         await bruteForce.RecordFailedAttemptAsync(bfIdentity);
+        await bruteForce.RecordFailedAttemptAsync(accountBfIdentity, BruteForceService.MaxAccountAttempts);
         return BadRequest("INVALID_CREDENTIALS", "Kullanıcı adı veya şifre hatalı.");
     }
 
-    // Başarılı giriş — sayacı temizle
     var backupCodeUsed = false;
     if (is2faEnabled)
     {
@@ -8826,13 +8840,12 @@ app.MapPost("/api/v1/auth/login", async (
             if (request.BackupCode is null)
             {
                 await bruteForce.RecordFailedAttemptAsync(bfIdentity);
+                await bruteForce.RecordFailedAttemptAsync(accountBfIdentity, BruteForceService.MaxAccountAttempts);
                 return BadRequest("TWO_FACTOR_REQUIRED", "Geçerli iki faktörlü doğrulama kodu veya yedek kod gerekli.");
             }
             backupCodeUsed = true;
         }
     }
-
-    await bruteForce.ClearAsync(bfIdentity);
 
     await using var transaction = await connection.BeginTransactionAsync();
 
@@ -8849,9 +8862,14 @@ app.MapPost("/api/v1/auth/login", async (
         {
             await transaction.RollbackAsync();
             await bruteForce.RecordFailedAttemptAsync(bfIdentity);
+            await bruteForce.RecordFailedAttemptAsync(accountBfIdentity, BruteForceService.MaxAccountAttempts);
             return BadRequest("INVALID_BACKUP_CODE", "Yedek kod geçersiz veya daha önce kullanıldı.");
         }
     }
+
+    // Başarılı giriş — sayaçlar yalnızca tüm faktörler doğrulandıktan sonra temizlenir
+    await bruteForce.ClearAsync(bfIdentity);
+    await bruteForce.ClearAsync(accountBfIdentity);
 
     var accessToken = jwtService.GenerateAccessToken(userId, username);
     var refreshToken = JwtService.GenerateRefreshToken();
