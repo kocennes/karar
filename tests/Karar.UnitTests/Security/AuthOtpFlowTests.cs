@@ -32,7 +32,7 @@ public sealed class AuthOtpFlowTests
         confirmBlock.Should().Contain("RedisService redis");
         confirmBlock.Should().Contain("DELETE FROM email_otps WHERE email = @key");
         confirmBlock.Should().Contain("await tx.CommitAsync();");
-        confirmBlock.Should().Contain("KeyDeleteAsync($\"otp:chgemail:{newEmail}\")");
+        confirmBlock.Should().Contain("KeyDeleteAsync($\"otp:chgemail:{userId}:{newEmail}\")");
     }
 
     private static string ReadProgram()

@@ -253,7 +253,20 @@ public sealed record ResendOtpRequest(
 );
 
 public sealed record GoogleSignInRequest(
-    [Required] string IdToken
+    [Required] string IdToken,
+    [StringLength(6, MinimumLength = 6)] string? TotpCode = null
+);
+
+// Hassas işlemler için yeniden doğrulama (step-up): şifreli hesapta şifre, şifresiz hesapta TOTP.
+public sealed record StepUpRequest(
+    [StringLength(72)] string? Password = null,
+    [StringLength(6, MinimumLength = 6)] string? TotpCode = null
+);
+
+public sealed record GoogleLinkRequest(
+    [Required] string IdToken,
+    [StringLength(72)] string? Password = null,
+    [StringLength(6, MinimumLength = 6)] string? TotpCode = null
 );
 
 public sealed record LoginRequest(
@@ -274,7 +287,9 @@ public sealed record UpdateUserProfileRequest(
 
 public sealed record ChangePasswordRequest(
     [Required] string CurrentPassword,
-    [Required, StringLength(72, MinimumLength = 8)] string NewPassword
+    [Required, StringLength(72, MinimumLength = 8)] string NewPassword,
+    // Opsiyonel: gönderilirse bu oturum açık kalır, diğer tüm oturumlar kapatılır.
+    string? RefreshToken = null
 );
 
 public sealed record ForgotPasswordRequest(
@@ -294,7 +309,9 @@ public sealed record ChangeEmailRequest(
 
 public sealed record ConfirmChangeEmailRequest(
     [Required, EmailAddress] string NewEmail,
-    [Required, StringLength(6, MinimumLength = 6)] string Otp
+    [Required, StringLength(6, MinimumLength = 6)] string Otp,
+    // Opsiyonel: gönderilirse bu oturum açık kalır, diğer tüm oturumlar kapatılır.
+    string? RefreshToken = null
 );
 
 public sealed record RecoverAccountRequest(
