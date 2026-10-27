@@ -89,40 +89,40 @@ public sealed class ReportAbuseProtectionServiceTests
         weight.Should().Be(1.0);
     }
 
-    // ── ComputeReportWeight — aynı fingerprint (Sybil guard) ────────────────
+    // ── ComputeReportWeight — fingerprint sinyal değildir ───────────────────
+    // Fingerprint istemci tarafından gönderilir; resmi istemci platform başına sabit
+    // 'karar-<platform>-dev' yollar. Eşitliği bağımsız kullanıcıları cezalandırır, botları değil.
 
     [Fact]
-    public void ComputeReportWeight_ReturnsSybilPenalty_WhenSameFingerprint()
+    public void ComputeReportWeight_IgnoresSharedClientFingerprint_WhenNetworksDiffer()
     {
-        // DB UNIQUE constraint normally prevents this, but belt-and-suspenders.
         var existing = new[]
         {
-            ("device-a", (string?)"10.0.2.0/24"),
+            ("karar-android-dev", (string?)"10.0.2.0/24"),
         };
 
         var weight = ReportAbuseProtectionService.ComputeReportWeight(
-            reporterFingerprint: "device-a",
+            reporterFingerprint: "karar-android-dev",
             reporterIpBlock: "10.0.1.0/24",
             existingReporters: existing);
 
-        weight.Should().Be(0.1);
+        weight.Should().Be(1.0);
     }
 
     [Fact]
-    public void ComputeReportWeight_FingerprintCheckTakesPriorityOverSubnet()
+    public void ComputeReportWeight_SharedFingerprintOnSameSubnet_GetsOnlySubnetPenalty()
     {
-        // Same fingerprint AND same subnet → fingerprint penalty wins (0.1 < 0.3)
         var existing = new[]
         {
-            ("device-a", (string?)"10.0.1.0/24"),
+            ("karar-android-dev", (string?)"10.0.1.0/24"),
         };
 
         var weight = ReportAbuseProtectionService.ComputeReportWeight(
-            reporterFingerprint: "device-a",
+            reporterFingerprint: "karar-android-dev",
             reporterIpBlock: "10.0.1.0/24",
             existingReporters: existing);
 
-        weight.Should().Be(0.1);
+        weight.Should().Be(0.3);
     }
 
     // ── Koordineli saldırı senaryosu ─────────────────────────────────────────
@@ -166,10 +166,9 @@ public sealed class ReportAbuseProtectionServiceTests
     [Theory]
     [InlineData(1.0)]
     [InlineData(0.3)]
-    [InlineData(0.1)]
-    public void ComputeReportWeight_AlwaysReturnsOneOfThreeDefinedValues(double expectedWeight)
+    public void ComputeReportWeight_AlwaysReturnsOneOfTwoDefinedValues(double expectedWeight)
     {
-        expectedWeight.Should().BeOneOf(0.1, 0.3, 1.0);
+        expectedWeight.Should().BeOneOf(0.3, 1.0);
     }
 
     // ── EvaluateReportThreshold — ağırlıklı sayım mantığı ────────────────────

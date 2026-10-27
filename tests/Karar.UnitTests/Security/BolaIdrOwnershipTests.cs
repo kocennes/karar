@@ -12,10 +12,10 @@ namespace Karar.UnitTests.Security;
 //   notifications/{id}/read       → device_id ownership in SQL
 //   notifications/{id}/dismiss    → device_id ownership in SQL
 //   users/me/sessions/{id} DELETE → user_id ownership in SQL
-//   comments/{id} DELETE          → device_id OR user_id ownership in SQL
-//   comments/{id} PUT             → device_id OR user_id ownership in SQL
-//   posts/{id} DELETE             → device_id OR user_id ownership in SQL
-//   posts/{id} PUT                → device_id OR user_id ownership in SQL
+//   comments/{id} DELETE          → account ownership (device only for guest rows) in SQL
+//   comments/{id} PUT             → account ownership (device only for guest rows) in SQL
+//   posts/{id} DELETE             → account ownership (device only for guest rows) in SQL
+//   posts/{id} PUT                → account ownership (device only for guest rows) in SQL
 //   posts/{id}/stats GET          → ownership query before data access
 //   posts/{id}/comments/pin POST  → post owner check before pin
 //   posts/{id}/comments/pin DELETE→ post owner check before unpin
@@ -79,7 +79,7 @@ public sealed class BolaIdrOwnershipTests
             "app.MapDelete(\"/api/v1/comments/{id:guid}\"",
             "app.MapPut(\"/api/v1/comments/{id:guid}\"");
 
-        block.Should().Contain("device_id = @deviceId OR user_id = @userId",
+        block.Should().Contain("CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END",
             "comment delete SQL must check ownership so user A cannot delete user B's comment");
     }
 
@@ -91,7 +91,7 @@ public sealed class BolaIdrOwnershipTests
             "app.MapPut(\"/api/v1/comments/{id:guid}\"",
             "app.MapPost(\"/api/v1/comments/{id:guid}/upvote\"");
 
-        block.Should().Contain("device_id = @deviceId OR user_id = @userId",
+        block.Should().Contain("CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END",
             "comment update SQL must check ownership");
     }
 
@@ -105,7 +105,7 @@ public sealed class BolaIdrOwnershipTests
             "app.MapDelete(\"/api/v1/posts/{id:guid}\"",
             "app.MapPost(\"/api/v1/posts/{id:guid}/view\"");
 
-        block.Should().Contain("device_id = @deviceId OR user_id = @userId",
+        block.Should().Contain("CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END",
             "post delete SQL must check ownership");
     }
 
@@ -117,7 +117,7 @@ public sealed class BolaIdrOwnershipTests
             "app.MapPut(\"/api/v1/posts/{id:guid}\"",
             "app.MapPost(\"/api/v1/posts/{id:guid}/save\"");
 
-        block.Should().Contain("device_id = @deviceId OR user_id = @userId",
+        block.Should().Contain("CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END",
             "post update SQL must check ownership");
     }
 
@@ -131,7 +131,7 @@ public sealed class BolaIdrOwnershipTests
             "app.MapGet(\"/api/v1/posts/{id:guid}/stats\"",
             "app.MapGet(\"/api/v1/posts/{id:guid}/similar\"");
 
-        block.Should().Contain("device_id = @deviceId OR user_id = @userId",
+        block.Should().Contain("CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END",
             "stats endpoint must verify caller owns the post before exposing view/vote metrics");
         // Ownership failure must return 403, not leak data
         block.Should().Contain("NOT_OWNER");
