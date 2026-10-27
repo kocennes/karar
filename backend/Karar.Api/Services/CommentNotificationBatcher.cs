@@ -113,7 +113,9 @@ public sealed class CommentNotificationBatcher(
         if (parentAuthorDeviceId == commenterDeviceId)
             return;
 
-        // Suppress reply notification when parent comment author has blocked the replier
+        // Suppress reply notification when parent comment author has blocked the replier.
+        // The anonymous author replying on their own post is authorless here (as in the thread),
+        // otherwise a missing notification would reveal who wrote the anonymous post.
         if (commenterUserId is not null && parentAuthorUserId is not null)
         {
             await using var blockCmd = new NpgsqlCommand(
@@ -122,11 +124,16 @@ public sealed class CommentNotificationBatcher(
                     SELECT 1 FROM blocked_users
                     WHERE blocker_user_id = @parentAuthorUserId
                       AND blocked_user_id = @commenterUserId
+                      AND NOT EXISTS (
+                          SELECT 1 FROM posts
+                          WHERE id = @postId AND is_anonymous = TRUE AND user_id = @commenterUserId
+                      )
                 )
                 """,
                 connection);
             blockCmd.Parameters.AddWithValue("parentAuthorUserId", parentAuthorUserId.Value);
             blockCmd.Parameters.AddWithValue("commenterUserId", commenterUserId.Value);
+            blockCmd.Parameters.AddWithValue("postId", postId);
             if ((bool)(await blockCmd.ExecuteScalarAsync() ?? false))
                 return;
         }
