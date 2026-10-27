@@ -3136,7 +3136,11 @@ app.MapPut("/api/v1/posts/{id:guid}", async (
     Db db,
     RequestDevice requestDevice,
     JwtService jwtService,
-    RedisService redis
+    RedisService redis,
+    ContentModerationService moderationService,
+    PerspectiveApiService perspectiveService,
+    ComplianceLogService complianceLog,
+    SloMetrics sloMetrics
 ) =>
 {
     if (ValidateRequest(request) is { } validationError)
@@ -3151,6 +3155,21 @@ app.MapPut("/api/v1/posts/{id:guid}", async (
         return Unauthorized();
     }
 
+    // Düzenleme, oluşturma ile aynı moderasyondan geçer (anahtar kelime/PII/tehdit, Perspective, kriz).
+    var moderationStarted = TimeProvider.System.GetTimestamp();
+    var moderation = moderationService.Analyze($"{request.Title}\n{request.Content}");
+    sloMetrics.RecordModeration(
+        TimeProvider.System.GetElapsedTime(moderationStarted),
+        moderation.IsRejected);
+    var perspectiveResult = moderation.IsRejected
+        ? null
+        : await perspectiveService.AnalyzeAsync($"{request.Title}\n{request.Content}");
+    var editDecision = ContentEditModeration.Decide(moderation, perspectiveResult);
+    if (editDecision.Outcome == ContentEditOutcome.Rejected)
+    {
+        return BadRequest(editDecision.ErrorCode!, editDecision.Message);
+    }
+
     await using var connection = await db.OpenConnectionAsync();
     await using var transaction = await connection.BeginTransactionAsync();
     var effectiveDeviceId = deviceId ?? await GetUserDeviceIdAsync(connection, userId!.Value, transaction);
@@ -3160,12 +3179,54 @@ app.MapPut("/api/v1/posts/{id:guid}", async (
         return Unauthorized();
     }
 
+    var editIp = httpRequest.HttpContext.Connection.RemoteIpAddress?.ToString();
+    if (editDecision.Outcome == ContentEditOutcome.RequiresReview)
+    {
+        // Önceki (onaylı) metin yayında kalır; incelemeye düşecek düzenleme kaydedilmez.
+        await using var editableCommand = new NpgsqlCommand(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM posts
+                WHERE id = @id
+                  AND status = 'active'
+                  AND created_at > NOW() - INTERVAL '15 minutes'
+                  AND (device_id = @deviceId OR user_id = @userId)
+            )
+            """,
+            connection,
+            transaction
+        );
+        editableCommand.Parameters.AddWithValue("id", id);
+        editableCommand.Parameters.AddWithValue("deviceId", effectiveDeviceId.Value);
+        editableCommand.Parameters.AddWithValue("userId", (object?)userId ?? DBNull.Value);
+        var editable = (bool)(await editableCommand.ExecuteScalarAsync() ?? false);
+        await transaction.RollbackAsync();
+        if (!editable)
+        {
+            return NotFound("POST_NOT_EDITABLE", "Post bulunamadı veya düzenleme süresi doldu.");
+        }
+
+        if (editDecision.IsCrisisFlagged)
+        {
+            await InsertCrisisSupportNotificationForContentAsync(connection, effectiveDeviceId.Value, id);
+        }
+
+        _ = complianceLog.LogAsync("post_edit_held", editIp, effectiveDeviceId, userId, id, "post",
+            new { reason = moderation.Message, crisis_flagged = editDecision.IsCrisisFlagged });
+        return BadRequest(editDecision.ErrorCode!, editDecision.Message);
+    }
+
     await using var command = new NpgsqlCommand(
         """
         UPDATE posts
         SET title = @title,
             content = @content,
             is_edited = TRUE,
+            moderation_reason = @moderationReason,
+            moderation_checked_at = NOW(),
+            perspective_toxicity = @perspectiveToxicity,
+            perspective_scores = @perspectiveScores::jsonb,
             updated_at = NOW()
         WHERE id = @id
           AND status = 'active'
@@ -3180,6 +3241,23 @@ app.MapPut("/api/v1/posts/{id:guid}", async (
     command.Parameters.AddWithValue("content", request.Content);
     command.Parameters.AddWithValue("deviceId", effectiveDeviceId.Value);
     command.Parameters.AddWithValue("userId", (object?)userId ?? DBNull.Value);
+    command.Parameters.AddWithValue("moderationReason", moderation.Message);
+    command.Parameters.AddWithValue("perspectiveToxicity",
+        perspectiveResult is not null ? (object)perspectiveResult.Toxicity : DBNull.Value);
+    command.Parameters.AddWithValue("perspectiveScores",
+        perspectiveResult is not null
+            ? System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    toxicity = perspectiveResult.Toxicity,
+                    severe_toxicity = perspectiveResult.SevereToxicity,
+                    identity_attack = perspectiveResult.IdentityAttack,
+                    insult = perspectiveResult.Insult,
+                    threat = perspectiveResult.Threat,
+                    overall = perspectiveResult.Overall,
+                    analyzed_at = DateTime.UtcNow,
+                    action = moderation.Status
+                })
+            : (object)DBNull.Value);
 
     var affected = await command.ExecuteNonQueryAsync();
     await transaction.CommitAsync();
@@ -3188,6 +3266,8 @@ app.MapPut("/api/v1/posts/{id:guid}", async (
         return NotFound("POST_NOT_EDITABLE", "Post bulunamadı veya düzenleme süresi doldu.");
     }
 
+    _ = complianceLog.LogAsync("post_edit", editIp, effectiveDeviceId, userId, id, "post",
+        new { status = moderation.Status });
     await redis.MarkPostDirtyAsync(id);
     return Results.NoContent();
 });
@@ -4387,7 +4467,10 @@ app.MapPut("/api/v1/comments/{id:guid}", async (
     HttpRequest httpRequest,
     Db db,
     RequestDevice requestDevice,
-    JwtService jwtService
+    JwtService jwtService,
+    ContentModerationService moderationService,
+    ComplianceLogService complianceLog,
+    SloMetrics sloMetrics
 ) =>
 {
     if (ValidateRequest(request) is { } validationError)
@@ -4404,12 +4487,86 @@ app.MapPut("/api/v1/comments/{id:guid}", async (
     var deviceParam = deviceId ?? Guid.Empty;
     var userParam = userId ?? Guid.Empty;
 
+    // Düzenleme, oluşturma ile aynı moderasyondan geçer (anahtar kelime/PII/tehdit, kriz, kalite).
+    var moderationStarted = TimeProvider.System.GetTimestamp();
+    var moderation = moderationService.Analyze(request.Content);
+    sloMetrics.RecordModeration(
+        TimeProvider.System.GetElapsedTime(moderationStarted),
+        moderation.IsRejected);
+    var editDecision = ContentEditModeration.Decide(moderation);
+    if (editDecision.Outcome == ContentEditOutcome.Rejected)
+    {
+        return BadRequest(editDecision.ErrorCode!, editDecision.Message);
+    }
+
     await using var connection = await db.OpenConnectionAsync();
+    var editIp = httpRequest.HttpContext.Connection.RemoteIpAddress?.ToString();
+    if (editDecision.Outcome == ContentEditOutcome.RequiresReview)
+    {
+        // Önceki (onaylı) metin yayında kalır; incelemeye düşecek düzenleme kaydedilmez.
+        await using var editableCommand = new NpgsqlCommand(
+            """
+            SELECT post_id
+            FROM comments
+            WHERE id = @id
+              AND (device_id = @deviceId OR user_id = @userId)
+              AND status = 'active'
+              AND created_at > NOW() - INTERVAL '5 minutes'
+            """,
+            connection
+        );
+        editableCommand.Parameters.AddWithValue("id", id);
+        editableCommand.Parameters.AddWithValue("deviceId", deviceParam);
+        editableCommand.Parameters.AddWithValue("userId", userParam);
+        if (await editableCommand.ExecuteScalarAsync() is not Guid commentPostId)
+        {
+            return NotFound("COMMENT_NOT_EDITABLE", "Yorum bulunamadı veya düzenleme süresi doldu.");
+        }
+
+        if (editDecision.IsCrisisFlagged)
+        {
+            var supportDeviceId = deviceId ?? await GetUserDeviceIdAsync(connection, userId!.Value);
+            if (supportDeviceId is not null)
+            {
+                await InsertCrisisSupportNotificationForContentAsync(connection, supportDeviceId.Value, commentPostId);
+            }
+        }
+
+        _ = complianceLog.LogAsync("comment_edit_held", editIp, deviceId, userId, id, "comment",
+            new { post_id = commentPostId, reason = moderation.Message, crisis_flagged = editDecision.IsCrisisFlagged });
+        return BadRequest(editDecision.ErrorCode!, editDecision.Message);
+    }
+
+    // Kalite cezası oluşturmadaki gibi yeniden hesaplanır (aynı posttaki başka yorumun kopyası +0.8).
+    var qualityPenalty = CommentQualityScorer.Score(request.Content);
+    await using var duplicateCommand = new NpgsqlCommand(
+        """
+        SELECT EXISTS (
+            SELECT 1
+            FROM comments other
+            WHERE other.post_id = (SELECT post_id FROM comments WHERE id = @id)
+              AND other.id <> @id
+              AND LOWER(TRIM(other.content)) = LOWER(TRIM(@content))
+              AND other.status = 'active'
+        )
+        """,
+        connection
+    );
+    duplicateCommand.Parameters.AddWithValue("id", id);
+    duplicateCommand.Parameters.AddWithValue("content", request.Content);
+    if ((bool)(await duplicateCommand.ExecuteScalarAsync() ?? false))
+    {
+        qualityPenalty = Math.Min(qualityPenalty + 0.8f, 1.0f);
+    }
+
     await using var command = new NpgsqlCommand(
         """
         UPDATE comments
         SET content = @content,
             is_edited = TRUE,
+            moderation_reason = @moderationReason,
+            moderation_checked_at = NOW(),
+            quality_penalty = @qualityPenalty,
             updated_at = NOW()
         WHERE id = @id
           AND (device_id = @deviceId OR user_id = @userId)
@@ -4422,11 +4579,18 @@ app.MapPut("/api/v1/comments/{id:guid}", async (
     command.Parameters.AddWithValue("content", request.Content);
     command.Parameters.AddWithValue("deviceId", deviceParam);
     command.Parameters.AddWithValue("userId", userParam);
+    command.Parameters.AddWithValue("moderationReason", moderation.Message);
+    command.Parameters.AddWithValue("qualityPenalty", qualityPenalty);
 
     var affected = await command.ExecuteNonQueryAsync();
-    return affected == 0
-        ? NotFound("COMMENT_NOT_EDITABLE", "Yorum bulunamadı veya düzenleme süresi doldu.")
-        : Results.NoContent();
+    if (affected == 0)
+    {
+        return NotFound("COMMENT_NOT_EDITABLE", "Yorum bulunamadı veya düzenleme süresi doldu.");
+    }
+
+    _ = complianceLog.LogAsync("comment_edit", editIp, deviceId, userId, id, "comment",
+        new { status = moderation.Status });
+    return Results.NoContent();
 });
 
 app.MapPost("/api/v1/comments/{id:guid}/upvote", async (
