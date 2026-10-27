@@ -2800,7 +2800,7 @@ app.MapPost("/api/v1/posts", async (
         );
     }
 
-    // Kriz sinyali: icerik sahibine destek bildirimi gonder (182 hatti + imece.org).
+    // Kriz sinyali: icerik sahibine destek bildirimi gonder (112 Acil Cagri yonlendirmesi).
     // Bu bildirim cezalandirici degil; sakin, destek odakli bir mesajdir.
     if (moderation.IsCrisisFlagged)
     {
@@ -4301,7 +4301,7 @@ app.MapPost("/api/v1/posts/{id:guid}/comments", async (
         }
     }
 
-    // Kriz sinyali: yorum sahibine destek bildirimi gonder (182 hatti + imece.org).
+    // Kriz sinyali: yorum sahibine destek bildirimi gonder (112 Acil Cagri yonlendirmesi).
     if (moderation.IsCrisisFlagged)
     {
         await InsertCrisisSupportNotificationForContentAsync(connection, effectiveDeviceId.Value, id);
@@ -14141,6 +14141,8 @@ static async Task MarkReportsForTargetAsync(
     await command.ExecuteNonQueryAsync();
 }
 
+// Eski metin 182'ye (bugün MHRS randevu hattı) ve satılık bir alan adına yönlendiriyordu.
+// Türkiye'de ulusal intihar hattı olmadığından tek doğru yönlendirme 112 Acil Çağrı.
 static async Task InsertCrisisSupportNotificationForContentAsync(
     NpgsqlConnection connection,
     Guid deviceId,
@@ -14153,7 +14155,7 @@ static async Task InsertCrisisSupportNotificationForContentAsync(
             @deviceId,
             'crisis_support',
             'Destek alabilirsin',
-            'Zor bir an yaşıyorsan yalnız değilsin. 182 hattını arayabilir veya imece.org üzerinden destek kaynaklarına ulaşabilirsin.',
+            'Zor bir an yaşıyorsan yalnız değilsin. Kendini güvende hissetmiyorsan hemen 112 Acil Çağrı Merkezini ara. Güvendiğin biriyle ya da bir sağlık profesyoneliyle konuşmak da iyi gelebilir.',
             @postId,
             @payload::jsonb
         )
@@ -14164,8 +14166,7 @@ static async Task InsertCrisisSupportNotificationForContentAsync(
     command.Parameters.AddWithValue("postId", postId);
     command.Parameters.AddWithValue("payload", JsonSerializer.Serialize(new
     {
-        support_phone = "182",
-        support_url = "https://www.imece.org"
+        support_phone = "112"
     }));
     await command.ExecuteNonQueryAsync();
 }

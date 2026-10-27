@@ -40,9 +40,9 @@ Karar topluluğu için içerik kuralları. Bu politika platform bütünlüğün�
 
 ### 5. Kendine Zarar Verme ve İntihar
 - İntiharı teşvik eden içerik
-- **İstisna:** Yardım arayan içerik yasaklanmaz, 182 banner gösterilir
+- **İstisna:** Yardım arayan içerik yasaklanmaz, 112 yönlendirmeli destek banner'ı gösterilir
 
-**Moderasyon:** Hızlı kaldırma, 182 yardım hattı iletişimi
+**Moderasyon:** Hızlı kaldırma, içerik sahibine 112 yönlendirmeli destek bildirimi
 
 ### 6. Yasa Dışı İçerik (5651 ve TCK)
 - Terör propagandası
