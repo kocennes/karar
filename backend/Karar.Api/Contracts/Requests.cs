@@ -253,7 +253,20 @@ public sealed record ResendOtpRequest(
 );
 
 public sealed record GoogleSignInRequest(
-    [Required] string IdToken
+    [Required] string IdToken,
+    [StringLength(6, MinimumLength = 6)] string? TotpCode = null
+);
+
+// Hassas işlemler için yeniden doğrulama (step-up): şifreli hesapta şifre, şifresiz hesapta TOTP.
+public sealed record StepUpRequest(
+    [StringLength(72)] string? Password = null,
+    [StringLength(6, MinimumLength = 6)] string? TotpCode = null
+);
+
+public sealed record GoogleLinkRequest(
+    [Required] string IdToken,
+    [StringLength(72)] string? Password = null,
+    [StringLength(6, MinimumLength = 6)] string? TotpCode = null
 );
 
 public sealed record LoginRequest(

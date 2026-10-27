@@ -8474,7 +8474,8 @@ app.MapPost("/api/v1/auth/google", async (
     Db db,
     RequestDevice requestDevice,
     JwtService jwtService,
-    FirebaseAuthService firebaseAuth
+    FirebaseAuthService firebaseAuth,
+    BruteForceService bruteForce
 ) =>
 {
     if (ValidateRequest(request) is { } validationError)
@@ -8510,7 +8511,8 @@ app.MapPost("/api/v1/auth/google", async (
     // Mevcut kullanıcı var mı? (google_id veya email ile bul)
     await using var findCmd = new NpgsqlCommand(
         """
-        SELECT id, username, email, karma, auth_provider, is_banned, deleted_at IS NOT NULL
+        SELECT id, username, email, karma, auth_provider, is_banned, deleted_at IS NOT NULL,
+               is_2fa_enabled, totp_secret
         FROM users
         WHERE google_id = @googleId OR (email = @email AND auth_provider = 'google')
         LIMIT 1
@@ -8539,6 +8541,8 @@ app.MapPost("/api/v1/auth/google", async (
         authProvider = findReader.GetString(4);
         var isBanned = findReader.GetBoolean(5);
         var isDeleted = findReader.GetBoolean(6);
+        var is2faEnabled = findReader.GetBoolean(7);
+        var totpSecret = findReader.IsDBNull(8) ? null : findReader.GetString(8);
         isNewUser = false;
         await findReader.CloseAsync();
 
@@ -8552,6 +8556,24 @@ app.MapPost("/api/v1/auth/google", async (
         {
             await transaction.RollbackAsync();
             return BadRequest("ACCOUNT_DELETED", "Bu hesap silinmiş. Geri almak için e-postanıza gönderilen kurtarma bağlantısını kullanın.");
+        }
+
+        // Google bağlanmış şifreli hesapta 2FA açıksa Google girişi ikinci faktörü atlatamaz.
+        if (authProvider == "password" && is2faEnabled)
+        {
+            var accountBfIdentity = BruteForceService.AccountIdentityFor("login", userId);
+            if (await bruteForce.IsLockedOutAsync(accountBfIdentity))
+            {
+                await transaction.RollbackAsync();
+                return TooManyRequests("ACCOUNT_LOCKED", "Çok fazla başarısız deneme. 15 dakika bekleyin.");
+            }
+            if (totpSecret is null || request.TotpCode is null || !TotpService.Validate(totpSecret, request.TotpCode))
+            {
+                await transaction.RollbackAsync();
+                if (request.TotpCode is not null)
+                    await bruteForce.RecordFailedAttemptAsync(accountBfIdentity, BruteForceService.MaxAccountAttempts);
+                return BadRequest("TWO_FACTOR_REQUIRED", "Bu hesapta iki faktörlü doğrulama açık. Doğrulama kodunu girin veya şifrenizle giriş yapın.");
+            }
         }
 
         await using var updateCmd = new NpgsqlCommand(
@@ -8652,16 +8674,26 @@ app.MapPost("/api/v1/auth/google", async (
 }).RequireRateLimiting("auth-strict");
 
 app.MapPost("/api/v1/auth/google/link", async (
-    GoogleSignInRequest request,
+    GoogleLinkRequest request,
     HttpRequest httpRequest,
     Db db,
     JwtService jwtService,
-    FirebaseAuthService firebaseAuth
+    FirebaseAuthService firebaseAuth,
+    BruteForceService bruteForce
 ) =>
 {
     var principal = GetJwtPrincipal(httpRequest, jwtService);
     if (principal is null) return Unauthorized();
     var userId = GetUserId(principal);
+    if (ValidateRequest(request) is { } validationError) return validationError;
+
+    await using var connection = await db.OpenConnectionAsync();
+
+    // Kalıcı giriş yolu ekler: çalınmış access token tek başına yetmez (step-up).
+    if (await RequireStepUpAsync(connection, bruteForce, userId, request.Password, request.TotpCode) is { } stepUpError)
+    {
+        return stepUpError;
+    }
 
     var firebaseToken = await firebaseAuth.VerifyIdTokenAsync(request.IdToken);
     if (firebaseToken is null)
@@ -8670,7 +8702,6 @@ app.MapPost("/api/v1/auth/google/link", async (
     }
 
     var googleId = firebaseToken.Uid;
-    await using var connection = await db.OpenConnectionAsync();
 
     // Bu googleId başka birine bağlı mı?
     await using var checkCmd = new NpgsqlCommand(
@@ -10023,16 +10054,24 @@ app.MapPost("/api/v1/auth/2fa/setup", async (
     var otpAuthUrl = $"otpauth://totp/Karar:{Uri.EscapeDataString(username)}?secret={secret}&issuer=Karar&digits=6&period=30";
 
     await using var connection = await db.OpenConnectionAsync();
+    // 2FA açıkken aktif secret değiştirilemez (çalınmış token ile TOTP ele geçirme); önce kapatılmalı.
     await using var command = new NpgsqlCommand(
-        "UPDATE users SET totp_secret = @secret, updated_at = NOW() WHERE id = @id AND deleted_at IS NULL",
+        "UPDATE users SET totp_secret = @secret, updated_at = NOW() WHERE id = @id AND deleted_at IS NULL AND is_2fa_enabled = FALSE",
         connection
     );
     command.Parameters.AddWithValue("id", userId);
     command.Parameters.AddWithValue("secret", secret);
     var affected = await command.ExecuteNonQueryAsync();
-    return affected == 0
-        ? NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.")
-        : Results.Ok(new TwoFactorSetupResponse(secret, otpAuthUrl));
+    if (affected == 0)
+    {
+        await using var stateCmd = new NpgsqlCommand(
+            "SELECT is_2fa_enabled FROM users WHERE id = @id AND deleted_at IS NULL", connection);
+        stateCmd.Parameters.AddWithValue("id", userId);
+        return await stateCmd.ExecuteScalarAsync() is true
+            ? Conflict("TWO_FACTOR_ALREADY_ENABLED", "İki faktörlü doğrulama zaten etkin. Yeniden kurmak için önce kapatın.")
+            : NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
+    }
+    return Results.Ok(new TwoFactorSetupResponse(secret, otpAuthUrl));
 });
 
 app.MapPost("/api/v1/auth/2fa/enable", async (
@@ -10069,23 +10108,47 @@ app.MapPost("/api/v1/auth/2fa/enable", async (
 });
 
 app.MapPost("/api/v1/auth/2fa/disable", async (
+    StepUpRequest? request,
     HttpRequest httpRequest,
     Db db,
-    JwtService jwtService
+    JwtService jwtService,
+    BruteForceService bruteForce
 ) =>
 {
     var principal = GetJwtPrincipal(httpRequest, jwtService);
     if (principal is null) return Unauthorized();
     var userId = GetUserId(principal);
+    if (request is not null && ValidateRequest(request) is { } validationError) return validationError;
 
     await using var connection = await db.OpenConnectionAsync();
+
+    // 2FA'yı kapatmak hesabı zayıflatır: şifre (şifresiz hesapta TOTP) ile yeniden doğrulama gerekir.
+    if (await RequireStepUpAsync(connection, bruteForce, userId, request?.Password, request?.TotpCode) is { } stepUpError)
+    {
+        return stepUpError;
+    }
+
+    await using var tx = await connection.BeginTransactionAsync();
     await using var command = new NpgsqlCommand(
         "UPDATE users SET is_2fa_enabled = FALSE, totp_secret = NULL, updated_at = NOW() WHERE id = @id AND deleted_at IS NULL",
-        connection
+        connection, tx
     );
     command.Parameters.AddWithValue("id", userId);
     var affected = await command.ExecuteNonQueryAsync();
-    return affected == 0 ? NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.") : Results.NoContent();
+    if (affected == 0)
+    {
+        await tx.RollbackAsync();
+        return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
+    }
+
+    // Eski yedek kodlar 2FA yeniden açıldığında geçerli kalmasın.
+    await using var deleteCodes = new NpgsqlCommand(
+        "DELETE FROM totp_backup_codes WHERE user_id = @id", connection, tx);
+    deleteCodes.Parameters.AddWithValue("id", userId);
+    await deleteCodes.ExecuteNonQueryAsync();
+
+    await tx.CommitAsync();
+    return Results.NoContent();
 });
 
 app.MapGet("/api/v1/users/me/sessions", async (
@@ -13381,20 +13444,49 @@ app.MapGet("/api/v1/admin/analytics/operations", async (
 // ── 2FA Yedek Kodları ────────────────────────────────────────────────────────
 
 app.MapPost("/api/v1/auth/2fa/backup-codes", async (
+    StepUpRequest? request,
     HttpRequest httpRequest,
     Db db,
-    JwtService jwtService
+    JwtService jwtService,
+    BruteForceService bruteForce
 ) =>
 {
     var principal = GetJwtPrincipal(httpRequest, jwtService);
     if (principal is null) return Unauthorized();
     var userId = GetUserId(principal);
+    if (request is not null && ValidateRequest(request) is { } validationError) return validationError;
 
     var codes = Enumerable.Range(0, 8)
         .Select(_ => $"{GenerateBackupSegment()}-{GenerateBackupSegment()}")
         .ToList();
 
     await using var connection = await db.OpenConnectionAsync();
+
+    await using var stateCmd = new NpgsqlCommand(
+        """
+        SELECT u.is_2fa_enabled, EXISTS (SELECT 1 FROM totp_backup_codes b WHERE b.user_id = u.id)
+        FROM users u
+        WHERE u.id = @userId AND u.deleted_at IS NULL
+        """,
+        connection
+    );
+    stateCmd.Parameters.AddWithValue("userId", userId);
+    await using var stateReader = await stateCmd.ExecuteReaderAsync();
+    if (!await stateReader.ReadAsync()) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
+    var twoFactorEnabled = stateReader.GetBoolean(0);
+    var hasExistingCodes = stateReader.GetBoolean(1);
+    await stateReader.CloseAsync();
+
+    if (!twoFactorEnabled)
+        return BadRequest("TWO_FACTOR_NOT_ENABLED", "Yedek kod oluşturmak için önce iki faktörlü doğrulamayı etkinleştirin.");
+
+    // İlk üretim (2FA etkinleştirildikten hemen sonra) dışında mevcut kodları yenilemek step-up ister.
+    if (hasExistingCodes
+        && await RequireStepUpAsync(connection, bruteForce, userId, request?.Password, request?.TotpCode) is { } stepUpError)
+    {
+        return stepUpError;
+    }
+
     await using var tx = await connection.BeginTransactionAsync();
 
     await using var deleteOld = new NpgsqlCommand(
@@ -15020,6 +15112,57 @@ static async Task<DeleteAccountRequest?> ReadOptionalDeleteAccountRequestAsync(H
     }
 
     return await request.ReadFromJsonAsync<DeleteAccountRequest>();
+}
+
+// Hassas işlemler için yeniden doğrulama (step-up). null → doğrulandı; aksi halde döndürülecek hata.
+// Tahminler hesap bazlı brute-force sayacına yazılır (IP/cihazdan bağımsız).
+static async Task<IResult?> RequireStepUpAsync(
+    NpgsqlConnection connection,
+    BruteForceService bruteForce,
+    Guid userId,
+    string? password,
+    string? totpCode
+)
+{
+    var bfIdentity = BruteForceService.AccountIdentityFor("stepup", userId);
+    if (await bruteForce.IsLockedOutAsync(bfIdentity))
+    {
+        return TooManyRequests("ACCOUNT_LOCKED", "Çok fazla başarısız deneme. 15 dakika bekleyin.");
+    }
+
+    await using var command = new NpgsqlCommand(
+        "SELECT password_hash, is_2fa_enabled, totp_secret FROM users WHERE id = @id AND deleted_at IS NULL",
+        connection
+    );
+    command.Parameters.AddWithValue("id", userId);
+    await using var reader = await command.ExecuteReaderAsync();
+    if (!await reader.ReadAsync())
+    {
+        return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
+    }
+    var passwordHash = reader.IsDBNull(0) ? null : reader.GetString(0);
+    var is2faEnabled = reader.GetBoolean(1);
+    var totpSecret = reader.IsDBNull(2) ? null : reader.GetString(2);
+    await reader.CloseAsync();
+
+    switch (StepUpAuthPolicy.Evaluate(passwordHash, is2faEnabled, totpSecret, password, totpCode))
+    {
+        case StepUpAuthPolicy.Result.Ok:
+            await bruteForce.ClearAsync(bfIdentity);
+            return null;
+        case StepUpAuthPolicy.Result.PasswordRequired:
+            return BadRequest("PASSWORD_REQUIRED", "Bu işlem için şifrenizi tekrar girin.");
+        case StepUpAuthPolicy.Result.InvalidPassword:
+            await bruteForce.RecordFailedAttemptAsync(bfIdentity);
+            return BadRequest("INVALID_PASSWORD", "Şifre hatalı.");
+        case StepUpAuthPolicy.Result.TwoFactorRequired:
+            return BadRequest("TWO_FACTOR_REQUIRED", "Bu işlem için iki faktörlü doğrulama kodunu girin.");
+        case StepUpAuthPolicy.Result.InvalidTwoFactor:
+            await bruteForce.RecordFailedAttemptAsync(bfIdentity);
+            return BadRequest("INVALID_TOTP_CODE", "Doğrulama kodu hatalı.");
+        default:
+            return BadRequest("REAUTH_UNAVAILABLE", "Bu işlem için hesabınızda şifre veya iki faktörlü doğrulama tanımlı olmalı.");
+    }
 }
 
 static async Task<CommentDto?> ReadCommentDtoAsync(
