@@ -53,7 +53,9 @@ void main() {
     expect(app, contains('didChangeAppLifecycleState'));
     expect(app, contains('syncUnreadCount()'));
     expect(app, contains('didCrashOnPreviousExecution'));
-    expect(search, contains("Tab(text: 'Kullanıcılar')"));
+    // Prefix match: the redesign styles the tab (e.g. `height: 40`); the
+    // contract is only that a "Kullanıcılar" results tab exists.
+    expect(search, contains("Tab(text: 'Kullanıcılar'"));
     expect(search, contains("context.push('/users/\${user.username}')"));
   });
 }

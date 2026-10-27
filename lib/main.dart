@@ -12,6 +12,7 @@ import 'app.dart';
 import 'core/ads/ad_service.dart';
 import 'core/app_services.dart';
 import 'core/providers.dart';
+import 'core/theme/app_theme.dart';
 import 'firebase_options.dart';
 import 'shared/widgets/offline_view.dart';
 
@@ -25,6 +26,16 @@ Future<void> main() async {
     yield LicenseEntryWithLineBreaks(['Plus Jakarta Sans'], text);
   });
 
+  // Paint the bootstrap screen before waiting on anything network-bound: on
+  // web Firebase.initializeApp first downloads the Firebase JS SDK from
+  // www.gstatic.com, and awaiting it here left a blank page for as long as
+  // that took. _BootstrapApp still awaits it before creating the app services,
+  // so the initialisation order is unchanged.
+  runApp(_BootstrapApp(platformInit: _initPlatformServices()));
+}
+
+/// Firebase (+ error handlers) and AdMob. Never throws.
+Future<void> _initPlatformServices() async {
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
@@ -56,12 +67,13 @@ Future<void> main() async {
   } catch (e) {
     debugPrint('AdMob başlatılamadı: $e');
   }
-
-  runApp(const _BootstrapApp());
 }
 
 class _BootstrapApp extends StatefulWidget {
-  const _BootstrapApp();
+  const _BootstrapApp({required this.platformInit});
+
+  /// [_initPlatformServices], started before the first frame.
+  final Future<void> platformInit;
 
   @override
   State<_BootstrapApp> createState() => _BootstrapAppState();
@@ -85,6 +97,7 @@ class _BootstrapAppState extends State<_BootstrapApp> {
     });
 
     try {
+      await widget.platformInit;
       final services = await AppServices.create();
       setState(() {
         _services = services;
@@ -113,8 +126,13 @@ class _BootstrapAppState extends State<_BootstrapApp> {
     }
 
     if (_error != null || _services == null) {
+      // Bundled-font themes: the default (Roboto) is fetched from
+      // fonts.gstatic.com on web, so this "no connection" text would itself
+      // need the network to render.
       return MaterialApp(
         debugShowCheckedModeBanner: false,
+        theme: AppTheme.light(),
+        darkTheme: AppTheme.dark(),
         home: OfflineView(onRetry: _init),
       );
     }
