@@ -8510,7 +8510,7 @@ app.MapPost("/api/v1/auth/google", async (
     // Mevcut kullanıcı var mı? (google_id veya email ile bul)
     await using var findCmd = new NpgsqlCommand(
         """
-        SELECT id, username, email, karma, auth_provider
+        SELECT id, username, email, karma, auth_provider, is_banned, deleted_at IS NOT NULL
         FROM users
         WHERE google_id = @googleId OR (email = @email AND auth_provider = 'google')
         LIMIT 1
@@ -8537,8 +8537,22 @@ app.MapPost("/api/v1/auth/google", async (
         userEmail = findReader.GetString(2);
         karma = findReader.GetInt32(3);
         authProvider = findReader.GetString(4);
+        var isBanned = findReader.GetBoolean(5);
+        var isDeleted = findReader.GetBoolean(6);
         isNewUser = false;
         await findReader.CloseAsync();
+
+        // Şifreli giriş ve refresh ile aynı kural: askıya alınmış / silinmiş hesaba token verilmez.
+        if (isBanned)
+        {
+            await transaction.RollbackAsync();
+            return BadRequest("USER_BANNED", "Hesabınız askıya alınmıştır.");
+        }
+        if (isDeleted)
+        {
+            await transaction.RollbackAsync();
+            return BadRequest("ACCOUNT_DELETED", "Bu hesap silinmiş. Geri almak için e-postanıza gönderilen kurtarma bağlantısını kullanın.");
+        }
 
         await using var updateCmd = new NpgsqlCommand(
             "UPDATE users SET google_id = @googleId, updated_at = NOW() WHERE id = @id",
