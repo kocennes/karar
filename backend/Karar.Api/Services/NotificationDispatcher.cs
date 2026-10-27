@@ -13,7 +13,8 @@ public sealed class NotificationDispatcher(
     IFcmSender fcmSender,
     NotificationDecisionService decisionService,
     SloMetrics sloMetrics,
-    RedisService redis)
+    RedisService redis,
+    ActivityTracker activityTracker)
     : BackgroundService
 {
     private readonly string _connectionString = Karar.Api.Data.Db.ConvertToKeyValue(
@@ -92,6 +93,14 @@ public sealed class NotificationDispatcher(
 
     private async Task ProcessPendingNotificationsAsync(CancellationToken ct)
     {
+        // The outbox has no Redis signal: skip while idle. Request handlers mark activity when they
+        // enqueue; workers that enqueue while idle call MarkPendingWork so the next tick picks it up.
+        if (activityTracker.IsIdle())
+        {
+            logger.LogDebug("NotificationDispatcher: API idle, cycle skipped (free tier)");
+            return;
+        }
+
         using var activity = KararTelemetry.StartActivity("notification_dispatcher.process_batch");
         activity?.SetTag("messaging.system", "fcm");
 

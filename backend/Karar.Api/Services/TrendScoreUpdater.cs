@@ -7,7 +7,8 @@ namespace Karar.Api.Services;
 public sealed class TrendScoreUpdater(
     Db db,
     ILogger<TrendScoreUpdater> logger,
-    RedisService redis)
+    RedisService redis,
+    ActivityTracker activityTracker)
     : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromMinutes(2);
@@ -51,6 +52,14 @@ public sealed class TrendScoreUpdater(
 
     private async Task UpdateAllActiveTrendScoresAsync(CancellationToken ct)
     {
+        // Kullanıcı yokken feed'i kimse görmez; toplu yaş azaltma bekleyebilir.
+        // (Fast path Redis posts:dirty kuyruğunu boşta da işler — bekleyen iş kaybolmaz.)
+        if (activityTracker.IsIdle())
+        {
+            logger.LogDebug("TrendScoreUpdater: API boşta, toplu yaş azaltma atlandı (ücretsiz katman)");
+            return;
+        }
+
         using var activity = KararTelemetry.StartActivity("trend_score_updater.refresh_all_active");
         activity?.SetTag("db.system", "postgresql");
 

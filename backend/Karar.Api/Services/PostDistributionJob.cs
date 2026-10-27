@@ -8,6 +8,7 @@ namespace Karar.Api.Services;
 public sealed class PostDistributionJob(
     Db db,
     CategoryThrottleService categoryThrottle,
+    ActivityTracker activityTracker,
     ILogger<PostDistributionJob> logger
 ) : BackgroundService
 {
@@ -34,6 +35,13 @@ public sealed class PostDistributionJob(
 
     private async Task AdvanceStagesAsync(CancellationToken ct)
     {
+        // Stage promotions are time/vote based; with nobody around they can wait for the next active tick.
+        if (activityTracker.IsIdle())
+        {
+            logger.LogDebug("[PostDistribution] API idle, cycle skipped (free tier)");
+            return;
+        }
+
         await using var connection = await db.OpenConnectionAsync();
 
         var stage1Candidates = await ReadStage1CandidatesAsync(connection, ct);
