@@ -54,6 +54,39 @@ public sealed class FreeTierHealthContractTests
             .Should().BeFalse("the external keepalive ping must not end idleness");
     }
 
+    [Theory]
+    [InlineData("/health")]
+    [InlineData("/health/live")]
+    [InlineData("/health/ready")]
+    [InlineData("/HEALTH")]
+    public void SubnetBanCheck_IsSkippedForHealthPaths(string path)
+    {
+        // SubnetBanMiddleware runs in front of the health endpoints. Its Redis ban cache lives 1 minute,
+        // the keepalive pings every 5-10 minutes from a public IP, so every ping would miss the cache and
+        // run SELECT ... FROM banned_subnets on Postgres: the DB-free /health would wake Neon after all.
+        SubnetBanMiddleware.SkipsBanCheck(new PathString(path)).Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("/api/v1/posts")]
+    [InlineData("/posts/3fa85f64-komsu-gurultusu")]
+    [InlineData("/")]
+    public void SubnetBanCheck_StillAppliesToEverythingElse(string path)
+    {
+        SubnetBanMiddleware.SkipsBanCheck(new PathString(path)).Should().BeFalse();
+    }
+
+    [Fact]
+    public void SubnetBanMiddleware_ConsultsTheExemption_BeforeTheBanLookup()
+    {
+        var source = TestRepoPaths.ReadText("backend", "Karar.Api", "Common", "Middleware", "SubnetBanMiddleware.cs");
+
+        var exemption = source.IndexOf("SkipsBanCheck(context.Request.Path)", StringComparison.Ordinal);
+        var lookup = source.IndexOf("subnetBan.IsBannedAsync(", StringComparison.Ordinal);
+        exemption.Should().BePositive("the health exemption must be wired into InvokeAsync");
+        exemption.Should().BeLessThan(lookup, "the exemption must short-circuit before the Redis/Postgres lookup");
+    }
+
     [Fact]
     public void SmokeScript_WaitsForLiveness_ThenAsksReadinessOnce()
     {

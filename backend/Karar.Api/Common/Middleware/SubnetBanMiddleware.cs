@@ -4,6 +4,13 @@ namespace Karar.Api.Common.Middleware;
 
 public sealed class SubnetBanMiddleware(RequestDelegate next, SubnetBanService subnetBan)
 {
+    private static readonly PathString HealthPrefix = new("/health");
+
+    /// Sağlık/uptime ping'leri ban kontrolünden muaf: Redis ban önbelleği 1 dk yaşar, keepalive 5-10 dk'da
+    /// bir gelir; her ping önbelleği ıskalayıp banned_subnets'i Postgres'te sorgular ve Neon'u uyandırırdı.
+    /// Yasaklı bir ağın /health'e ulaşabilmesi zararsızdır (DB'siz self check).
+    public static bool SkipsBanCheck(PathString path) => path.StartsWithSegments(HealthPrefix);
+
     public async Task InvokeAsync(HttpContext context)
     {
         var ip = context.Connection.RemoteIpAddress;

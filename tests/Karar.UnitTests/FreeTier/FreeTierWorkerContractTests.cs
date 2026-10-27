@@ -47,7 +47,7 @@ public sealed class FreeTierWorkerContractTests
     ];
 
     private static readonly Regex IdleSkipBlock = new(
-        @"if \(activityTracker\.IsIdle\(\)\)\s*\{\s*logger\.LogDebug\([^;]*\);\s*return;\s*\}",
+        @"if \(activityTracker\.IsIdle\([^)]*\)?\)\)\s*\{\s*logger\.LogDebug\([^;]*\);\s*return;\s*\}",
         RegexOptions.Compiled);
 
     public static TheoryData<string> AllWorkerFiles => new(AllWorkers);
@@ -111,6 +111,18 @@ public sealed class FreeTierWorkerContractTests
 
         var slowPath = source[slowPathStart..];
         IdleSkipBlock.IsMatch(slowPath).Should().BeTrue("the full age-decay pass is skipped while idle");
+    }
+
+    [Theory]
+    [InlineData("ViralNotificationJob.cs", "activityTracker.IsIdle(VelocityWindow)")]
+    [InlineData("BrigadeCoordinatedDetectorJob.cs", "activityTracker.IsIdle(TimeSpan.FromMinutes(VoteWindowMinutes))")]
+    public void LookbackWindowJobs_GateOnTheirOwnWindow_NotOnIdleAfter(string file, string gate)
+    {
+        // Gating on IdleAfter (default 10 min) is wrong for a job whose query looks back further than that:
+        // 20 votes between 14:00 and 14:05, silence afterwards, viral tick at 14:20 => skipped as idle,
+        // next tick at 14:50 => the 30-min velocity window is empty, the viral push is lost for good.
+        // "No request within the job's own window" is the exact condition for "nothing to find".
+        Worker(file).Should().Contain(gate);
     }
 
     [Theory]

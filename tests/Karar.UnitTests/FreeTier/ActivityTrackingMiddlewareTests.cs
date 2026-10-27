@@ -118,6 +118,47 @@ public sealed class ActivityTrackingMiddlewareTests
         nextCalls.Should().Be(3, "the middleware never short-circuits the pipeline");
     }
 
+    [Theory]
+    [InlineData("/wp-login.php", 404)]
+    [InlineData("/.env", 404)]
+    [InlineData("/api/v1/admin/auth/login", 401)]
+    [InlineData("/api/v1/posts", 429)]
+    public async Task Middleware_DoesNotMarkRequest_WhenTheResponseIsAnError(string path, int statusCode)
+    {
+        // A public *.onrender.com host is scanned around the clock; every scanner hit answered with
+        // 4xx must not open a 10-minute window of worker DB activity, or Neon never gets to suspend.
+        var clock = new ActivityTrackerTests.ManualTimeProvider();
+        var tracker = new ActivityTracker(enabled: true, idleAfter: TimeSpan.FromMinutes(10), clock);
+        clock.Advance(TimeSpan.FromHours(1));
+        tracker.IsIdle().Should().BeTrue();
+
+        var middleware = new ActivityTrackingMiddleware(
+            ctx => { ctx.Response.StatusCode = statusCode; return Task.CompletedTask; }, tracker);
+
+        await middleware.InvokeAsync(CreateContext(path, "Mozilla/5.0 zgrab/0.x"));
+
+        tracker.IsIdle().Should().BeTrue("a request the API refused ({0}) is not user activity", statusCode);
+    }
+
+    [Theory]
+    [InlineData("/api/v1/posts", 200)]
+    [InlineData("/api/v1/posts/3fa85f64-5717-4562-b3fc-2c963f66afa6/vote", 204)]
+    [InlineData("/posts/3fa85f64-komsu-gurultusu", 302)]
+    public async Task Middleware_MarksRequest_OnceTheResponseWasServed(string path, int statusCode)
+    {
+        var clock = new ActivityTrackerTests.ManualTimeProvider();
+        var tracker = new ActivityTracker(enabled: true, idleAfter: TimeSpan.FromMinutes(10), clock);
+        clock.Advance(TimeSpan.FromHours(1));
+        tracker.IsIdle().Should().BeTrue();
+
+        var middleware = new ActivityTrackingMiddleware(
+            ctx => { ctx.Response.StatusCode = statusCode; return Task.CompletedTask; }, tracker);
+
+        await middleware.InvokeAsync(CreateContext(path, BrowserUserAgent));
+
+        tracker.IsIdle().Should().BeFalse("a served request ({0}) ends idleness", statusCode);
+    }
+
     private static HttpContext CreateContext(string path, string? userAgent)
     {
         var context = new DefaultHttpContext();
