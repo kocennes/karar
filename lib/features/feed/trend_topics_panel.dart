@@ -91,6 +91,7 @@ class _TopicRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final growth = topic.growthPercent;
     return InkWell(
       onTap: () => context.push('/search?q=${Uri.encodeQueryComponent(topic.name)}'),
       borderRadius: BorderRadius.circular(6),
@@ -129,11 +130,11 @@ class _TopicRow extends StatelessWidget {
                 ],
               ),
             ),
-            if (topic.growthPercent != null)
+            if (growth != null)
               Text(
-                '+${topic.growthPercent}%',
+                '${growth >= 0 ? '+' : ''}$growth%',
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: AppColors.hakli,
+                      color: growth >= 0 ? AppColors.hakli : AppColors.haksiz,
                       fontWeight: FontWeight.w600,
                     ),
               ),
