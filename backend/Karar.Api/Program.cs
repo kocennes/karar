@@ -3645,7 +3645,7 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
         );
     }
 
-    if (userId is not null && await IsBlockedByPostAuthorAsync(connection, transaction, id, userId.Value))
+    if (await IsBlockedByPostAuthorAsync(connection, transaction, id, userId, effectiveDeviceId.Value))
     {
         await transaction.RollbackAsync();
         return Results.Json(
@@ -3934,21 +3934,42 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
     };
 
     await using var connection = await db.OpenConnectionAsync();
+    // Engellenen kullanıcının yorumları gizlenir; JWT'siz (user_id NULL) yorumlar da
+    // engellenen hesaba bağlı cihazdan geldiyse gizlenir (user_device_links).
+    const string blockedCommentAuthorFilter = """
+        AND (
+            @userId = '00000000-0000-0000-0000-000000000000'::uuid
+            OR NOT EXISTS (
+                SELECT 1 FROM blocked_users bu
+                WHERE bu.blocker_user_id = @userId
+                  AND (
+                      bu.blocked_user_id = cm.user_id
+                      OR (
+                          cm.user_id IS NULL
+                          AND EXISTS (
+                              SELECT 1 FROM user_device_links udl
+                              WHERE udl.user_id = bu.blocked_user_id
+                                AND udl.device_id = cm.device_id
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1 FROM user_device_links own
+                              WHERE own.user_id = bu.blocker_user_id
+                                AND own.device_id = cm.device_id
+                          )
+                      )
+                  )
+            )
+        )
+        """;
+
     await using var countCommand = new NpgsqlCommand(
-        """
+        $"""
         SELECT COUNT(*)
         FROM comments cm
         WHERE cm.post_id = @postId
           AND cm.status = 'active'
           AND cm.parent_id IS NULL
-          AND (
-              @userId = '00000000-0000-0000-0000-000000000000'::uuid
-              OR NOT EXISTS (
-                  SELECT 1 FROM blocked_users bu
-                  WHERE bu.blocker_user_id = @userId
-                    AND bu.blocked_user_id = cm.user_id
-              )
-          )
+          {blockedCommentAuthorFilter}
         """,
         connection
     );
@@ -4013,14 +4034,7 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
         LEFT JOIN comment_downvotes cd ON cd.comment_id = cm.id AND cd.device_id = @deviceId
         LEFT JOIN users u ON u.id = cm.user_id
         WHERE cm.post_id = @postId AND cm.status = 'active' AND cm.parent_id IS NULL
-          AND (
-              @userId = '00000000-0000-0000-0000-000000000000'::uuid
-              OR NOT EXISTS (
-                  SELECT 1 FROM blocked_users bu
-                  WHERE bu.blocker_user_id = @userId
-                    AND bu.blocked_user_id = cm.user_id
-              )
-          )
+          {blockedCommentAuthorFilter}
         ORDER BY cm.is_pinned DESC, {orderBy}
         LIMIT @limit OFFSET @offset
         """,
@@ -4054,14 +4068,7 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
                 LEFT JOIN comment_downvotes cd ON cd.comment_id = cm.id AND cd.device_id = @deviceId
                 LEFT JOIN users u ON u.id = cm.user_id
                 WHERE cm.parent_id = ANY(@parentIds) AND cm.status = 'active'
-                  AND (
-                      @userId = '00000000-0000-0000-0000-000000000000'::uuid
-                      OR NOT EXISTS (
-                          SELECT 1 FROM blocked_users bu
-                          WHERE bu.blocker_user_id = @userId
-                            AND bu.blocked_user_id = cm.user_id
-                      )
-                  )
+                  {blockedCommentAuthorFilter}
 
                 UNION ALL
 
@@ -4073,14 +4080,7 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
                 LEFT JOIN comment_downvotes cd ON cd.comment_id = cm.id AND cd.device_id = @deviceId
                 LEFT JOIN users u ON u.id = cm.user_id
                 WHERE cm.status = 'active'
-                  AND (
-                      @userId = '00000000-0000-0000-0000-000000000000'::uuid
-                      OR NOT EXISTS (
-                          SELECT 1 FROM blocked_users bu
-                          WHERE bu.blocker_user_id = @userId
-                            AND bu.blocked_user_id = cm.user_id
-                      )
-                  )
+                  {blockedCommentAuthorFilter}
             )
             SELECT * FROM descendants
             """,
@@ -4185,13 +4185,18 @@ app.MapPost("/api/v1/posts/{id:guid}/comments", async (
         return Unauthorized();
     }
 
-    if (userId is not null && await IsBlockedByPostAuthorAsync(connection, transaction, id, userId.Value))
+    if (await IsBlockedByPostAuthorAsync(connection, transaction, id, userId, effectiveDeviceId.Value))
     {
         await transaction.RollbackAsync();
         return Results.Json(
             new ErrorEnvelope(new ErrorBody("BLOCKED_BY_AUTHOR", "Bu içeriğe yorum yapamazsınız.")),
             statusCode: StatusCodes.Status403Forbidden
         );
+    }
+
+    if (userId is not null && deviceId is not null)
+    {
+        await LinkUserDeviceAsync(connection, transaction, userId.Value, deviceId.Value);
     }
 
     await using var command = new NpgsqlCommand(
@@ -8232,11 +8237,17 @@ app.MapPost("/api/v1/auth/register", async (
 
     await using var transaction = await connection.BeginTransactionAsync();
 
-    // Kullanıcıyı kaydet (doğrulanmamış)
+    // Kullanıcıyı kaydet (doğrulanmamış) + kayıt cihazını hesaba bağla (blok kontrolleri için)
     await using var insertUser = new NpgsqlCommand(
         """
-        INSERT INTO users (device_id, username, email, email_verified, password_hash, auth_provider, date_of_birth, gender)
-        VALUES (@deviceId, @username, @email, FALSE, @passwordHash, 'password', @dob, @gender)
+        WITH new_user AS (
+            INSERT INTO users (device_id, username, email, email_verified, password_hash, auth_provider, date_of_birth, gender)
+            VALUES (@deviceId, @username, @email, FALSE, @passwordHash, 'password', @dob, @gender)
+            RETURNING id, device_id
+        )
+        INSERT INTO user_device_links (user_id, device_id)
+        SELECT id, device_id FROM new_user
+        ON CONFLICT (user_id, device_id) DO NOTHING
         """,
         connection,
         transaction
@@ -8591,6 +8602,8 @@ app.MapPost("/api/v1/auth/google", async (
         authProvider = "google";
     }
 
+    await LinkUserDeviceAsync(connection, transaction, userId, deviceId.Value);
+
     var accessToken = jwtService.GenerateAccessToken(userId, username);
     var refreshToken = JwtService.GenerateRefreshToken();
     var refreshHash = JwtService.HashRefreshToken(refreshToken);
@@ -8852,6 +8865,7 @@ app.MapPost("/api/v1/auth/login", async (
         );
         linkCmd.Parameters.AddWithValue("deviceId", deviceId.Value);
         await linkCmd.ExecuteNonQueryAsync();
+        await LinkUserDeviceAsync(connection, transaction, userId, deviceId.Value);
     }
 
     await transaction.CommitAsync();
@@ -14816,6 +14830,28 @@ static async Task<Guid?> GetUserDeviceIdAsync(
     return result is Guid deviceId ? deviceId : null;
 }
 
+// Hesabın kullanıldığı cihazı kaydeder (blok kontrolleri JWT'siz isteklerde bunu kullanır).
+static async Task LinkUserDeviceAsync(
+    NpgsqlConnection connection,
+    NpgsqlTransaction? transaction,
+    Guid userId,
+    Guid deviceId
+)
+{
+    await using var command = new NpgsqlCommand(
+        """
+        INSERT INTO user_device_links (user_id, device_id)
+        VALUES (@userId, @deviceId)
+        ON CONFLICT (user_id, device_id) DO NOTHING
+        """,
+        connection,
+        transaction
+    );
+    command.Parameters.AddWithValue("userId", userId);
+    command.Parameters.AddWithValue("deviceId", deviceId);
+    await command.ExecuteNonQueryAsync();
+}
+
 static async Task<bool> IsPostOwnerAsync(
     NpgsqlConnection connection,
     NpgsqlTransaction transaction,
@@ -14843,13 +14879,16 @@ static async Task<bool> IsPostOwnerAsync(
     return (bool)(await command.ExecuteScalarAsync() ?? false);
 }
 
-// Returns true when the post author has blocked actorUserId.
-// Only meaningful for registered users — anonymous devices are not in blocked_users.
+// Returns true when the post author has blocked the actor.
+// JWT'siz (yalnızca cihaz) isteklerde aktör, cihaza bağlı hesaplar üzerinden çözülür
+// (user_device_links); böylece Authorization header'ını düşürmek engeli atlatmaz.
+// Cihaz engelleyenin kendisine de bağlıysa (paylaşılan cihaz) cihaz eşlemesi uygulanmaz.
 static async Task<bool> IsBlockedByPostAuthorAsync(
     NpgsqlConnection connection,
     NpgsqlTransaction? transaction,
     Guid postId,
-    Guid actorUserId
+    Guid? actorUserId,
+    Guid actorDeviceId
 )
 {
     await using var command = new NpgsqlCommand(
@@ -14859,15 +14898,31 @@ static async Task<bool> IsBlockedByPostAuthorAsync(
             FROM blocked_users bu
             JOIN posts p ON p.user_id = bu.blocker_user_id
             WHERE p.id = @postId
-              AND bu.blocked_user_id = @actorUserId
               AND p.user_id IS NOT NULL
+              AND (
+                  bu.blocked_user_id = @actorUserId
+                  OR (
+                      @actorUserId IS NULL
+                      AND EXISTS (
+                          SELECT 1 FROM user_device_links udl
+                          WHERE udl.device_id = @actorDeviceId
+                            AND udl.user_id = bu.blocked_user_id
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM user_device_links own
+                          WHERE own.device_id = @actorDeviceId
+                            AND own.user_id = bu.blocker_user_id
+                      )
+                  )
+              )
         )
         """,
         connection,
         transaction
     );
     command.Parameters.AddWithValue("postId", postId);
-    command.Parameters.AddWithValue("actorUserId", actorUserId);
+    command.Parameters.Add("actorUserId", NpgsqlDbType.Uuid).Value = (object?)actorUserId ?? DBNull.Value;
+    command.Parameters.AddWithValue("actorDeviceId", actorDeviceId);
     return (bool)(await command.ExecuteScalarAsync() ?? false);
 }
 

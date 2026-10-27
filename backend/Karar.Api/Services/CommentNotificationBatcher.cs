@@ -1,5 +1,6 @@
 using Karar.Api.Models;
 using Npgsql;
+using NpgsqlTypes;
 using StackExchange.Redis;
 
 namespace Karar.Api.Services;
@@ -45,7 +46,8 @@ public sealed class CommentNotificationBatcher(
         }
 
         // Suppress notification when post author has blocked the commenter
-        if (commenterUserId is not null && await IsBlockedByPostOwnerAsync(postId, commenterUserId.Value))
+        // (JWT'siz yorumda engellenen hesaba bağlı cihaz üzerinden)
+        if (await IsBlockedByPostOwnerAsync(postId, commenterUserId, commenterDeviceId))
         {
             return;
         }
@@ -114,19 +116,36 @@ public sealed class CommentNotificationBatcher(
             return;
 
         // Suppress reply notification when parent comment author has blocked the replier
-        if (commenterUserId is not null && parentAuthorUserId is not null)
+        // (JWT'siz yanıtta engellenen hesaba bağlı cihaz üzerinden)
+        if (parentAuthorUserId is not null)
         {
             await using var blockCmd = new NpgsqlCommand(
                 """
                 SELECT EXISTS (
-                    SELECT 1 FROM blocked_users
-                    WHERE blocker_user_id = @parentAuthorUserId
-                      AND blocked_user_id = @commenterUserId
+                    SELECT 1 FROM blocked_users bu
+                    WHERE bu.blocker_user_id = @parentAuthorUserId
+                      AND (
+                          bu.blocked_user_id = @commenterUserId
+                          OR (
+                              @commenterUserId IS NULL
+                              AND EXISTS (
+                                  SELECT 1 FROM user_device_links udl
+                                  WHERE udl.device_id = @commenterDeviceId
+                                    AND udl.user_id = bu.blocked_user_id
+                              )
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM user_device_links own
+                                  WHERE own.device_id = @commenterDeviceId
+                                    AND own.user_id = bu.blocker_user_id
+                              )
+                          )
+                      )
                 )
                 """,
                 connection);
             blockCmd.Parameters.AddWithValue("parentAuthorUserId", parentAuthorUserId.Value);
-            blockCmd.Parameters.AddWithValue("commenterUserId", commenterUserId.Value);
+            blockCmd.Parameters.Add("commenterUserId", NpgsqlDbType.Uuid).Value = (object?)commenterUserId ?? DBNull.Value;
+            blockCmd.Parameters.AddWithValue("commenterDeviceId", commenterDeviceId);
             if ((bool)(await blockCmd.ExecuteScalarAsync() ?? false))
                 return;
         }
@@ -222,7 +241,7 @@ public sealed class CommentNotificationBatcher(
         return result is Guid ownerDeviceId ? ownerDeviceId : null;
     }
 
-    private async Task<bool> IsBlockedByPostOwnerAsync(Guid postId, Guid commenterUserId)
+    private async Task<bool> IsBlockedByPostOwnerAsync(Guid postId, Guid? commenterUserId, Guid commenterDeviceId)
     {
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync();
@@ -232,13 +251,29 @@ public sealed class CommentNotificationBatcher(
                 SELECT 1 FROM blocked_users bu
                 JOIN posts p ON p.user_id = bu.blocker_user_id
                 WHERE p.id = @postId
-                  AND bu.blocked_user_id = @commenterUserId
                   AND p.user_id IS NOT NULL
+                  AND (
+                      bu.blocked_user_id = @commenterUserId
+                      OR (
+                          @commenterUserId IS NULL
+                          AND EXISTS (
+                              SELECT 1 FROM user_device_links udl
+                              WHERE udl.device_id = @commenterDeviceId
+                                AND udl.user_id = bu.blocked_user_id
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1 FROM user_device_links own
+                              WHERE own.device_id = @commenterDeviceId
+                                AND own.user_id = bu.blocker_user_id
+                          )
+                      )
+                  )
             )
             """,
             connection);
         command.Parameters.AddWithValue("postId", postId);
-        command.Parameters.AddWithValue("commenterUserId", commenterUserId);
+        command.Parameters.Add("commenterUserId", NpgsqlDbType.Uuid).Value = (object?)commenterUserId ?? DBNull.Value;
+        command.Parameters.AddWithValue("commenterDeviceId", commenterDeviceId);
         return (bool)(await command.ExecuteScalarAsync() ?? false);
     }
 
