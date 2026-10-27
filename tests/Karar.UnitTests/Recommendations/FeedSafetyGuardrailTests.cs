@@ -53,7 +53,10 @@ public sealed class FeedSafetyGuardrailTests
         block.Should().Contain("p.is_unlisted = FALSE");
         block.Should().Contain("p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6");
         block.Should().Contain("p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved'");
-        block.Should().Contain("SELECT COUNT(*) FROM reports r");
+        // Bekleyen rapor bekletmesi: ağ bloğu başına tekil, yerleşik (≥24 saat) cihaz raporları.
+        block.Should().Contain("COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r");
+        block.Should().Contain("rd.created_at <= NOW() - INTERVAL '24 hours'");
+        block.Should().NotContain("SELECT COUNT(*) FROM reports r");
         block.Should().Contain("< 3");
     }
 

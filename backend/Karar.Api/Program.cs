@@ -1347,7 +1347,7 @@ app.MapGet("/api/v1/posts", async (
                 WHERE p.status = 'active' AND p.is_unlisted = FALSE {stageWhere} {notInterestedWhere} {overImposedWhere}
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-              AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+              AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
               AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
                   AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
             )
@@ -1362,7 +1362,7 @@ app.MapGet("/api/v1/posts", async (
             WHERE p.status = 'active' AND p.is_unlisted = FALSE {categoryWhere} {afterWhere} {stageWhere} {notInterestedWhere} {overImposedWhere}
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-              AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+              AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
               AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
               AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
             """;
@@ -1401,7 +1401,7 @@ app.MapGet("/api/v1/posts", async (
                 WHERE p.status = 'active' AND p.is_unlisted = FALSE {stageWhere} {notInterestedWhere} {overImposedWhere}
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-              AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+              AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
               AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
                   AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
             )
@@ -1443,7 +1443,7 @@ app.MapGet("/api/v1/posts", async (
             WHERE p.status = 'active' AND p.is_unlisted = FALSE {categoryWhere} {afterWhere} {stageWhere} {notInterestedWhere} {overImposedWhere}
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-              AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+              AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
               AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
               AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
             ORDER BY {affinityOrderBy}
@@ -1494,7 +1494,7 @@ app.MapGet("/api/v1/posts", async (
             WHERE p.status = 'active' AND p.is_unlisted = FALSE
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-              AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+              AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
               AND p.created_at >= NOW() - INTERVAL '2 hours'
               AND p.id != ALL(@existingIds)
               AND p.distribution_stage >= 2
@@ -1545,7 +1545,7 @@ app.MapGet("/api/v1/posts", async (
                 WHERE p.status = 'active' AND p.is_unlisted = FALSE
                   AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
                   AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-                  AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+                  AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
                   AND p.distribution_stage >= 2
                   AND p.id != ALL(@existingIds)
                   AND p.category_id NOT IN (
@@ -1641,7 +1641,7 @@ app.MapGet("/api/v1/posts/discover", async (
         WHERE p.status = 'active' AND p.is_unlisted = FALSE
           AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
           AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-          AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+          AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
           AND (
               @userId = '00000000-0000-0000-0000-000000000000'::uuid
               OR (
@@ -1677,7 +1677,7 @@ app.MapGet("/api/v1/posts/discover", async (
         WHERE p.status = 'active' AND p.is_unlisted = FALSE
           AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
           AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-          AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+          AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
           AND (
               @userId = '00000000-0000-0000-0000-000000000000'::uuid
               OR (
@@ -1714,7 +1714,7 @@ app.MapGet("/api/v1/posts/discover", async (
         WHERE p.status = 'active' AND p.is_unlisted = FALSE
           AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
           AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-          AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+          AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
           AND (
               @userId = '00000000-0000-0000-0000-000000000000'::uuid
               OR (
@@ -1757,7 +1757,7 @@ app.MapGet("/api/v1/posts/discover", async (
                 WHERE p.id = ANY(@postIds) AND p.status = 'active' AND p.is_unlisted = FALSE
                   AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
                   AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-                  AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+                  AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
                   AND (
                       @userId = '00000000-0000-0000-0000-000000000000'::uuid
                       OR (
@@ -1791,7 +1791,7 @@ app.MapGet("/api/v1/posts/discover", async (
         WHERE p.status = 'active' AND p.is_unlisted = FALSE
           AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
           AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-          AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+          AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
           AND (
               @userId = '00000000-0000-0000-0000-000000000000'::uuid
               OR (
@@ -1906,8 +1906,10 @@ app.MapGet("/api/v1/posts/discover/feed", async (
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
               AND (
-                  SELECT COUNT(*) FROM reports r
+                  SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r
+                  JOIN devices rd ON rd.id = r.reporter_device_id
                   WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending'
+                    AND rd.created_at <= NOW() - INTERVAL '24 hours'
               ) < 3
               AND (
                   @deviceId = '00000000-0000-0000-0000-000000000000'::uuid
@@ -2013,8 +2015,10 @@ app.MapGet("/api/v1/posts/discover/feed", async (
           AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
           AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
           AND (
-              SELECT COUNT(*) FROM reports r
+              SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r
+              JOIN devices rd ON rd.id = r.reporter_device_id
               WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending'
+                AND rd.created_at <= NOW() - INTERVAL '24 hours'
           ) < 3
           AND (
               @deviceId = '00000000-0000-0000-0000-000000000000'::uuid
@@ -2186,8 +2190,10 @@ app.MapGet("/api/v1/posts/discover/feed", async (
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
               AND (
-                  SELECT COUNT(*) FROM reports r
+                  SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r
+                  JOIN devices rd ON rd.id = r.reporter_device_id
                   WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending'
+                    AND rd.created_at <= NOW() - INTERVAL '24 hours'
               ) < 3
               AND p.id != ALL(@usedIds)
               AND (
@@ -3138,7 +3144,11 @@ app.MapPut("/api/v1/posts/{id:guid}", async (
     Db db,
     RequestDevice requestDevice,
     JwtService jwtService,
-    RedisService redis
+    RedisService redis,
+    ContentModerationService moderationService,
+    PerspectiveApiService perspectiveService,
+    ComplianceLogService complianceLog,
+    SloMetrics sloMetrics
 ) =>
 {
     if (ValidateRequest(request) is { } validationError)
@@ -3153,6 +3163,21 @@ app.MapPut("/api/v1/posts/{id:guid}", async (
         return Unauthorized();
     }
 
+    // Düzenleme, oluşturma ile aynı moderasyondan geçer (anahtar kelime/PII/tehdit, Perspective, kriz).
+    var moderationStarted = TimeProvider.System.GetTimestamp();
+    var moderation = moderationService.Analyze($"{request.Title}\n{request.Content}");
+    sloMetrics.RecordModeration(
+        TimeProvider.System.GetElapsedTime(moderationStarted),
+        moderation.IsRejected);
+    var perspectiveResult = moderation.IsRejected
+        ? null
+        : await perspectiveService.AnalyzeAsync($"{request.Title}\n{request.Content}");
+    var editDecision = ContentEditModeration.Decide(moderation, perspectiveResult);
+    if (editDecision.Outcome == ContentEditOutcome.Rejected)
+    {
+        return BadRequest(editDecision.ErrorCode!, editDecision.Message);
+    }
+
     await using var connection = await db.OpenConnectionAsync();
     await using var transaction = await connection.BeginTransactionAsync();
     var effectiveDeviceId = deviceId ?? await GetUserDeviceIdAsync(connection, userId!.Value, transaction);
@@ -3162,12 +3187,54 @@ app.MapPut("/api/v1/posts/{id:guid}", async (
         return Unauthorized();
     }
 
+    var editIp = httpRequest.HttpContext.Connection.RemoteIpAddress?.ToString();
+    if (editDecision.Outcome == ContentEditOutcome.RequiresReview)
+    {
+        // Önceki (onaylı) metin yayında kalır; incelemeye düşecek düzenleme kaydedilmez.
+        await using var editableCommand = new NpgsqlCommand(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM posts
+                WHERE id = @id
+                  AND status = 'active'
+                  AND created_at > NOW() - INTERVAL '15 minutes'
+                  AND (CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END)
+            )
+            """,
+            connection,
+            transaction
+        );
+        editableCommand.Parameters.AddWithValue("id", id);
+        editableCommand.Parameters.AddWithValue("deviceId", effectiveDeviceId.Value);
+        editableCommand.Parameters.AddWithValue("userId", (object?)userId ?? DBNull.Value);
+        var editable = (bool)(await editableCommand.ExecuteScalarAsync() ?? false);
+        await transaction.RollbackAsync();
+        if (!editable)
+        {
+            return NotFound("POST_NOT_EDITABLE", "Post bulunamadı veya düzenleme süresi doldu.");
+        }
+
+        if (editDecision.IsCrisisFlagged)
+        {
+            await InsertCrisisSupportNotificationForContentAsync(connection, effectiveDeviceId.Value, id);
+        }
+
+        _ = complianceLog.LogAsync("post_edit_held", editIp, effectiveDeviceId, userId, id, "post",
+            new { reason = moderation.Message, crisis_flagged = editDecision.IsCrisisFlagged });
+        return BadRequest(editDecision.ErrorCode!, editDecision.Message);
+    }
+
     await using var command = new NpgsqlCommand(
         """
         UPDATE posts
         SET title = @title,
             content = @content,
             is_edited = TRUE,
+            moderation_reason = @moderationReason,
+            moderation_checked_at = NOW(),
+            perspective_toxicity = @perspectiveToxicity,
+            perspective_scores = @perspectiveScores::jsonb,
             updated_at = NOW()
         WHERE id = @id
           AND status = 'active'
@@ -3182,6 +3249,23 @@ app.MapPut("/api/v1/posts/{id:guid}", async (
     command.Parameters.AddWithValue("content", request.Content);
     command.Parameters.AddWithValue("deviceId", effectiveDeviceId.Value);
     command.Parameters.AddWithValue("userId", (object?)userId ?? DBNull.Value);
+    command.Parameters.AddWithValue("moderationReason", moderation.Message);
+    command.Parameters.AddWithValue("perspectiveToxicity",
+        perspectiveResult is not null ? (object)perspectiveResult.Toxicity : DBNull.Value);
+    command.Parameters.AddWithValue("perspectiveScores",
+        perspectiveResult is not null
+            ? System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    toxicity = perspectiveResult.Toxicity,
+                    severe_toxicity = perspectiveResult.SevereToxicity,
+                    identity_attack = perspectiveResult.IdentityAttack,
+                    insult = perspectiveResult.Insult,
+                    threat = perspectiveResult.Threat,
+                    overall = perspectiveResult.Overall,
+                    analyzed_at = DateTime.UtcNow,
+                    action = moderation.Status
+                })
+            : (object)DBNull.Value);
 
     var affected = await command.ExecuteNonQueryAsync();
     await transaction.CommitAsync();
@@ -3190,6 +3274,8 @@ app.MapPut("/api/v1/posts/{id:guid}", async (
         return NotFound("POST_NOT_EDITABLE", "Post bulunamadı veya düzenleme süresi doldu.");
     }
 
+    _ = complianceLog.LogAsync("post_edit", editIp, effectiveDeviceId, userId, id, "post",
+        new { status = moderation.Status });
     await redis.MarkPostDirtyAsync(id);
     return Results.NoContent();
 });
@@ -3715,7 +3801,7 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
         );
         hakli = 0;
         haksiz = 0;
-        // Inline brigade guard: if ≥5 votes from same /24 IP block or fingerprint cluster
+        // Inline brigade guard: if >5 devices vote from the same /24 IP block
         // within 10 min, quarantine the entire cluster (suppressed status).
         brigadeResult = await brigadeGuard.CheckAndSuppressAsync(connection, transaction, id, voterIpBlock);
         (hakli, haksiz) = await UpdateVoteCountersReturningAsync(connection, transaction, id, oldVote, request.VoteType);
@@ -3981,7 +4067,7 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
 
     const string commentSelectColumns = """
         cm.id, cm.content, cm.upvote_count, cm.downvote_count, cu.comment_id IS NOT NULL, cd.comment_id IS NOT NULL,
-               (CASE WHEN cm.user_id IS NULL THEN cm.device_id = @deviceId ELSE cm.user_id = @userId END), cm.created_at,
+               COALESCE((CASE WHEN cm.user_id IS NULL THEN cm.device_id = @deviceId ELSE cm.user_id = @userId END), FALSE), cm.created_at,
                cm.is_pinned,
                CASE WHEN p.is_anonymous = TRUE AND cm.user_id = p.user_id THEN NULL ELSE u.username END AS username,
                CASE WHEN p.is_anonymous = TRUE AND cm.user_id = p.user_id THEN NULL ELSE cm.user_id END AS author_id,
@@ -4429,7 +4515,10 @@ app.MapPut("/api/v1/comments/{id:guid}", async (
     HttpRequest httpRequest,
     Db db,
     RequestDevice requestDevice,
-    JwtService jwtService
+    JwtService jwtService,
+    ContentModerationService moderationService,
+    ComplianceLogService complianceLog,
+    SloMetrics sloMetrics
 ) =>
 {
     if (ValidateRequest(request) is { } validationError)
@@ -4446,12 +4535,86 @@ app.MapPut("/api/v1/comments/{id:guid}", async (
     var deviceParam = deviceId ?? Guid.Empty;
     var userParam = userId ?? Guid.Empty;
 
+    // Düzenleme, oluşturma ile aynı moderasyondan geçer (anahtar kelime/PII/tehdit, kriz, kalite).
+    var moderationStarted = TimeProvider.System.GetTimestamp();
+    var moderation = moderationService.Analyze(request.Content);
+    sloMetrics.RecordModeration(
+        TimeProvider.System.GetElapsedTime(moderationStarted),
+        moderation.IsRejected);
+    var editDecision = ContentEditModeration.Decide(moderation);
+    if (editDecision.Outcome == ContentEditOutcome.Rejected)
+    {
+        return BadRequest(editDecision.ErrorCode!, editDecision.Message);
+    }
+
     await using var connection = await db.OpenConnectionAsync();
+    var editIp = httpRequest.HttpContext.Connection.RemoteIpAddress?.ToString();
+    if (editDecision.Outcome == ContentEditOutcome.RequiresReview)
+    {
+        // Önceki (onaylı) metin yayında kalır; incelemeye düşecek düzenleme kaydedilmez.
+        await using var editableCommand = new NpgsqlCommand(
+            """
+            SELECT post_id
+            FROM comments
+            WHERE id = @id
+              AND (CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END)
+              AND status = 'active'
+              AND created_at > NOW() - INTERVAL '5 minutes'
+            """,
+            connection
+        );
+        editableCommand.Parameters.AddWithValue("id", id);
+        editableCommand.Parameters.AddWithValue("deviceId", deviceParam);
+        editableCommand.Parameters.AddWithValue("userId", userParam);
+        if (await editableCommand.ExecuteScalarAsync() is not Guid commentPostId)
+        {
+            return NotFound("COMMENT_NOT_EDITABLE", "Yorum bulunamadı veya düzenleme süresi doldu.");
+        }
+
+        if (editDecision.IsCrisisFlagged)
+        {
+            var supportDeviceId = deviceId ?? await GetUserDeviceIdAsync(connection, userId!.Value);
+            if (supportDeviceId is not null)
+            {
+                await InsertCrisisSupportNotificationForContentAsync(connection, supportDeviceId.Value, commentPostId);
+            }
+        }
+
+        _ = complianceLog.LogAsync("comment_edit_held", editIp, deviceId, userId, id, "comment",
+            new { post_id = commentPostId, reason = moderation.Message, crisis_flagged = editDecision.IsCrisisFlagged });
+        return BadRequest(editDecision.ErrorCode!, editDecision.Message);
+    }
+
+    // Kalite cezası oluşturmadaki gibi yeniden hesaplanır (aynı posttaki başka yorumun kopyası +0.8).
+    var qualityPenalty = CommentQualityScorer.Score(request.Content);
+    await using var duplicateCommand = new NpgsqlCommand(
+        """
+        SELECT EXISTS (
+            SELECT 1
+            FROM comments other
+            WHERE other.post_id = (SELECT post_id FROM comments WHERE id = @id)
+              AND other.id <> @id
+              AND LOWER(TRIM(other.content)) = LOWER(TRIM(@content))
+              AND other.status = 'active'
+        )
+        """,
+        connection
+    );
+    duplicateCommand.Parameters.AddWithValue("id", id);
+    duplicateCommand.Parameters.AddWithValue("content", request.Content);
+    if ((bool)(await duplicateCommand.ExecuteScalarAsync() ?? false))
+    {
+        qualityPenalty = Math.Min(qualityPenalty + 0.8f, 1.0f);
+    }
+
     await using var command = new NpgsqlCommand(
         """
         UPDATE comments
         SET content = @content,
             is_edited = TRUE,
+            moderation_reason = @moderationReason,
+            moderation_checked_at = NOW(),
+            quality_penalty = @qualityPenalty,
             updated_at = NOW()
         WHERE id = @id
           AND (CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END)
@@ -4464,11 +4627,18 @@ app.MapPut("/api/v1/comments/{id:guid}", async (
     command.Parameters.AddWithValue("content", request.Content);
     command.Parameters.AddWithValue("deviceId", deviceParam);
     command.Parameters.AddWithValue("userId", userParam);
+    command.Parameters.AddWithValue("moderationReason", moderation.Message);
+    command.Parameters.AddWithValue("qualityPenalty", qualityPenalty);
 
     var affected = await command.ExecuteNonQueryAsync();
-    return affected == 0
-        ? NotFound("COMMENT_NOT_EDITABLE", "Yorum bulunamadı veya düzenleme süresi doldu.")
-        : Results.NoContent();
+    if (affected == 0)
+    {
+        return NotFound("COMMENT_NOT_EDITABLE", "Yorum bulunamadı veya düzenleme süresi doldu.");
+    }
+
+    _ = complianceLog.LogAsync("comment_edit", editIp, deviceId, userId, id, "comment",
+        new { status = moderation.Status });
+    return Results.NoContent();
 });
 
 app.MapPost("/api/v1/comments/{id:guid}/upvote", async (
@@ -4688,6 +4858,16 @@ app.MapPost("/api/v1/reports", async (
             request.TargetType,
             request.TargetId,
             threshold.Reason ?? "Rapor eşiği aşıldı."
+        );
+    }
+    else if (threshold.NeedsAdminAttention)
+    {
+        await AlertAdminsAboutUntrustedReportsAsync(
+            connection,
+            transaction,
+            request.TargetType,
+            request.TargetId,
+            threshold
         );
     }
 
@@ -9164,13 +9344,20 @@ app.MapPost("/api/v1/users/me/migrate-guest-data", async (
         return Unauthorized();
     }
 
+    // Misafir içerik yazarsız yayınlandı; hesaba bağlanması onu kamuya açık şekilde kullanıcı adına
+    // atfetmemeli. Postlar sahibine bağlanır ama anonim kalır (profil listesi anonim postları
+    // başkalarına göstermez); yalnızca hesap oluşturulmadan önce yazılanlar taşınır (paylaşılan
+    // cihazda sonradan başkasının yazdığı içerik hesaba eklenmez). Yorumlarda anonimlik bayrağı
+    // olmadığından (liste u.username döner) misafir yorumlar cihaz sahipliğinde, yazarsız kalır.
     await using var updatePosts = new NpgsqlCommand(
         """
         UPDATE posts
         SET user_id = @userId,
+            is_anonymous = TRUE,
             updated_at = NOW()
         WHERE device_id = @deviceId
           AND user_id IS NULL
+          AND created_at < (SELECT u.created_at FROM users u WHERE u.id = @userId)
         """,
         connection,
         transaction
@@ -9178,21 +9365,6 @@ app.MapPost("/api/v1/users/me/migrate-guest-data", async (
     updatePosts.Parameters.AddWithValue("userId", userId);
     updatePosts.Parameters.AddWithValue("deviceId", deviceId);
     await updatePosts.ExecuteNonQueryAsync();
-
-    await using var updateComments = new NpgsqlCommand(
-        """
-        UPDATE comments
-        SET user_id = @userId,
-            updated_at = NOW()
-        WHERE device_id = @deviceId
-          AND user_id IS NULL
-        """,
-        connection,
-        transaction
-    );
-    updateComments.Parameters.AddWithValue("userId", userId);
-    updateComments.Parameters.AddWithValue("deviceId", deviceId);
-    await updateComments.ExecuteNonQueryAsync();
 
     await using var updateVotes = new NpgsqlCommand(
         """
@@ -9879,7 +10051,7 @@ app.MapPost("/api/v1/users/me/moderation-appeals", async (
         FROM {table}
         WHERE id = @targetId
           AND (CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END)
-          AND status IN ('auto_hidden', 'deleted')
+          AND status IN ('auto_hidden', 'deleted', 'under_review')
         """,
         connection
     );
@@ -10357,11 +10529,14 @@ app.MapGet("/api/v1/users/{username}/posts", async (
     var ownerId = await ownerCmd.ExecuteScalarAsync();
     if (ownerId is null) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
 
+    // Anonim postlar kullanıcı adı altında listelenirse (isim gizlense bile) yazarı açığa çıkar;
+    // yalnızca sahibi kendi profilinde görür.
     await using var countCmd = new NpgsqlCommand(
-        "SELECT COUNT(*) FROM posts WHERE user_id = @ownerId AND status = 'active' AND is_anonymous = FALSE AND is_unlisted = FALSE",
+        "SELECT COUNT(*) FROM posts WHERE user_id = @ownerId AND status = 'active' AND (is_anonymous = FALSE OR user_id = @viewerId) AND is_unlisted = FALSE",
         connection
     );
     countCmd.Parameters.AddWithValue("ownerId", ownerId);
+    countCmd.Parameters.AddWithValue("viewerId", userParam);
     var total = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
 
     await using var cmd = new NpgsqlCommand(
@@ -10378,7 +10553,7 @@ app.MapGet("/api/v1/users/{username}/posts", async (
         JOIN users u ON u.id = p.user_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceParam
         WHERE p.user_id = @ownerId AND p.status = 'active'
-          AND p.is_anonymous = FALSE AND p.is_unlisted = FALSE
+          AND (p.is_anonymous = FALSE OR p.user_id = @userParam) AND p.is_unlisted = FALSE
         ORDER BY {orderBy}
         LIMIT @limit OFFSET @offset
         """,
@@ -14390,7 +14565,8 @@ static async Task<ReportThresholdDecision> EvaluateReportThresholdAsync(
                r.reporter_ip_block,
                r.reason,
                COALESCE(u.reporter_accurate_count, 0),
-               COALESCE(u.reporter_total_count,   0)
+               COALESCE(u.reporter_total_count,   0),
+               d.created_at
         FROM reports r
         JOIN devices d ON d.id = r.reporter_device_id
         LEFT JOIN users u ON u.id = r.reporter_user_id
@@ -14404,41 +14580,64 @@ static async Task<ReportThresholdDecision> EvaluateReportThresholdAsync(
     command.Parameters.AddWithValue("targetType", targetType);
     command.Parameters.AddWithValue("targetId", targetId);
 
-    // Raw rows: (fingerprint, ipBlock, reason, accurateCount, totalCount)
-    var rows = new List<(string Fingerprint, string? IpBlock, string Reason, int Accurate, int Total)>();
+    var now = DateTimeOffset.UtcNow;
+    var reporters = new List<ReporterSnapshot>();
     await using (var reader = await command.ExecuteReaderAsync())
     {
         while (await reader.ReadAsync())
         {
-            rows.Add((
+            reporters.Add(new ReporterSnapshot(
                 reader.GetString(0),
                 reader.IsDBNull(1) ? null : reader.GetString(1),
                 reader.GetString(2),
                 reader.GetInt32(3),
-                reader.GetInt32(4)
+                reader.GetInt32(4),
+                now - reader.GetFieldValue<DateTimeOffset>(5)
             ));
         }
     }
 
-    // Compute effective weight per reporter: fingerprint/IP uniqueness × reputation.
-    // Each reporter is compared against all other reporters (not against itself) so the
-    // first reporter from a given subnet is penalised only when there are other same-subnet
-    // reporters in the batch — i.e. when a coordinated cluster is actually present.
-    var allSignals = rows.Select(r => (r.Fingerprint, r.IpBlock)).ToList();
-    var reports = rows.Select((row, i) =>
-    {
-        var others = allSignals.Where((_, j) => j != i);
-        var ipFpWeight = ReportAbuseProtectionService.ComputeReportWeight(row.Fingerprint, row.IpBlock, others);
-        var reputationWeight = ReporterReputationService.ComputeWeight(row.Accurate, row.Total);
-        return new ReportSignal(row.Fingerprint, row.IpBlock, row.Reason, ipFpWeight * reputationWeight);
-    }).ToList();
+    // Ağ bloğu tekilliği × itibar ağırlığı; yalnızca yerleşik cihazlar otomatik gizlemeye sayılır.
+    return reportThresholdService.EvaluateReporters(targetType, reporters);
+}
 
-    var weightedReporters = reports.Sum(r => r.Weight);
-    var weightedCritical  = reports
-        .Where(r => reportThresholdService.IsCriticalReason(r.Reason))
-        .Sum(r => r.Weight);
-
-    return reportThresholdService.Evaluate(targetType, weightedReporters, weightedCritical);
+static async Task AlertAdminsAboutUntrustedReportsAsync(
+    NpgsqlConnection connection,
+    NpgsqlTransaction transaction,
+    string targetType,
+    Guid targetId,
+    ReportThresholdDecision decision
+)
+{
+    // Eşik yalnızca yeni cihazların raporlarıyla aşıldı: içerik gizlenmez, hedef başına tek açık uyarı.
+    await using var command = new NpgsqlCommand(
+        """
+        INSERT INTO admin_alerts (type, payload)
+        SELECT 'report_threshold_untrusted',
+               jsonb_build_object(
+                   'target_type', @targetType,
+                   'target_id', @targetId::text,
+                   'priority', @priority,
+                   'reason', @reason,
+                   'detected_at', NOW()
+               )
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM admin_alerts
+            WHERE type = 'report_threshold_untrusted'
+              AND is_resolved = FALSE
+              AND payload->>'target_type' = @targetType
+              AND payload->>'target_id' = @targetId::text
+        )
+        """,
+        connection,
+        transaction
+    );
+    command.Parameters.AddWithValue("targetType", targetType);
+    command.Parameters.AddWithValue("targetId", targetId);
+    command.Parameters.AddWithValue("priority", decision.Priority);
+    command.Parameters.AddWithValue("reason", decision.Reason ?? string.Empty);
+    await command.ExecuteNonQueryAsync();
 }
 
 static string? GetClientIpBlock(HttpRequest request)
@@ -15052,10 +15251,12 @@ static async Task<CommentDto?> ReadCommentDtoAsync(
     Guid? userId
 )
 {
+    // Yorum listesiyle aynı anonimlik redaksiyonu uygulanır: anonim postta OP yorumunun
+    // kullanıcı adı ve userId'si tepki yanıtlarından da sızmamalı.
     await using var command = new NpgsqlCommand(
         """
         SELECT cm.id, cm.content, cm.upvote_count, cm.downvote_count, cu.comment_id IS NOT NULL, cd.comment_id IS NOT NULL,
-               (CASE WHEN cm.user_id IS NULL THEN cm.device_id = @deviceId ELSE cm.user_id = @userId END), cm.created_at,
+               COALESCE((CASE WHEN cm.user_id IS NULL THEN cm.device_id = @deviceId ELSE cm.user_id = @userId END), FALSE), cm.created_at,
                cm.is_pinned,
                CASE WHEN p.is_anonymous = TRUE AND cm.user_id = p.user_id THEN NULL ELSE u.username END AS username,
                CASE WHEN p.is_anonymous = TRUE AND cm.user_id = p.user_id THEN NULL ELSE cm.user_id END AS author_id,
