@@ -48,4 +48,12 @@
     <EmbeddedResource Include="Assets\Fonts\*.ttf" LogicalName="Karar.Api.Fonts.%(Filename)%(Extension)" />
     <None Update="Assets\Fonts\OFL.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <!-- MigrationsRunner reads AppContext.BaseDirectory/migrations. The Docker image copies them
+       separately (COPY migrations ./migrations); this link lets a local `dotnet run` with
+       AUTO_MIGRATE=true (or the `migrate` arg) and WebApplicationFactory tests find them too.
+       The Docker build stage only copies Karar.Api/, so the glob is empty there: image unchanged. -->
+  <ItemGroup>
+    <None Include="..\migrations\V*.sql" Link="migrations\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
