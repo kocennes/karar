@@ -11061,7 +11061,7 @@ app.MapGet("/api/v1/users/{username}/posts", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.user_id = @userParam), p.is_edited,
-               EXISTS(SELECT 1 FROM saved_posts sp WHERE sp.post_id = p.id AND sp.device_id = @deviceParam),
+               EXISTS(SELECT 1 FROM saved_posts sp WHERE sp.post_id = p.id AND sp.user_id = @userParam),
                CASE WHEN p.is_anonymous THEN NULL ELSE u.username END AS username,
                p.tags, p.is_anonymous
         FROM posts p
