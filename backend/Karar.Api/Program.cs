@@ -3666,7 +3666,7 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
         );
     }
 
-    var (oldVote, oldTotal, curHakli, curHaksiz, categoryId, postCreatedAt, postIsUnlisted) = await GetVoteContextAsync(connection, transaction, id, effectiveDeviceId.Value);
+    var (oldVote, oldTotal, curHakli, curHaksiz, categoryId, postCreatedAt, postIsUnlisted, existingVoteSuppressed) = await GetVoteContextAsync(connection, transaction, id, effectiveDeviceId.Value);
 
     if (postCreatedAt != DateTimeOffset.MinValue && postCreatedAt.AddDays(7) <= DateTimeOffset.UtcNow)
     {
@@ -3722,7 +3722,8 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
     await CheckPostVoteMilestoneAsync(connection, transaction, id, oldTotal, newTotal);
     await transaction.CommitAsync();
 
-    var voteIsSuppressed = brigadeResult.Detected;
+    // Daha önce bastırılmış oy, yeniden oylansa da bastırılmış kalır (UpsertVoteAsync sıfırlamaz).
+    var voteIsSuppressed = brigadeResult.Detected || existingVoteSuppressed;
     var voteIp = httpRequest.HttpContext.Connection.RemoteIpAddress?.ToString();
     _ = complianceLog.LogAsync("vote", voteIp, effectiveDeviceId, userId, id, "post",
         new { vote_type = request.VoteType, quarantined = trustDecision.ShouldQuarantineVote, suppressed = voteIsSuppressed });
@@ -14583,7 +14584,7 @@ static Task EnforceMinimumResponseTimeAsync(
     return remaining <= TimeSpan.Zero ? Task.CompletedTask : Task.Delay(remaining, cancellationToken);
 }
 
-static async Task<(string? OldVote, int OldTotal, int Hakli, int Haksiz, int CategoryId, DateTimeOffset CreatedAt, bool IsUnlisted)> GetVoteContextAsync(
+static async Task<(string? OldVote, int OldTotal, int Hakli, int Haksiz, int CategoryId, DateTimeOffset CreatedAt, bool IsUnlisted, bool IsSuppressed)> GetVoteContextAsync(
     NpgsqlConnection connection,
     NpgsqlTransaction transaction,
     Guid postId,
@@ -14592,7 +14593,8 @@ static async Task<(string? OldVote, int OldTotal, int Hakli, int Haksiz, int Cat
 {
     await using var command = new NpgsqlCommand(
         """
-        SELECT p.vote_count_hakli, p.vote_count_haksiz, v.vote_type, p.category_id, p.created_at, p.is_unlisted
+        SELECT p.vote_count_hakli, p.vote_count_haksiz, v.vote_type, p.category_id, p.created_at, p.is_unlisted,
+               COALESCE(v.is_suppressed, FALSE)
         FROM posts p
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
         WHERE p.id = @postId
@@ -14603,14 +14605,15 @@ static async Task<(string? OldVote, int OldTotal, int Hakli, int Haksiz, int Cat
     command.Parameters.AddWithValue("postId", postId);
     command.Parameters.AddWithValue("deviceId", deviceId);
     await using var reader = await command.ExecuteReaderAsync();
-    if (!await reader.ReadAsync()) return (null, 0, 0, 0, 0, DateTimeOffset.MinValue, false);
+    if (!await reader.ReadAsync()) return (null, 0, 0, 0, 0, DateTimeOffset.MinValue, false, false);
     var hakli = reader.GetInt32(0);
     var haksiz = reader.GetInt32(1);
     var oldVote = reader.IsDBNull(2) ? null : reader.GetString(2);
     var categoryId = reader.GetInt32(3);
     var createdAt = reader.GetFieldValue<DateTimeOffset>(4);
     var isUnlisted = reader.GetBoolean(5);
-    return (oldVote, hakli + haksiz, hakli, haksiz, categoryId, createdAt, isUnlisted);
+    var isSuppressed = reader.GetBoolean(6);
+    return (oldVote, hakli + haksiz, hakli, haksiz, categoryId, createdAt, isUnlisted, isSuppressed);
 }
 
 static async Task<(int Hakli, int Haksiz)> UpdateVoteCountersReturningAsync(
@@ -14672,6 +14675,8 @@ static async Task UpsertVoteAsync(
     string? voterRegion = null
 )
 {
+    // Brigade bastırması (is_suppressed) yapışkandır: oyu değiştirmek onu temizlemez. Guard penceresi
+    // created_at'e bağlı olduğundan, burada sıfırlanan bastırma 10 dk sonra yeniden uygulanmıyordu.
     await using var command = new NpgsqlCommand(
         """
         INSERT INTO votes (post_id, device_id, vote_type, voter_ip_block, is_quarantined, voter_region, is_suppressed)
@@ -14681,10 +14686,7 @@ static async Task UpsertVoteAsync(
             vote_type = @voteType,
             voter_ip_block = COALESCE(@ipBlock, votes.voter_ip_block),
             voter_region = COALESCE(@voterRegion, votes.voter_region),
-            is_quarantined = @isQuarantined,
-            is_suppressed = FALSE,
-            suppression_reason = NULL,
-            suppressed_at = NULL,
+            is_quarantined = @isQuarantined OR votes.is_suppressed,
             updated_at = NOW()
         """,
         connection,
