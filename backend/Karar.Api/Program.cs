@@ -235,6 +235,32 @@ builder.Services.AddRateLimiter(options =>
         )
     );
 
+    // POST /api/v1/feedback: anonim yazılabilir, admin kuyruğuna düşer (spam vektörü).
+    options.AddPolicy("feedback", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(10),
+                QueueLimit = 0
+            }
+        )
+    );
+
+    // POST /api/v1/posts/{id}/ai-summary: özet 24 saat önbelleklenir ama her çağrı DB'ye gider/yazar.
+    options.AddPolicy("ai-summary", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 30,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            }
+        )
+    );
+
     options.AddPolicy("growth-events", context =>
         RateLimitPartition.GetFixedWindowLimiter(
             context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
@@ -3055,7 +3081,7 @@ app.MapPost("/api/v1/posts/{id:guid}/ai-summary", async (
 
     var posts = await ReadPostsAsync(postCmd);
     return posts.Count == 0 ? NotFound("POST_NOT_FOUND", "Post bulunamadı.") : Results.Ok(posts[0]);
-}).RequireRateLimiting("fixed");
+}).RequireRateLimiting("ai-summary");
 
 app.MapDelete("/api/v1/posts/{id:guid}", async (
     Guid id,
@@ -5045,7 +5071,7 @@ app.MapPost("/api/v1/feedback", async (
         ?? throw new InvalidOperationException("Feedback id olusturulamadi."));
 
     return Results.Created($"/api/v1/feedback/{feedbackId}", new { id = feedbackId });
-}).RequireRateLimiting("api");
+}).RequireRateLimiting("feedback");
 
 // SSE: Kullanıcıya özgü gerçek zamanlı bildirim akışı (JWT zorunlu, Redis Pub/Sub fan-out)
 app.MapGet("/api/v1/notifications/events", async (
