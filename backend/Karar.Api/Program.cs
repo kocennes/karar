@@ -8307,6 +8307,13 @@ app.MapPost("/api/v1/auth/verify-email", async (
     var email = request.Email.ToLowerInvariant();
     var otpHash = PasswordService.HashOtp(request.Otp);
 
+    // Kayıt gibi doğrulama da cihaz ister: kodu giren cihaz, kaydı açan cihazla karşılaştırılır.
+    var verifyingDeviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    if (verifyingDeviceId is null)
+    {
+        return Unauthorized();
+    }
+
     await using var connection = await db.OpenConnectionAsync();
 
     // OTP kontrol et
@@ -8363,7 +8370,7 @@ app.MapPost("/api/v1/auth/verify-email", async (
         UPDATE users
         SET email_verified = TRUE, updated_at = NOW()
         WHERE email = @email AND email_verified = FALSE
-        RETURNING id, username, karma, auth_provider
+        RETURNING id, username, karma, auth_provider, device_id
         """,
         connection,
         transaction
@@ -8380,7 +8387,22 @@ app.MapPost("/api/v1/auth/verify-email", async (
     var username = userReader.GetString(1);
     var karma = userReader.GetInt32(2);
     var authProvider = userReader.GetString(3);
+    var registeredDeviceId = userReader.GetGuid(4);
     await userReader.CloseAsync();
+
+    // Kod kaydı açan cihazdan girilmediyse şifre başkası tarafından konmuş olabilir (pre-account hijack):
+    // e-posta sahibi hesabı alır, kayıttaki şifre ve cihaz bağı atılır; sahip şifresini sıfırlama ile belirler.
+    if (!AuthAccountPolicy.KeepsRegistrantPassword(registeredDeviceId, verifyingDeviceId))
+    {
+        await using var dropPassword = new NpgsqlCommand(
+            "UPDATE users SET password_hash = NULL, device_id = @deviceId, updated_at = NOW() WHERE id = @id",
+            connection,
+            transaction
+        );
+        dropPassword.Parameters.AddWithValue("id", userId);
+        dropPassword.Parameters.AddWithValue("deviceId", verifyingDeviceId.Value);
+        await dropPassword.ExecuteNonQueryAsync();
+    }
 
     // OTP sil
     await using var deleteOtp = new NpgsqlCommand(
@@ -8554,6 +8576,32 @@ app.MapPost("/api/v1/auth/google", async (
         await findReader.CloseAsync();
         isNewUser = true;
 
+        // E-postayı başka bir satır tutuyor mu? (ör. başkasının açtığı doğrulanmamış şifreli kayıt)
+        Guid? pendingUserId = null;
+        await using (var emailCmd = new NpgsqlCommand(
+            "SELECT id, email_verified, auth_provider, deleted_at IS NOT NULL FROM users WHERE email = @email FOR UPDATE",
+            connection,
+            transaction))
+        {
+            emailCmd.Parameters.AddWithValue("email", googleEmail);
+            await using var emailReader = await emailCmd.ExecuteReaderAsync();
+            if (await emailReader.ReadAsync())
+            {
+                var collision = AuthAccountPolicy.ResolveGoogleEmailCollision(
+                    emailReader.GetBoolean(1),
+                    emailReader.GetString(2),
+                    emailReader.GetBoolean(3),
+                    AuthAccountPolicy.IsFirebaseEmailVerified(firebaseToken.Claims));
+                if (collision != GoogleEmailCollision.TakeOverPendingRegistration)
+                {
+                    await emailReader.CloseAsync();
+                    await transaction.RollbackAsync();
+                    return Conflict("EMAIL_ALREADY_REGISTERED", "Bu e-posta adresiyle kayıtlı bir hesap zaten var. E-posta ve şifrenle giriş yapabilirsin.");
+                }
+                pendingUserId = emailReader.GetGuid(0);
+            }
+        }
+
         // E-posta Google'dan alındığından doğrulanmış kabul edilir
         var baseUsername = googleEmail.Split('@')[0]
             .Replace('.', '_')
@@ -8578,24 +8626,69 @@ app.MapPost("/api/v1/auth/google", async (
             username = $"{baseUsername}_{suffix}";
         }
 
-        await using var insertCmd = new NpgsqlCommand(
-            """
-            INSERT INTO users (device_id, username, email, email_verified, auth_provider, google_id)
-            VALUES (@deviceId, @username, @email, TRUE, 'google', @googleId)
-            RETURNING id, karma
-            """,
-            connection,
-            transaction
-        );
-        insertCmd.Parameters.AddWithValue("deviceId", deviceId.Value);
-        insertCmd.Parameters.AddWithValue("username", username);
-        insertCmd.Parameters.AddWithValue("email", googleEmail);
-        insertCmd.Parameters.AddWithValue("googleId", googleId);
-        await using var insertReader = await insertCmd.ExecuteReaderAsync();
-        await insertReader.ReadAsync();
-        userId = insertReader.GetGuid(0);
-        karma = insertReader.GetInt32(1);
-        await insertReader.CloseAsync();
+        try
+        {
+            // Bekleyen kayıt devralınırsa: kaydı açanın şifresi, profil alanları ve oturumları atılır.
+            await using var insertCmd = new NpgsqlCommand(
+                pendingUserId is null
+                    ? """
+                      INSERT INTO users (device_id, username, email, email_verified, auth_provider, google_id)
+                      VALUES (@deviceId, @username, @email, TRUE, 'google', @googleId)
+                      RETURNING id, karma
+                      """
+                    : """
+                      UPDATE users
+                      SET device_id = @deviceId, username = @username, email_verified = TRUE,
+                          auth_provider = 'google', google_id = @googleId, password_hash = NULL,
+                          date_of_birth = NULL, gender = NULL, updated_at = NOW()
+                      WHERE id = @pendingUserId AND email = @email AND email_verified = FALSE
+                      RETURNING id, karma
+                      """,
+                connection,
+                transaction
+            );
+            insertCmd.Parameters.AddWithValue("deviceId", deviceId.Value);
+            insertCmd.Parameters.AddWithValue("username", username);
+            insertCmd.Parameters.AddWithValue("email", googleEmail);
+            insertCmd.Parameters.AddWithValue("googleId", googleId);
+            if (pendingUserId is { } pendingId)
+                insertCmd.Parameters.AddWithValue("pendingUserId", pendingId);
+            await using var insertReader = await insertCmd.ExecuteReaderAsync();
+            if (!await insertReader.ReadAsync())
+            {
+                await insertReader.CloseAsync();
+                await transaction.RollbackAsync();
+                return Conflict("EMAIL_ALREADY_REGISTERED", "Bu e-posta adresiyle kayıtlı bir hesap zaten var. E-posta ve şifrenle giriş yapabilirsin.");
+            }
+            userId = insertReader.GetGuid(0);
+            karma = insertReader.GetInt32(1);
+            await insertReader.CloseAsync();
+
+            if (pendingUserId is not null)
+            {
+                await using var deletePendingOtp = new NpgsqlCommand(
+                    "DELETE FROM email_otps WHERE email = @email",
+                    connection,
+                    transaction
+                );
+                deletePendingOtp.Parameters.AddWithValue("email", googleEmail);
+                await deletePendingOtp.ExecuteNonQueryAsync();
+
+                await using var revokePending = new NpgsqlCommand(
+                    "UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = @id AND revoked_at IS NULL",
+                    connection,
+                    transaction
+                );
+                revokePending.Parameters.AddWithValue("id", userId);
+                await revokePending.ExecuteNonQueryAsync();
+            }
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            // Eşzamanlı kayıt / google_id çakışması: 500 yerine 409.
+            await transaction.RollbackAsync();
+            return Conflict("EMAIL_ALREADY_REGISTERED", "Bu e-posta adresiyle kayıtlı bir hesap zaten var. E-posta ve şifrenle giriş yapabilirsin.");
+        }
 
         userEmail = googleEmail;
         authProvider = "google";

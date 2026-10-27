@@ -37,6 +37,10 @@ public sealed class DataRetentionService(
                     _lastWeeklyDecay = DateTime.UtcNow;
                     logger.LogInformation("Applied weekly affinity decay");
                 }
+
+                var purgedRegistrations = await PurgeStaleUnverifiedRegistrationsAsync(stoppingToken);
+                if (purgedRegistrations > 0)
+                    logger.LogInformation("Purged {Count} unverified registrations older than 24h", purgedRegistrations);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -86,6 +90,42 @@ public sealed class DataRetentionService(
             connection
         );
         command.Parameters.AddWithValue("thresholdDays", thresholdDays);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(ct));
+    }
+
+    // Doğrulanmamış şifreli kayıtlar e-posta/kullanıcı adını süresiz rezerve etmesin (başkasının
+    // e-postasıyla açılan kayıt sahibin kaydını engeller). Hiç oturum açılamamış bu satırların bağlı
+    // verisi olmaz; yine de NO ACTION FK'li tablolarda kayıt varsa satır atlanır.
+    private async Task<int> PurgeStaleUnverifiedRegistrationsAsync(CancellationToken ct)
+    {
+        await using var connection = await db.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(
+            """
+            WITH stale_users AS (
+                DELETE FROM users
+                WHERE id IN (
+                    SELECT u.id
+                    FROM users u
+                    WHERE u.email_verified = FALSE
+                      AND u.auth_provider = 'password'
+                      AND u.deleted_at IS NULL
+                      AND u.created_at < NOW() - INTERVAL '24 hours'
+                      AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.user_id = u.id)
+                      AND NOT EXISTS (SELECT 1 FROM account_recovery_tokens r WHERE r.user_id = u.id)
+                      AND NOT EXISTS (SELECT 1 FROM admin_roles ar WHERE ar.user_id = u.id)
+                    LIMIT 500
+                )
+                RETURNING email
+            ),
+            stale_otps AS (
+                DELETE FROM email_otps o
+                USING stale_users s
+                WHERE o.email = s.email
+                RETURNING o.id
+            )
+            SELECT COUNT(*) FROM stale_users
+            """,
+            connection);
         return Convert.ToInt32(await command.ExecuteScalarAsync(ct));
     }
 

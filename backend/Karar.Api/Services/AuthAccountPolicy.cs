@@ -18,6 +18,12 @@ public enum BackupCodeIssueCheck
     InvalidTotpCode,
 }
 
+public enum GoogleEmailCollision
+{
+    TakeOverPendingRegistration,
+    Conflict,
+}
+
 // Hesap güvenliği kararları — Program.cs'teki uç noktalar DB'den okuduğu durumu buraya verir.
 // Saf fonksiyonlar: Postgres/Redis olmadan birim test edilebilir.
 public static class AuthAccountPolicy
@@ -76,4 +82,38 @@ public static class AuthAccountPolicy
             ? BackupCodeIssueCheck.Allowed
             : BackupCodeIssueCheck.SecondFactorRequired;
     }
+
+    // Google girişi, e-postayı tutan başka bir satırla karşılaştığında: yalnızca doğrulanmamış
+    // (sahibi kanıtlanmamış) şifreli bir kayıt, e-postası Google tarafından doğrulanmış kişiye devredilir.
+    public static GoogleEmailCollision ResolveGoogleEmailCollision(
+        bool existingEmailVerified,
+        string existingAuthProvider,
+        bool existingIsDeleted,
+        bool firebaseEmailVerified)
+    {
+        return !existingEmailVerified
+            && !existingIsDeleted
+            && existingAuthProvider == "password"
+            && firebaseEmailVerified
+                ? GoogleEmailCollision.TakeOverPendingRegistration
+                : GoogleEmailCollision.Conflict;
+    }
+
+    public static bool IsFirebaseEmailVerified(IReadOnlyDictionary<string, object> claims)
+    {
+        if (!claims.TryGetValue("email_verified", out var value) || value is null)
+            return false;
+
+        return value switch
+        {
+            bool b => b,
+            string s => bool.TryParse(s, out var parsed) && parsed,
+            _ => bool.TryParse(value.ToString(), out var parsed) && parsed,
+        };
+    }
+
+    // E-posta doğrulaması e-postanın sahibini kanıtlar, şifreyi kimin koyduğunu değil.
+    // Kodu kaydı başlatan cihazdan farklı bir cihaz girerse kayıt şifresi güvenilmezdir.
+    public static bool KeepsRegistrantPassword(Guid registeredDeviceId, Guid? verifyingDeviceId) =>
+        verifyingDeviceId is { } deviceId && deviceId == registeredDeviceId;
 }

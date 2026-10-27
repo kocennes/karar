@@ -123,6 +123,52 @@ public sealed class AuthAccountPolicyTests
             .Should().Be(BackupCodeIssueCheck.NotEnabled);
     }
 
+    // ── Google girişi / bekleyen kayıt ──────────────────────────────────────
+
+    [Fact]
+    public void GoogleCollision_PendingPasswordRegistration_IsTakenOverByVerifiedGoogleEmail()
+    {
+        AuthAccountPolicy.ResolveGoogleEmailCollision(
+                existingEmailVerified: false, existingAuthProvider: "password",
+                existingIsDeleted: false, firebaseEmailVerified: true)
+            .Should().Be(GoogleEmailCollision.TakeOverPendingRegistration);
+    }
+
+    [Theory]
+    [InlineData(true, "password", false, true)]   // doğrulanmış şifreli hesap: sessizce birleştirilmez
+    [InlineData(false, "password", false, false)] // Firebase e-postayı doğrulamamış
+    [InlineData(false, "password", true, true)]   // silinmiş hesap (kurtarma süresi)
+    [InlineData(false, "google", false, true)]    // başka bir Google kimliği
+    public void GoogleCollision_OtherRows_AreConflicts(bool verified, string provider, bool deleted, bool firebaseVerified)
+    {
+        AuthAccountPolicy.ResolveGoogleEmailCollision(verified, provider, deleted, firebaseVerified)
+            .Should().Be(GoogleEmailCollision.Conflict);
+    }
+
+    [Fact]
+    public void FirebaseEmailVerifiedClaim_IsParsedStrictly()
+    {
+        AuthAccountPolicy.IsFirebaseEmailVerified(new Dictionary<string, object> { ["email_verified"] = true })
+            .Should().BeTrue();
+        AuthAccountPolicy.IsFirebaseEmailVerified(new Dictionary<string, object> { ["email_verified"] = "true" })
+            .Should().BeTrue();
+        AuthAccountPolicy.IsFirebaseEmailVerified(new Dictionary<string, object> { ["email_verified"] = false })
+            .Should().BeFalse();
+        AuthAccountPolicy.IsFirebaseEmailVerified(new Dictionary<string, object> { ["email"] = "a@b.c" })
+            .Should().BeFalse();
+    }
+
+    [Fact]
+    public void RegistrantPassword_IsKeptOnlyOnRegisteringDevice()
+    {
+        var registering = Guid.NewGuid();
+
+        AuthAccountPolicy.KeepsRegistrantPassword(registering, registering).Should().BeTrue();
+        // Saldırgan A cihazından kurbanın e-postasıyla kayıt açtı, kurban kendi cihazında kodu girdi.
+        AuthAccountPolicy.KeepsRegistrantPassword(registering, Guid.NewGuid()).Should().BeFalse();
+        AuthAccountPolicy.KeepsRegistrantPassword(registering, null).Should().BeFalse();
+    }
+
     // RFC 6238 (SHA-1, 30 sn, 6 hane) — TotpService ile aynı parametreler.
     private static string CurrentCode(string base32Secret) =>
         Generate(base32Secret, DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 30).ToString("D6");
