@@ -13451,11 +13451,12 @@ app.MapPost("/api/v1/auth/change-email/request", async (
     if (await checkCmd.ExecuteScalarAsync() is not null)
         return Conflict("EMAIL_IN_USE", "Bu e-posta adresi zaten kullaniliyor.");
 
-    var dbKey = $"chgmail:{newEmail}";
+    // Bekleyen değişiklik talep eden hesaba bağlanır: confirm yalnızca aynı userId ile tüketebilir.
+    var dbKey = $"chgmail:{userId}:{newEmail}";
 
     // Redis: 3 dk cooldown, aynı pencerede aynı kod
     var (otp, tooSoon, waitSecs, isNewChgOtp) = await GetOrCreateCachedOtpAsync(
-        redis.GetDb(), $"otp:chgemail:{newEmail}",
+        redis.GetDb(), $"otp:chgemail:{userId}:{newEmail}",
         validFor: TimeSpan.FromMinutes(10),
         resendAfter: TimeSpan.FromMinutes(3));
 
@@ -13484,6 +13485,7 @@ app.MapPost("/api/v1/auth/change-email/confirm", async (
     HttpRequest httpRequest,
     Db db,
     JwtService jwtService,
+    EmailService emailService,
     RedisService redis
 ) =>
 {
@@ -13493,7 +13495,8 @@ app.MapPost("/api/v1/auth/change-email/confirm", async (
     var userId = GetUserId(principal);
 
     var newEmail = request.NewEmail.ToLowerInvariant();
-    var otpKey = $"chgmail:{newEmail}";
+    // Kod yalnızca talebi (şifre doğrulamasıyla) başlatan hesap tarafından tüketilebilir.
+    var otpKey = $"chgmail:{userId}:{newEmail}";
     var otpHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(request.Otp)));
 
     await using var connection = await db.OpenConnectionAsync();
@@ -13527,20 +13530,68 @@ app.MapPost("/api/v1/auth/change-email/confirm", async (
     }
 
     await using var tx = await connection.BeginTransactionAsync();
+
+    // Talep adımındaki kontroller confirm anında yeniden doğrulanır (Google hesabı, adres çakışması).
+    await using var userCmd = new NpgsqlCommand(
+        "SELECT email, auth_provider FROM users WHERE id = @userId AND deleted_at IS NULL FOR UPDATE",
+        connection, tx
+    );
+    userCmd.Parameters.AddWithValue("userId", userId);
+    await using var userReader = await userCmd.ExecuteReaderAsync();
+    if (!await userReader.ReadAsync())
+    {
+        await userReader.CloseAsync();
+        await tx.RollbackAsync();
+        return NotFound("USER_NOT_FOUND", "Kullanici bulunamadi.");
+    }
+    var oldEmail = userReader.GetString(0);
+    var currentProvider = userReader.GetString(1);
+    await userReader.CloseAsync();
+
+    if (currentProvider != "password")
+    {
+        await tx.RollbackAsync();
+        return BadRequest("GOOGLE_ACCOUNT", "Google ile giris yapan hesaplarda e-posta degistirilemez.");
+    }
+
+    await using var takenCmd = new NpgsqlCommand(
+        "SELECT 1 FROM users WHERE email = @email AND id <> @userId", connection, tx);
+    takenCmd.Parameters.AddWithValue("email", newEmail);
+    takenCmd.Parameters.AddWithValue("userId", userId);
+    if (await takenCmd.ExecuteScalarAsync() is not null)
+    {
+        await tx.RollbackAsync();
+        return Conflict("EMAIL_IN_USE", "Bu e-posta adresi zaten kullaniliyor.");
+    }
+
     await using var updateEmail = new NpgsqlCommand(
         "UPDATE users SET email = @email, updated_at = NOW() WHERE id = @userId AND deleted_at IS NULL",
         connection, tx
     );
     updateEmail.Parameters.AddWithValue("email", newEmail);
     updateEmail.Parameters.AddWithValue("userId", userId);
-    await updateEmail.ExecuteNonQueryAsync();
+    try
+    {
+        if (await updateEmail.ExecuteNonQueryAsync() != 1)
+        {
+            await tx.RollbackAsync();
+            return NotFound("USER_NOT_FOUND", "Kullanici bulunamadi.");
+        }
+    }
+    catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+    {
+        await tx.RollbackAsync();
+        return Conflict("EMAIL_IN_USE", "Bu e-posta adresi zaten kullaniliyor.");
+    }
 
     await using var deleteOtp = new NpgsqlCommand("DELETE FROM email_otps WHERE email = @key", connection, tx);
     deleteOtp.Parameters.AddWithValue("key", otpKey);
     await deleteOtp.ExecuteNonQueryAsync();
 
     await tx.CommitAsync();
-    await redis.GetDb().KeyDeleteAsync($"otp:chgemail:{newEmail}");
+    await redis.GetDb().KeyDeleteAsync($"otp:chgemail:{userId}:{newEmail}");
+    // Eski adrese bildirim: yetkisiz değişiklik fark edilebilsin.
+    _ = emailService.SendEmailChangedNoticeAsync(oldEmail);
     return Results.NoContent();
 }).RequireRateLimiting("auth-strict");
 
