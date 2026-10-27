@@ -1344,7 +1344,7 @@ app.MapGet("/api/v1/posts", async (
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
               AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
-              AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
+              AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
                   AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
             )
             SELECT COUNT(*) FROM base WHERE cat_rank <= 5 AND author_rank <= 3
@@ -1359,7 +1359,7 @@ app.MapGet("/api/v1/posts", async (
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
               AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
-              AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
+              AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
               AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
             """;
     }
@@ -1398,7 +1398,7 @@ app.MapGet("/api/v1/posts", async (
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
               AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
-              AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
+              AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
                   AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
             )
             SELECT id, title, content, image_url, cat_id, cat_name, emoji,
@@ -1440,7 +1440,7 @@ app.MapGet("/api/v1/posts", async (
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
               AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
-              AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
+              AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
               AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
             ORDER BY {affinityOrderBy}
             LIMIT @limit{(hasCursor ? "" : " OFFSET @offset")}
@@ -1495,7 +1495,7 @@ app.MapGet("/api/v1/posts", async (
               AND p.id != ALL(@existingIds)
               AND p.distribution_stage >= 2
               {notInterestedWhere} {overImposedWhere}
-              AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
+              AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
               AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
             ORDER BY p.created_at DESC
             LIMIT @freshSlots
@@ -1550,7 +1550,7 @@ app.MapGet("/api/v1/posts", async (
                       WHERE user_id = @userId
                         AND updated_at >= NOW() - INTERVAL '7 days'
                   )
-                  AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
+                  AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
                   AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
                 ORDER BY RANDOM()
                 LIMIT @slots
@@ -1641,7 +1641,7 @@ app.MapGet("/api/v1/posts/discover", async (
           AND (
               @userId = '00000000-0000-0000-0000-000000000000'::uuid
               OR (
-                  NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
+                  NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
                   AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
               )
           )
@@ -1677,7 +1677,7 @@ app.MapGet("/api/v1/posts/discover", async (
           AND (
               @userId = '00000000-0000-0000-0000-000000000000'::uuid
               OR (
-                  NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
+                  NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
                   AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
               )
           )
@@ -1714,7 +1714,7 @@ app.MapGet("/api/v1/posts/discover", async (
           AND (
               @userId = '00000000-0000-0000-0000-000000000000'::uuid
               OR (
-                  NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
+                  NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
                   AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
               )
           )
@@ -1757,7 +1757,7 @@ app.MapGet("/api/v1/posts/discover", async (
                   AND (
                       @userId = '00000000-0000-0000-0000-000000000000'::uuid
                       OR (
-                          NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
+                          NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
                           AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
                       )
                   )
@@ -1791,7 +1791,7 @@ app.MapGet("/api/v1/posts/discover", async (
           AND (
               @userId = '00000000-0000-0000-0000-000000000000'::uuid
               OR (
-                  NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
+                  NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
                   AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
               )
           )
@@ -1918,6 +1918,7 @@ app.MapGet("/api/v1/posts/discover/feed", async (
                       NOT EXISTS (
                           SELECT 1 FROM blocked_users bu
                           WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id
+                            AND p.is_anonymous = FALSE
                       )
                       AND NOT EXISTS (
                           SELECT 1 FROM muted_categories mc
@@ -2198,6 +2199,7 @@ app.MapGet("/api/v1/posts/discover/feed", async (
                       NOT EXISTS (
                           SELECT 1 FROM blocked_users bu
                           WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id
+                            AND p.is_anonymous = FALSE
                       )
                       AND NOT EXISTS (
                           SELECT 1 FROM muted_categories mc
@@ -2857,6 +2859,7 @@ app.MapGet("/api/v1/posts/{id:guid}", async (
                   SELECT 1 FROM blocked_users bu
                   WHERE bu.blocker_user_id = @userId
                     AND bu.blocked_user_id = p.user_id
+                    AND p.is_anonymous = FALSE
               )
           )
         """,
@@ -2985,6 +2988,7 @@ app.MapPost("/api/v1/posts/{id:guid}/ai-summary", async (
                   SELECT 1 FROM blocked_users bu
                   WHERE bu.blocker_user_id = @userId
                     AND bu.blocked_user_id = p.user_id
+                    AND p.is_anonymous = FALSE
               )
           )
         """,
@@ -3506,6 +3510,7 @@ app.MapGet("/api/v1/search", async (
                   SELECT 1 FROM blocked_users bu
                   WHERE bu.blocker_user_id = @userId
                     AND bu.blocked_user_id = p.user_id
+                    AND p.is_anonymous = FALSE
               )
           )
           AND to_tsvector('simple', coalesce(p.title, '') || ' ' || coalesce(p.content, '')) @@ plainto_tsquery('simple', @query)
@@ -3949,6 +3954,7 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
         """
         SELECT COUNT(*)
         FROM comments cm
+        JOIN posts p ON p.id = cm.post_id
         WHERE cm.post_id = @postId
           AND cm.status = 'active'
           AND cm.parent_id IS NULL
@@ -3958,6 +3964,7 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
                   SELECT 1 FROM blocked_users bu
                   WHERE bu.blocker_user_id = @userId
                     AND bu.blocked_user_id = cm.user_id
+                    AND NOT (p.is_anonymous = TRUE AND cm.user_id = p.user_id)
               )
           )
         """,
@@ -4030,6 +4037,7 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
                   SELECT 1 FROM blocked_users bu
                   WHERE bu.blocker_user_id = @userId
                     AND bu.blocked_user_id = cm.user_id
+                    AND NOT (p.is_anonymous = TRUE AND cm.user_id = p.user_id)
               )
           )
         ORDER BY cm.is_pinned DESC, {orderBy}
@@ -4072,6 +4080,7 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
                           SELECT 1 FROM blocked_users bu
                           WHERE bu.blocker_user_id = @userId
                             AND bu.blocked_user_id = cm.user_id
+                            AND NOT (p.is_anonymous = TRUE AND cm.user_id = p.user_id)
                       )
                   )
 
@@ -4092,6 +4101,7 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
                           SELECT 1 FROM blocked_users bu
                           WHERE bu.blocker_user_id = @userId
                             AND bu.blocked_user_id = cm.user_id
+                            AND NOT (p.is_anonymous = TRUE AND cm.user_id = p.user_id)
                       )
                   )
             )
@@ -4916,11 +4926,13 @@ app.MapGet("/api/v1/notifications", async (
                       SELECT 1 FROM blocked_users bu
                       WHERE bu.blocker_user_id = @userId
                         AND bu.blocked_user_id = p.user_id
+                        AND p.is_anonymous = FALSE
                   )
                   AND NOT EXISTS (
                       SELECT 1 FROM blocked_users bu
                       WHERE bu.blocker_user_id = @userId
                         AND bu.blocked_user_id = nc.user_id
+                        AND NOT (p.is_anonymous IS TRUE AND nc.user_id = p.user_id)
                   )
               )
           )
@@ -4948,11 +4960,13 @@ app.MapGet("/api/v1/notifications", async (
                       SELECT 1 FROM blocked_users bu
                       WHERE bu.blocker_user_id = @userId
                         AND bu.blocked_user_id = p.user_id
+                        AND p.is_anonymous = FALSE
                   )
                   AND NOT EXISTS (
                       SELECT 1 FROM blocked_users bu
                       WHERE bu.blocker_user_id = @userId
                         AND bu.blocked_user_id = nc.user_id
+                        AND NOT (p.is_anonymous IS TRUE AND nc.user_id = p.user_id)
                   )
               )
           )
@@ -4980,11 +4994,13 @@ app.MapGet("/api/v1/notifications", async (
                       SELECT 1 FROM blocked_users bu
                       WHERE bu.blocker_user_id = @userId
                         AND bu.blocked_user_id = p.user_id
+                        AND p.is_anonymous = FALSE
                   )
                   AND NOT EXISTS (
                       SELECT 1 FROM blocked_users bu
                       WHERE bu.blocker_user_id = @userId
                         AND bu.blocked_user_id = nc.user_id
+                        AND NOT (p.is_anonymous IS TRUE AND nc.user_id = p.user_id)
                   )
               )
           )
@@ -14910,6 +14926,7 @@ static async Task<bool> IsBlockedByPostAuthorAsync(
             WHERE p.id = @postId
               AND bu.blocked_user_id = @actorUserId
               AND p.user_id IS NOT NULL
+              AND p.is_anonymous = FALSE
         )
         """,
         connection,
