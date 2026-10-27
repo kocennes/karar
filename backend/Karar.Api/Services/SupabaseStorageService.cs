@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 
 namespace Karar.Api.Services;
 
@@ -51,6 +52,39 @@ public sealed class SupabaseStorageService(
         {
             logger.LogError(ex, "Supabase upload failed for {Object}", objectName);
             return null;
+        }
+    }
+
+    public async Task<bool> DeleteAsync(string objectName, CancellationToken ct = default)
+    {
+        if (!IsEnabled) return false;
+
+        try
+        {
+            var client = httpClientFactory.CreateClient();
+
+            // Supabase bulk remove: DELETE /storage/v1/object/[bucket] {"prefixes": [path]}; absent paths are a no-op.
+            using var request = new HttpRequestMessage(
+                HttpMethod.Delete,
+                $"{_url.TrimEnd('/')}/storage/v1/object/{_bucket}");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _key);
+            request.Headers.Add("apiKey", _key);
+            request.Content = JsonContent.Create(new { prefixes = new[] { objectName } });
+
+            using var response = await client.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                logger.LogError("Supabase delete failed for {Object} with {Status}", objectName, (int)response.StatusCode);
+                return false;
+            }
+
+            logger.LogInformation("Deleted {Object} from Supabase", objectName);
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogError(ex, "Supabase delete failed for {Object}", objectName);
+            return false;
         }
     }
 }

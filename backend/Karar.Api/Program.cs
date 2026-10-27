@@ -121,6 +121,7 @@ var hostedServicesEnabled = !builder.Environment.IsEnvironment("Testing")
 if (hostedServicesEnabled)
 {
     builder.Services.AddHostedService<ImageModerationWorker>();
+    builder.Services.AddHostedService<PostImageCleanupJob>();
 }
 builder.Services.AddSingleton<ReportThresholdService>();
 builder.Services.AddSingleton<ReporterReputationService>();

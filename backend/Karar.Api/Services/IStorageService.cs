@@ -12,4 +12,10 @@ public interface IStorageService
         string contentType,
         string objectName,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Deletes an object. Returns true when the object is gone (deleted now or already absent),
+    /// false when the provider is disabled or the call failed and should be retried later.
+    /// </summary>
+    Task<bool> DeleteAsync(string objectName, CancellationToken ct = default);
 }

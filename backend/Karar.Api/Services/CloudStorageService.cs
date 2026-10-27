@@ -34,7 +34,8 @@ public sealed class CloudStorageService(IConfiguration config, ILogger<CloudStor
                 Bucket = _bucketName,
                 Name = objectName,
                 ContentType = contentType,
-                CacheControl = "public, max-age=31536000, immutable",
+                // Kısa önbellek: silinen/kaldırılan görsel CDN ve tarayıcılarda en geç 1 saatte düşer.
+                CacheControl = "public, max-age=3600",
             };
             await client.UploadObjectAsync(obj, stream, cancellationToken: ct);
 
@@ -50,6 +51,28 @@ public sealed class CloudStorageService(IConfiguration config, ILogger<CloudStor
         {
             logger.LogError(ex, "GCS upload failed for {Object}", objectName);
             return null;
+        }
+    }
+
+    public async Task<bool> DeleteAsync(string objectName, CancellationToken ct = default)
+    {
+        if (!IsEnabled) return false;
+
+        try
+        {
+            var client = await StorageClient.CreateAsync();
+            await client.DeleteObjectAsync(_bucketName, objectName, cancellationToken: ct);
+            logger.LogInformation("Deleted {Object} from GCS", objectName);
+            return true;
+        }
+        catch (Google.GoogleApiException ex) when (ex.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogError(ex, "GCS delete failed for {Object}", objectName);
+            return false;
         }
     }
 }
