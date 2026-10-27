@@ -3130,7 +3130,9 @@ app.MapPut("/api/v1/posts/{id:guid}", async (
     Db db,
     RequestDevice requestDevice,
     JwtService jwtService,
-    RedisService redis
+    RedisService redis,
+    ContentModerationService moderationService,
+    PerspectiveApiService perspectiveService
 ) =>
 {
     if (ValidateRequest(request) is { } validationError)
@@ -3145,26 +3147,72 @@ app.MapPut("/api/v1/posts/{id:guid}", async (
         return Unauthorized();
     }
 
+    // Düzenleme, oluşturma ile aynı moderasyondan geçer (doxxing/PII, hakaret, kriz sinyali).
+    var moderation = moderationService.Analyze($"{request.Title}\n{request.Content}");
+    if (moderation.IsRejected)
+    {
+        return BadRequest(moderation.Code ?? "CONTENT_REJECTED", moderation.Message);
+    }
+
     await using var connection = await db.OpenConnectionAsync();
-    await using var transaction = await connection.BeginTransactionAsync();
-    var effectiveDeviceId = deviceId ?? await GetUserDeviceIdAsync(connection, userId!.Value, transaction);
+    var effectiveDeviceId = deviceId ?? await GetUserDeviceIdAsync(connection, userId!.Value);
     if (effectiveDeviceId is null)
     {
-        await transaction.RollbackAsync();
         return Unauthorized();
     }
 
+    // Sahibi olmayan veya süresi geçmiş düzenleme istekleri Perspective kotası harcamasın.
+    await using (var editableCommand = new NpgsqlCommand(
+        """
+        SELECT EXISTS (
+            SELECT 1 FROM posts
+            WHERE id = @id
+              AND status = 'active'
+              AND created_at > NOW() - INTERVAL '15 minutes'
+              AND (device_id = @deviceId OR user_id = @userId)
+        )
+        """,
+        connection))
+    {
+        editableCommand.Parameters.AddWithValue("id", id);
+        editableCommand.Parameters.AddWithValue("deviceId", effectiveDeviceId.Value);
+        editableCommand.Parameters.AddWithValue("userId", (object?)userId ?? DBNull.Value);
+        if (await editableCommand.ExecuteScalarAsync() is not true)
+        {
+            return NotFound("POST_NOT_EDITABLE", "Post bulunamadı veya düzenleme süresi doldu.");
+        }
+    }
+
+    // Perspective API — oluşturmadaki gibi: toksik içerik reddedilir veya incelemeye alınır.
+    var perspectiveResult = await perspectiveService.AnalyzeAsync($"{request.Title}\n{request.Content}");
+    if (perspectiveResult is not null)
+    {
+        var perspectiveStatus = PerspectiveApiService.DetermineStatus(perspectiveResult);
+        if (perspectiveStatus == "rejected")
+            return BadRequest("CONTENT_REJECTED", "İçerik politikası gereği bu metin yayınlanamaz.");
+        if (perspectiveStatus == "under_review" && moderation.Status == "active")
+            moderation = ModerationDecision.Review("İçerik moderasyon incelemesine alındı.");
+    }
+
+    await using var transaction = await connection.BeginTransactionAsync();
     await using var command = new NpgsqlCommand(
         """
         UPDATE posts
         SET title = @title,
             content = @content,
+            status = @status,
+            moderation_reason = @moderationReason,
+            moderation_checked_at = NOW(),
+            perspective_toxicity = COALESCE(@perspectiveToxicity, perspective_toxicity),
+            perspective_scores = COALESCE(@perspectiveScores::jsonb, perspective_scores),
+            crisis_flagged = crisis_flagged OR @crisisFlagged,
             is_edited = TRUE,
             updated_at = NOW()
         WHERE id = @id
           AND status = 'active'
           AND created_at > NOW() - INTERVAL '15 minutes'
           AND (device_id = @deviceId OR user_id = @userId)
+        RETURNING slug
         """,
         connection,
         transaction
@@ -3174,12 +3222,52 @@ app.MapPut("/api/v1/posts/{id:guid}", async (
     command.Parameters.AddWithValue("content", request.Content);
     command.Parameters.AddWithValue("deviceId", effectiveDeviceId.Value);
     command.Parameters.AddWithValue("userId", (object?)userId ?? DBNull.Value);
-
-    var affected = await command.ExecuteNonQueryAsync();
-    await transaction.CommitAsync();
-    if (affected == 0)
+    command.Parameters.AddWithValue("status", moderation.Status);
+    command.Parameters.AddWithValue("moderationReason", moderation.Message);
+    command.Parameters.AddWithValue("crisisFlagged", moderation.IsCrisisFlagged);
+    command.Parameters.Add(new NpgsqlParameter("perspectiveToxicity", NpgsqlTypes.NpgsqlDbType.Double)
     {
+        Value = perspectiveResult is not null ? (object)(double)perspectiveResult.Toxicity : DBNull.Value
+    });
+    command.Parameters.AddWithValue("perspectiveScores",
+        perspectiveResult is not null
+            ? System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    toxicity = perspectiveResult.Toxicity,
+                    severe_toxicity = perspectiveResult.SevereToxicity,
+                    identity_attack = perspectiveResult.IdentityAttack,
+                    insult = perspectiveResult.Insult,
+                    threat = perspectiveResult.Threat,
+                    overall = perspectiveResult.Overall,
+                    analyzed_at = DateTime.UtcNow,
+                    action = moderation.Status
+                })
+            : (object)DBNull.Value);
+
+    var slug = await command.ExecuteScalarAsync();
+    if (slug is null)
+    {
+        await transaction.RollbackAsync();
         return NotFound("POST_NOT_EDITABLE", "Post bulunamadı veya düzenleme süresi doldu.");
+    }
+    await transaction.CommitAsync();
+
+    // Kriz sinyali: icerik sahibine destek bildirimi gonder (182 hatti + imece.org).
+    if (moderation.IsCrisisFlagged)
+    {
+        await InsertCrisisSupportNotificationForContentAsync(connection, effectiveDeviceId.Value, id);
+    }
+
+    // Paylaşım görselleri ve crawler OG HTML'i düzenleme öncesi metni sunmaya devam etmesin.
+    var staleCacheKeys = new List<string> { $"post:share-image:{id}", $"post:story-image:{id}" };
+    if (slug is string postSlug) staleCacheKeys.Add($"crawler:slug:{postSlug}");
+    await redis.DeleteAsync(staleCacheKeys.ToArray());
+    if (moderation.Status != "active")
+    {
+        await redis.DeleteAsync(
+            CacheKeys.FeedTrending(1), CacheKeys.FeedTrending(2),
+            CacheKeys.FeedNew(1), CacheKeys.FeedNew(2)
+        );
     }
 
     await redis.MarkPostDirtyAsync(id);
@@ -4395,7 +4483,8 @@ app.MapPut("/api/v1/comments/{id:guid}", async (
     HttpRequest httpRequest,
     Db db,
     RequestDevice requestDevice,
-    JwtService jwtService
+    JwtService jwtService,
+    ContentModerationService moderationService
 ) =>
 {
     if (ValidateRequest(request) is { } validationError)
@@ -4412,29 +4501,87 @@ app.MapPut("/api/v1/comments/{id:guid}", async (
     var deviceParam = deviceId ?? Guid.Empty;
     var userParam = userId ?? Guid.Empty;
 
+    // Düzenleme, oluşturma ile aynı moderasyondan geçer (doxxing/PII, hakaret, kriz sinyali).
+    var moderation = moderationService.Analyze(request.Content);
+    if (moderation.IsRejected)
+    {
+        return BadRequest(moderation.Code ?? "CONTENT_REJECTED", moderation.Message);
+    }
+
     await using var connection = await db.OpenConnectionAsync();
+    await using var transaction = await connection.BeginTransactionAsync();
     await using var command = new NpgsqlCommand(
         """
         UPDATE comments
         SET content = @content,
+            status = @status,
+            moderation_reason = @moderationReason,
+            moderation_checked_at = NOW(),
+            crisis_flagged = crisis_flagged OR @crisisFlagged,
             is_edited = TRUE,
             updated_at = NOW()
         WHERE id = @id
           AND (device_id = @deviceId OR user_id = @userId)
           AND status = 'active'
           AND created_at > NOW() - INTERVAL '5 minutes'
+        RETURNING post_id, device_id
         """,
-        connection
+        connection,
+        transaction
     );
     command.Parameters.AddWithValue("id", id);
     command.Parameters.AddWithValue("content", request.Content);
     command.Parameters.AddWithValue("deviceId", deviceParam);
     command.Parameters.AddWithValue("userId", userParam);
+    command.Parameters.AddWithValue("status", moderation.Status);
+    command.Parameters.AddWithValue("moderationReason", moderation.Message);
+    command.Parameters.AddWithValue("crisisFlagged", moderation.IsCrisisFlagged);
 
-    var affected = await command.ExecuteNonQueryAsync();
-    return affected == 0
-        ? NotFound("COMMENT_NOT_EDITABLE", "Yorum bulunamadı veya düzenleme süresi doldu.")
-        : Results.NoContent();
+    Guid? editedPostId = null;
+    var commentDeviceId = Guid.Empty;
+    await using (var reader = await command.ExecuteReaderAsync())
+    {
+        if (await reader.ReadAsync())
+        {
+            editedPostId = reader.GetGuid(0);
+            commentDeviceId = reader.GetGuid(1);
+        }
+    }
+
+    if (editedPostId is null)
+    {
+        await transaction.RollbackAsync();
+        return NotFound("COMMENT_NOT_EDITABLE", "Yorum bulunamadı veya düzenleme süresi doldu.");
+    }
+
+    // İncelemeye alınan yorum yayından çıkar; post'un herkese açık yorum sayacı da düşer.
+    if (moderation.Status != "active")
+    {
+        await using var updatePost = new NpgsqlCommand(
+            """
+            UPDATE posts
+            SET comment_count = GREATEST(0, comment_count - 1),
+                trend_score = (vote_count_hakli + vote_count_haksiz + (GREATEST(0, comment_count - 1) * 3))
+                    / POWER(EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600 + 2, 1.5),
+                updated_at = NOW()
+            WHERE id = @postId
+            """,
+            connection,
+            transaction
+        );
+        updatePost.Parameters.AddWithValue("postId", editedPostId.Value);
+        await updatePost.ExecuteNonQueryAsync();
+    }
+
+    await transaction.CommitAsync();
+
+    // Kriz sinyali: yorum sahibine destek bildirimi gonder (182 hatti + imece.org).
+    if (moderation.IsCrisisFlagged)
+    {
+        await InsertCrisisSupportNotificationForContentAsync(connection, commentDeviceId, editedPostId.Value);
+    }
+
+    return Results.NoContent();
 });
 
 app.MapPost("/api/v1/comments/{id:guid}/upvote", async (
