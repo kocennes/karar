@@ -1,13 +1,17 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+# BuildKit hedef mimariyi verir (amd64/arm64); klasik builder'da boş kalırsa amd64 kullanılır.
+ARG TARGETARCH
 WORKDIR /src
 
 # Sadece csproj dosyasını kopyalayıp restore yapıyoruz (Build Cache için)
+# Mimariye özel restore/publish: SkiaSharp'ın tüm platformlara ait native kütüphaneleri (~450 MB)
+# yerine imaja yalnızca hedef mimarinin libSkiaSharp.so dosyası girer.
 COPY Karar.Api/Karar.Api.csproj Karar.Api/
-RUN dotnet restore Karar.Api/Karar.Api.csproj
+RUN dotnet restore Karar.Api/Karar.Api.csproj -a "${TARGETARCH:-amd64}"
 
 # Tüm kaynak kodunu kopyalayıp yayınlıyoruz
 COPY Karar.Api/ Karar.Api/
-RUN dotnet publish Karar.Api/Karar.Api.csproj -c Release -o /app/publish --no-restore
+RUN dotnet publish Karar.Api/Karar.Api.csproj -c Release -o /app/publish --no-restore -a "${TARGETARCH:-amd64}" --no-self-contained
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
