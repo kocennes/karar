@@ -408,7 +408,22 @@ class AuthService {
     return AuthUser.fromJson(json);
   }
 
+  /// Yeni bir TOTP sırrı üretir. Sunucu `/2fa/setup` çağrısında mevcut sırrı
+  /// koşulsuz değiştirdiği için 2FA zaten etkinse (güncel profil sunucudan
+  /// okunarak) istek hiç gönderilmez; aksi halde kullanıcının doğrulama
+  /// uygulaması geçersiz kalır ve hesap kilitlenebilir.
   Future<Map<String, Object?>> setup2fa() async {
+    final me = AuthUser.fromJson(
+      await _apiClient.getJson<Map<String, Object?>>(ApiEndpoints.userMe),
+    );
+    _currentUser = me;
+    if (me.is2faEnabled) {
+      throw const ApiException(
+        statusCode: 409,
+        code: 'TWO_FACTOR_ALREADY_ENABLED',
+        message: 'İki faktörlü doğrulama zaten etkin.',
+      );
+    }
     return await _apiClient.postJson<Map<String, Object?>>(
       '/api/v1/auth/2fa/setup',
     );

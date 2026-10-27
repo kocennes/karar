@@ -1,4 +1,16 @@
 abstract final class ApiEndpoints {
+  /// Dışarıdan gelen bir kimliği (post/yorum id'si, kullanıcı adı) tek bir yol
+  /// segmentine dönüştürür. `/`, `?`, `#`, `%` kodlanır; `.` / `..` reddedilir.
+  /// Aksi halde derin bağlantıdan gelen `../auth/2fa/disable?` gibi bir
+  /// değer, Dio'nun `normalizePath()` adımıyla kimlik doğrulamalı isteği başka
+  /// bir uç noktaya taşır.
+  static String _seg(String value) {
+    if (value == '.' || value == '..') {
+      throw ArgumentError.value(value, 'value', 'Geçersiz yol segmenti');
+    }
+    return Uri.encodeComponent(value);
+  }
+
   static const String devices = '/api/v1/devices/register';
   static const String fcmToken = '/api/v1/devices/fcm-token';
 
@@ -21,16 +33,17 @@ abstract final class ApiEndpoints {
   static const String trendTopics = '/api/v1/trends/topics';
   static const String search = '/api/v1/search';
 
-  static String post(String id) => '/api/v1/posts/$id';
-  static String postVote(String id) => '/api/v1/posts/$id/vote';
-  static String postComments(String id) => '/api/v1/posts/$id/comments';
+  static String post(String id) => '/api/v1/posts/${_seg(id)}';
+  static String postVote(String id) => '/api/v1/posts/${_seg(id)}/vote';
+  static String postComments(String id) => '/api/v1/posts/${_seg(id)}/comments';
   static String postStoryImage(String id) =>
-      '/api/v1/posts/$id/story-image.png';
-  static String postSimilar(String id) => '/api/v1/posts/$id/similar';
-  static String postStats(String id) => '/api/v1/posts/$id/stats';
-  static String postView(String id) => '/api/v1/posts/$id/view';
-  static String comment(String id) => '/api/v1/comments/$id';
-  static String commentUpvote(String id) => '/api/v1/comments/$id/upvote';
+      '/api/v1/posts/${_seg(id)}/story-image.png';
+  static String postSimilar(String id) => '/api/v1/posts/${_seg(id)}/similar';
+  static String postStats(String id) => '/api/v1/posts/${_seg(id)}/stats';
+  static String postView(String id) => '/api/v1/posts/${_seg(id)}/view';
+  static String comment(String id) => '/api/v1/comments/${_seg(id)}';
+  static String commentUpvote(String id) =>
+      '/api/v1/comments/${_seg(id)}/upvote';
 
   static const String reports = '/api/v1/reports';
   static const String feedback = '/api/v1/feedback';
@@ -60,9 +73,10 @@ abstract final class ApiEndpoints {
 
   static const String userMeComments = '/api/v1/users/me/comments';
   static const String userMeWeeklyStats = '/api/v1/users/me/weekly-stats';
-  static String userPosts(String username) => '/api/v1/users/$username/posts';
+  static String userPosts(String username) =>
+      '/api/v1/users/${_seg(username)}/posts';
   static String postPinComment(String postId) =>
-      '/api/v1/posts/$postId/comments/pin';
+      '/api/v1/posts/${_seg(postId)}/comments/pin';
 
   static const String userMeModerationHistory =
       '/api/v1/users/me/moderation-history';
