@@ -578,6 +578,8 @@ Backend:
 - `Admin__IpAllowlist` (opsiyonel, virgulle ayrilmis IP listesi)
 - `Brevo__ApiKey`, `Resend__ApiKey` veya `Email__SmtpUser` + `Email__SmtpPass` (en az biri Development/Testing disinda, Staging dahil, zorunlu: admin girisi e-posta OTP ister; kod gonderilemezse giris `503 OTP_DELIVERY_FAILED` ile reddedilir)
 - `Email__FromAddress`
+- `Perspective__ApiKey` (Perspective toksisite skoru; yoksa veya cagri basarisizsa asagidaki mod gecerli)
+- `Moderation__ToxicityUnavailableMode` (opsiyonel: `review` | `allow`. Perspective kullanilamiyorsa yeni gonderi `review` ile `under_review` olur, `allow` ile yalnizca anahtar kelime filtresiyle yayinlanir. Varsayilan Production'da `review`, diger ortamlarda `allow`. Perspective 2026-12-31'de kapaniyor; o tarihten sonra bu mod kalici olarak devreye girer.)
 
 Admin API statik token kabul etmez (`Admin__Token` ve `Admin__SkipEmailOtp` kaldirildi; tanimliysa silinmeli). Admin panel `POST /api/v1/admin/auth/login` yanitindaki `accessToken` JWT'sini `Authorization: Bearer <accessToken>` ile gonderir; token `expiresAt` aninda (4 saat) sona erer.
 - `Storage__Provider`
