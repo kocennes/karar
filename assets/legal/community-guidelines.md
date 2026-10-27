@@ -93,10 +93,11 @@ Tartışmalı konular zaman zaman ağır olabilir.
 
 Karar, ruh sağlığı üzerindeki olumsuz etkileri en aza indirmek için:
 - Sürekli tartışma sırasında "mola ver" hatırlatması gösterir
-- 182 Türkiye İntihar Önleme Hattı bilgisini belirli içeriklerde gösterir
+- Kriz sinyali taşıyan içeriklerde 112 Acil Çağrı yönlendirmesini gösterir
 - Linç ortamına dönüşen tartışmalarda erken uyarı sistemi devreye girer
 
-Kendin veya başka biri için endişeleniyorsan: **182** (7/24 ücretsiz)
+Kendin veya başka biri için endişeleniyorsan ve acil bir tehlike varsa: **112 Acil Çağrı** (7/24, ücretsiz).
+Şiddet, aile içi sorunlar ve sosyal destek için: **ALO 183** (7/24, ücretsiz).
 
 ---
 

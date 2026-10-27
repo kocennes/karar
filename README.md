@@ -89,7 +89,7 @@ Sprint onceligi genel olarak:
 - Argon2 password hashing
 - Firebase Admin SDK
 - MailKit SMTP
-- ImageSharp ile dinamik OG/story gorsel uretimi
+- SkiaSharp ile dinamik OG/story gorsel uretimi ve yuklenen gorsellerin guvenli islenmesi (EXIF/GPS temizleme)
 - Serilog structured logging
 - Health checks
 

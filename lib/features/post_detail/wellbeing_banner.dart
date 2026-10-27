@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/config/remote_config_service.dart';
 import '../../core/providers.dart';
@@ -58,20 +59,38 @@ class WellbeingBanner extends ConsumerWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            'Zor bir dönemden geçiyor olabilirsin. Destek almak için ALO 182 veya en yakın sağlık kuruluşuna başvurabilirsin.',
+            'Zor bir dönemden geçiyor olabilirsin. Kendini güvende hissetmiyorsan hemen 112 Acil Çağrı Merkezini ara ya da en yakın acil servise başvur.',
             style: AppTypography.bodyS.copyWith(color: kc.text2),
           ),
           const SizedBox(height: 14),
           KararButton(
-            label: '182 Destek Hattı',
+            label: '112 Acil Çağrı',
             icon: Icons.phone_rounded,
             variant: KararButtonVariant.tonal,
-            onPressed: () {
-              // In a real app, use url_launcher to call 182
-            },
+            onPressed: () => _callEmergency(context),
           ),
         ],
       ),
     );
+  }
+
+  // 182 artık MHRS randevu hattı; Türkiye'de ulusal intihar hattı olmadığından 112'ye
+  // yönlendiriyoruz. canLaunchUrl tel: için Android'de <queries> ister, bu yüzden
+  // doğrudan deneyip başaramazsak numarayı gösteriyoruz.
+  static Future<void> _callEmergency(BuildContext context) async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    var launched = false;
+    try {
+      launched = await launchUrl(Uri(scheme: 'tel', path: '112'));
+    } catch (_) {
+      launched = false;
+    }
+    if (!launched) {
+      messenger?.showSnackBar(
+        const SnackBar(
+          content: Text('Arama başlatılamadı. Lütfen telefonundan 112\'yi ara.'),
+        ),
+      );
+    }
   }
 }
