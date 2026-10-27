@@ -74,10 +74,18 @@ public sealed class StepUpReauthTests
     [Fact]
     public void TwoFactorDisable_RequiresStepUpAndDeletesBackupCodes()
     {
+        // Single kept implementation (sec/10 AuthAccountPolicy.CheckTwoFactorDisable): the password AND,
+        // with 2FA on, a TOTP or backup code - stricter than password-only step-up - with the per-account
+        // "stepup" brute-force counter from sec/09.
         var block = Slice("app.MapPost(\"/api/v1/auth/2fa/disable\"", "app.MapGet(\"/api/v1/users/me/sessions\"");
 
-        AssertBefore(block, "RequireStepUpAsync(connection, bruteForce, userId, request?.Password, request?.TotpCode)",
-            "UPDATE users SET is_2fa_enabled = FALSE");
+        AssertBefore(block, "BruteForceService.AccountIdentityFor(\"stepup\", userId)", "bruteForce.IsLockedOutAsync(bfIdentity)");
+        AssertBefore(block, "bruteForce.IsLockedOutAsync(bfIdentity)", "AuthAccountPolicy.CheckTwoFactorDisable(");
+        AssertBefore(block, "AuthAccountPolicy.CheckTwoFactorDisable(", "UPDATE users SET is_2fa_enabled = FALSE");
+        block.Should().Contain("bruteForce.RecordFailedAttemptAsync(bfIdentity)",
+            "wrong password / TOTP / backup-code guesses must count against the account");
+        block.Should().NotContain("RequireStepUpAsync(",
+            "2FA disable is gated once, by the stricter password + second-factor check");
         block.Should().Contain("DELETE FROM totp_backup_codes WHERE user_id = @id");
     }
 
@@ -93,12 +101,18 @@ public sealed class StepUpReauthTests
     [Fact]
     public void BackupCodes_RequireEnabled2faAndStepUpToReplaceExistingCodes()
     {
+        // Single kept implementation (sec/10 AuthAccountPolicy.CheckBackupCodeIssue): every issuance -
+        // the first one included - needs a valid TOTP code or the one-shot grant set by 2fa/enable, which
+        // is stricter than sec/09's password step-up for replacements only. Failed TOTP guesses use the
+        // per-account "stepup" counter from sec/09.
         var block = Slice("app.MapPost(\"/api/v1/auth/2fa/backup-codes\"", "app.MapGet(\"/api/v1/auth/2fa/backup-codes/count\"");
 
         block.Should().Contain("\"TWO_FACTOR_NOT_ENABLED\"");
-        block.Should().Contain("hasExistingCodes");
-        AssertBefore(block, "RequireStepUpAsync(connection, bruteForce, userId, request?.Password, request?.TotpCode)",
-            "DELETE FROM totp_backup_codes WHERE user_id = @userId");
+        AssertBefore(block, "bruteForce.IsLockedOutAsync(bfIdentity)", "AuthAccountPolicy.CheckBackupCodeIssue(");
+        AssertBefore(block, "AuthAccountPolicy.CheckBackupCodeIssue(", "DELETE FROM totp_backup_codes WHERE user_id = @userId");
+        block.Should().Contain("bruteForce.RecordFailedAttemptAsync(bfIdentity)");
+        block.Should().NotContain("RequireStepUpAsync(",
+            "backup-code issuance is gated once, by the second-factor check");
     }
 
     [Fact]

@@ -8578,6 +8578,13 @@ app.MapPost("/api/v1/auth/verify-email", async (
     var email = request.Email.ToLowerInvariant();
     var otpHash = PasswordService.HashOtp(request.Otp);
 
+    // Kayıt gibi doğrulama da cihaz ister: kodu giren cihaz, kaydı açan cihazla karşılaştırılır.
+    var verifyingDeviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    if (verifyingDeviceId is null)
+    {
+        return Unauthorized();
+    }
+
     await using var connection = await db.OpenConnectionAsync();
 
     // OTP kontrol et
@@ -8634,7 +8641,7 @@ app.MapPost("/api/v1/auth/verify-email", async (
         UPDATE users
         SET email_verified = TRUE, updated_at = NOW()
         WHERE email = @email AND email_verified = FALSE
-        RETURNING id, username, karma, auth_provider
+        RETURNING id, username, karma, auth_provider, device_id
         """,
         connection,
         transaction
@@ -8651,7 +8658,33 @@ app.MapPost("/api/v1/auth/verify-email", async (
     var username = userReader.GetString(1);
     var karma = userReader.GetInt32(2);
     var authProvider = userReader.GetString(3);
+    var registeredDeviceId = userReader.GetGuid(4);
     await userReader.CloseAsync();
+
+    // Kod kaydı açan cihazdan girilmediyse şifre başkası tarafından konmuş olabilir (pre-account hijack):
+    // e-posta sahibi hesabı alır, kayıttaki şifre ve cihaz bağı atılır; sahip şifresini sıfırlama ile belirler.
+    if (!AuthAccountPolicy.KeepsRegistrantPassword(registeredDeviceId, verifyingDeviceId))
+    {
+        await using var dropPassword = new NpgsqlCommand(
+            "UPDATE users SET password_hash = NULL, device_id = @deviceId, updated_at = NOW() WHERE id = @id",
+            connection,
+            transaction
+        );
+        dropPassword.Parameters.AddWithValue("id", userId);
+        dropPassword.Parameters.AddWithValue("deviceId", verifyingDeviceId.Value);
+        await dropPassword.ExecuteNonQueryAsync();
+
+        // Kayıt cihazının hesap bağı (user_device_links) da atılır; aksi halde kaydı açan cihaz
+        // sahibin cihazı sayılır ve sahibin engellediği hesaplar için blok kontrolünü atlatır.
+        await using var dropRegistrantLinks = new NpgsqlCommand(
+            "DELETE FROM user_device_links WHERE user_id = @id",
+            connection,
+            transaction
+        );
+        dropRegistrantLinks.Parameters.AddWithValue("id", userId);
+        await dropRegistrantLinks.ExecuteNonQueryAsync();
+        await LinkUserDeviceAsync(connection, transaction, userId, verifyingDeviceId.Value);
+    }
 
     // OTP sil
     await using var deleteOtp = new NpgsqlCommand(
@@ -8861,6 +8894,32 @@ app.MapPost("/api/v1/auth/google", async (
         await findReader.CloseAsync();
         isNewUser = true;
 
+        // E-postayı başka bir satır tutuyor mu? (ör. başkasının açtığı doğrulanmamış şifreli kayıt)
+        Guid? pendingUserId = null;
+        await using (var emailCmd = new NpgsqlCommand(
+            "SELECT id, email_verified, auth_provider, deleted_at IS NOT NULL FROM users WHERE email = @email FOR UPDATE",
+            connection,
+            transaction))
+        {
+            emailCmd.Parameters.AddWithValue("email", googleEmail);
+            await using var emailReader = await emailCmd.ExecuteReaderAsync();
+            if (await emailReader.ReadAsync())
+            {
+                var collision = AuthAccountPolicy.ResolveGoogleEmailCollision(
+                    emailReader.GetBoolean(1),
+                    emailReader.GetString(2),
+                    emailReader.GetBoolean(3),
+                    AuthAccountPolicy.IsFirebaseEmailVerified(firebaseToken.Claims));
+                if (collision != GoogleEmailCollision.TakeOverPendingRegistration)
+                {
+                    await emailReader.CloseAsync();
+                    await transaction.RollbackAsync();
+                    return Conflict("EMAIL_ALREADY_REGISTERED", "Bu e-posta adresiyle kayıtlı bir hesap zaten var. E-posta ve şifrenle giriş yapabilirsin.");
+                }
+                pendingUserId = emailReader.GetGuid(0);
+            }
+        }
+
         // E-posta Google'dan alındığından doğrulanmış kabul edilir
         var baseUsername = googleEmail.Split('@')[0]
             .Replace('.', '_')
@@ -8885,24 +8944,78 @@ app.MapPost("/api/v1/auth/google", async (
             username = $"{baseUsername}_{suffix}";
         }
 
-        await using var insertCmd = new NpgsqlCommand(
-            """
-            INSERT INTO users (device_id, username, email, email_verified, auth_provider, google_id)
-            VALUES (@deviceId, @username, @email, TRUE, 'google', @googleId)
-            RETURNING id, karma
-            """,
-            connection,
-            transaction
-        );
-        insertCmd.Parameters.AddWithValue("deviceId", deviceId.Value);
-        insertCmd.Parameters.AddWithValue("username", username);
-        insertCmd.Parameters.AddWithValue("email", googleEmail);
-        insertCmd.Parameters.AddWithValue("googleId", googleId);
-        await using var insertReader = await insertCmd.ExecuteReaderAsync();
-        await insertReader.ReadAsync();
-        userId = insertReader.GetGuid(0);
-        karma = insertReader.GetInt32(1);
-        await insertReader.CloseAsync();
+        try
+        {
+            // Bekleyen kayıt devralınırsa: kaydı açanın şifresi, profil alanları ve oturumları atılır.
+            await using var insertCmd = new NpgsqlCommand(
+                pendingUserId is null
+                    ? """
+                      INSERT INTO users (device_id, username, email, email_verified, auth_provider, google_id)
+                      VALUES (@deviceId, @username, @email, TRUE, 'google', @googleId)
+                      RETURNING id, karma
+                      """
+                    : """
+                      UPDATE users
+                      SET device_id = @deviceId, username = @username, email_verified = TRUE,
+                          auth_provider = 'google', google_id = @googleId, password_hash = NULL,
+                          date_of_birth = NULL, gender = NULL, updated_at = NOW()
+                      WHERE id = @pendingUserId AND email = @email AND email_verified = FALSE
+                      RETURNING id, karma
+                      """,
+                connection,
+                transaction
+            );
+            insertCmd.Parameters.AddWithValue("deviceId", deviceId.Value);
+            insertCmd.Parameters.AddWithValue("username", username);
+            insertCmd.Parameters.AddWithValue("email", googleEmail);
+            insertCmd.Parameters.AddWithValue("googleId", googleId);
+            if (pendingUserId is { } pendingId)
+                insertCmd.Parameters.AddWithValue("pendingUserId", pendingId);
+            await using var insertReader = await insertCmd.ExecuteReaderAsync();
+            if (!await insertReader.ReadAsync())
+            {
+                await insertReader.CloseAsync();
+                await transaction.RollbackAsync();
+                return Conflict("EMAIL_ALREADY_REGISTERED", "Bu e-posta adresiyle kayıtlı bir hesap zaten var. E-posta ve şifrenle giriş yapabilirsin.");
+            }
+            userId = insertReader.GetGuid(0);
+            karma = insertReader.GetInt32(1);
+            await insertReader.CloseAsync();
+
+            if (pendingUserId is not null)
+            {
+                await using var deletePendingOtp = new NpgsqlCommand(
+                    "DELETE FROM email_otps WHERE email = @email",
+                    connection,
+                    transaction
+                );
+                deletePendingOtp.Parameters.AddWithValue("email", googleEmail);
+                await deletePendingOtp.ExecuteNonQueryAsync();
+
+                await using var revokePending = new NpgsqlCommand(
+                    "UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = @id AND revoked_at IS NULL",
+                    connection,
+                    transaction
+                );
+                revokePending.Parameters.AddWithValue("id", userId);
+                await revokePending.ExecuteNonQueryAsync();
+
+                // Kaydı açanın cihaz bağları da atılır (Google cihazı aşağıda bağlanır).
+                await using var dropPendingLinks = new NpgsqlCommand(
+                    "DELETE FROM user_device_links WHERE user_id = @id",
+                    connection,
+                    transaction
+                );
+                dropPendingLinks.Parameters.AddWithValue("id", userId);
+                await dropPendingLinks.ExecuteNonQueryAsync();
+            }
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            // Eşzamanlı kayıt / google_id çakışması: 500 yerine 409.
+            await transaction.RollbackAsync();
+            return Conflict("EMAIL_ALREADY_REGISTERED", "Bu e-posta adresiyle kayıtlı bir hesap zaten var. E-posta ve şifrenle giriş yapabilirsin.");
+        }
 
         userEmail = googleEmail;
         authProvider = "google";
@@ -10449,7 +10562,18 @@ app.MapPost("/api/v1/auth/2fa/setup", async (
     var otpAuthUrl = $"otpauth://totp/Karar:{Uri.EscapeDataString(username)}?secret={secret}&issuer=Karar&digits=6&period=30";
 
     await using var connection = await db.OpenConnectionAsync();
-    // 2FA açıkken aktif secret değiştirilemez (çalınmış token ile TOTP ele geçirme); önce kapatılmalı.
+
+    // 2FA açıkken sırrı değiştirmek, kapatmakla eşdeğerdir: önce doğrulamalı /2fa/disable gerekir.
+    await using var enabledCmd = new NpgsqlCommand(
+        "SELECT is_2fa_enabled FROM users WHERE id = @id AND deleted_at IS NULL",
+        connection
+    );
+    enabledCmd.Parameters.AddWithValue("id", userId);
+    if (await enabledCmd.ExecuteScalarAsync() is true)
+    {
+        return Conflict("TWO_FACTOR_ALREADY_ENABLED", "İki faktörlü doğrulama zaten açık. Yeniden kurmak için önce kapat.");
+    }
+
     await using var command = new NpgsqlCommand(
         "UPDATE users SET totp_secret = @secret, updated_at = NOW() WHERE id = @id AND deleted_at IS NULL AND is_2fa_enabled = FALSE",
         connection
@@ -10457,23 +10581,17 @@ app.MapPost("/api/v1/auth/2fa/setup", async (
     command.Parameters.AddWithValue("id", userId);
     command.Parameters.AddWithValue("secret", secret);
     var affected = await command.ExecuteNonQueryAsync();
-    if (affected == 0)
-    {
-        await using var stateCmd = new NpgsqlCommand(
-            "SELECT is_2fa_enabled FROM users WHERE id = @id AND deleted_at IS NULL", connection);
-        stateCmd.Parameters.AddWithValue("id", userId);
-        return await stateCmd.ExecuteScalarAsync() is true
-            ? Conflict("TWO_FACTOR_ALREADY_ENABLED", "İki faktörlü doğrulama zaten etkin. Yeniden kurmak için önce kapatın.")
-            : NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
-    }
-    return Results.Ok(new TwoFactorSetupResponse(secret, otpAuthUrl));
+    return affected == 0
+        ? NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.")
+        : Results.Ok(new TwoFactorSetupResponse(secret, otpAuthUrl));
 });
 
 app.MapPost("/api/v1/auth/2fa/enable", async (
     TwoFactorCodeRequest request,
     HttpRequest httpRequest,
     Db db,
-    JwtService jwtService
+    JwtService jwtService,
+    RedisService redis
 ) =>
 {
     if (ValidateRequest(request) is { } validationError) return validationError;
@@ -10499,11 +10617,13 @@ app.MapPost("/api/v1/auth/2fa/enable", async (
     );
     update.Parameters.AddWithValue("id", userId);
     await update.ExecuteNonQueryAsync();
+
+    // Geçerli kodla 2FA'yı açan oturum, ilk yedek kodlarını kodsuz alabilsin (kısa süreli, tek kullanımlık).
+    await redis.GetDb().StringSetAsync($"2fa:fresh-enable:{userId}", "1", TimeSpan.FromMinutes(10));
     return Results.NoContent();
 });
 
 app.MapPost("/api/v1/auth/2fa/disable", async (
-    StepUpRequest? request,
     HttpRequest httpRequest,
     Db db,
     JwtService jwtService,
@@ -10513,38 +10633,98 @@ app.MapPost("/api/v1/auth/2fa/disable", async (
     var principal = GetJwtPrincipal(httpRequest, jwtService);
     if (principal is null) return Unauthorized();
     var userId = GetUserId(principal);
-    if (request is not null && ValidateRequest(request) is { } validationError) return validationError;
 
-    await using var connection = await db.OpenConnectionAsync();
+    var request = await ReadOptionalJsonRequestAsync<TwoFactorDisableRequest>(httpRequest)
+        ?? new TwoFactorDisableRequest();
+    if (ValidateRequest(request) is { } validationError) return validationError;
 
-    // 2FA'yı kapatmak hesabı zayıflatır: şifre (şifresiz hesapta TOTP) ile yeniden doğrulama gerekir.
-    if (await RequireStepUpAsync(connection, bruteForce, userId, request?.Password, request?.TotpCode) is { } stepUpError)
+    // Yanlış şifre/kod tahminleri hesap bazlı sayaca yazılır (IP/cihazdan bağımsız; step-up ile aynı anahtar).
+    var bfIdentity = BruteForceService.AccountIdentityFor("stepup", userId);
+    if (await bruteForce.IsLockedOutAsync(bfIdentity))
     {
-        return stepUpError;
+        return TooManyRequests("ACCOUNT_LOCKED", "Çok fazla başarısız deneme. 15 dakika bekleyin.");
     }
 
-    await using var tx = await connection.BeginTransactionAsync();
+    await using var connection = await db.OpenConnectionAsync();
+    await using var transaction = await connection.BeginTransactionAsync();
+
+    await using var select = new NpgsqlCommand(
+        "SELECT password_hash, is_2fa_enabled, totp_secret FROM users WHERE id = @id AND deleted_at IS NULL FOR UPDATE",
+        connection,
+        transaction
+    );
+    select.Parameters.AddWithValue("id", userId);
+    await using var reader = await select.ExecuteReaderAsync();
+    if (!await reader.ReadAsync())
+    {
+        await reader.CloseAsync();
+        await transaction.RollbackAsync();
+        return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
+    }
+    var passwordHash = reader.IsDBNull(0) ? null : reader.GetString(0);
+    var is2faEnabled = reader.GetBoolean(1);
+    var totpSecret = reader.IsDBNull(2) ? null : reader.GetString(2);
+    await reader.CloseAsync();
+
+    // Oturum (JWT) tek başına yetmez: şifre + TOTP/yedek kod.
+    var check = AuthAccountPolicy.CheckTwoFactorDisable(
+        passwordHash, is2faEnabled, totpSecret, request.Password, request.Code, request.BackupCode);
+    switch (check)
+    {
+        case TwoFactorDisableCheck.PasswordRequired:
+            await transaction.RollbackAsync();
+            return BadRequest("PASSWORD_REQUIRED", "İki faktörlü doğrulamayı kapatmak için şifreni gir.");
+        case TwoFactorDisableCheck.InvalidPassword:
+            await transaction.RollbackAsync();
+            await bruteForce.RecordFailedAttemptAsync(bfIdentity);
+            return BadRequest("INVALID_PASSWORD", "Şifre hatalı.");
+        case TwoFactorDisableCheck.SecondFactorRequired:
+            await transaction.RollbackAsync();
+            return BadRequest("TWO_FACTOR_REQUIRED", "Geçerli iki faktörlü doğrulama kodu veya yedek kod gerekli.");
+        case TwoFactorDisableCheck.InvalidTotpCode:
+            await transaction.RollbackAsync();
+            await bruteForce.RecordFailedAttemptAsync(bfIdentity);
+            return BadRequest("INVALID_TOTP_CODE", "Doğrulama kodu hatalı.");
+        case TwoFactorDisableCheck.VerifyBackupCode:
+        {
+            await using var backupCmd = new NpgsqlCommand(
+                "UPDATE totp_backup_codes SET used_at = NOW() WHERE user_id = @userId AND code_hash = @hash AND used_at IS NULL RETURNING id",
+                connection,
+                transaction
+            );
+            backupCmd.Parameters.AddWithValue("userId", userId);
+            backupCmd.Parameters.AddWithValue("hash", HashBackupCode(request.BackupCode!));
+            if (await backupCmd.ExecuteScalarAsync() is null)
+            {
+                await transaction.RollbackAsync();
+                await bruteForce.RecordFailedAttemptAsync(bfIdentity);
+                return BadRequest("INVALID_BACKUP_CODE", "Yedek kod geçersiz veya daha önce kullanıldı.");
+            }
+            break;
+        }
+    }
+
     await using var command = new NpgsqlCommand(
         "UPDATE users SET is_2fa_enabled = FALSE, totp_secret = NULL, updated_at = NOW() WHERE id = @id AND deleted_at IS NULL",
-        connection, tx
+        connection,
+        transaction
     );
     command.Parameters.AddWithValue("id", userId);
     var affected = await command.ExecuteNonQueryAsync();
-    if (affected == 0)
-    {
-        await tx.RollbackAsync();
-        return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
-    }
 
-    // Eski yedek kodlar 2FA yeniden açıldığında geçerli kalmasın.
-    await using var deleteCodes = new NpgsqlCommand(
-        "DELETE FROM totp_backup_codes WHERE user_id = @id", connection, tx);
-    deleteCodes.Parameters.AddWithValue("id", userId);
-    await deleteCodes.ExecuteNonQueryAsync();
+    // 2FA kapanınca eski yedek kodlar da geçersiz olmalı (2FA yeniden açıldığında geçerli kalmasın).
+    await using var deleteBackup = new NpgsqlCommand(
+        "DELETE FROM totp_backup_codes WHERE user_id = @id",
+        connection,
+        transaction
+    );
+    deleteBackup.Parameters.AddWithValue("id", userId);
+    await deleteBackup.ExecuteNonQueryAsync();
 
-    await tx.CommitAsync();
-    return Results.NoContent();
-});
+    await transaction.CommitAsync();
+    await bruteForce.ClearAsync(bfIdentity);
+    return affected == 0 ? NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.") : Results.NoContent();
+}).RequireRateLimiting("auth-strict");
 
 app.MapGet("/api/v1/users/me/sessions", async (
     HttpRequest httpRequest,
@@ -13855,50 +14035,67 @@ app.MapGet("/api/v1/admin/analytics/operations", async (
 // ── 2FA Yedek Kodları ────────────────────────────────────────────────────────
 
 app.MapPost("/api/v1/auth/2fa/backup-codes", async (
-    StepUpRequest? request,
     HttpRequest httpRequest,
     Db db,
     JwtService jwtService,
+    RedisService redis,
     BruteForceService bruteForce
 ) =>
 {
     var principal = GetJwtPrincipal(httpRequest, jwtService);
     if (principal is null) return Unauthorized();
     var userId = GetUserId(principal);
-    if (request is not null && ValidateRequest(request) is { } validationError) return validationError;
+
+    var codeRequest = await ReadOptionalJsonRequestAsync<TwoFactorCodeRequest>(httpRequest);
+
+    // Yanlış TOTP tahminleri hesap bazlı sayaca yazılır (IP/cihazdan bağımsız; step-up ile aynı anahtar).
+    var bfIdentity = BruteForceService.AccountIdentityFor("stepup", userId);
+    if (await bruteForce.IsLockedOutAsync(bfIdentity))
+    {
+        return TooManyRequests("ACCOUNT_LOCKED", "Çok fazla başarısız deneme. 15 dakika bekleyin.");
+    }
 
     var codes = Enumerable.Range(0, 8)
         .Select(_ => $"{GenerateBackupSegment()}-{GenerateBackupSegment()}")
         .ToList();
 
     await using var connection = await db.OpenConnectionAsync();
+    await using var tx = await connection.BeginTransactionAsync();
 
     await using var stateCmd = new NpgsqlCommand(
-        """
-        SELECT u.is_2fa_enabled, EXISTS (SELECT 1 FROM totp_backup_codes b WHERE b.user_id = u.id)
-        FROM users u
-        WHERE u.id = @userId AND u.deleted_at IS NULL
-        """,
-        connection
+        "SELECT is_2fa_enabled, totp_secret FROM users WHERE id = @userId AND deleted_at IS NULL FOR UPDATE",
+        connection, tx
     );
     stateCmd.Parameters.AddWithValue("userId", userId);
-    await using var stateReader = await stateCmd.ExecuteReaderAsync();
-    if (!await stateReader.ReadAsync()) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
-    var twoFactorEnabled = stateReader.GetBoolean(0);
-    var hasExistingCodes = stateReader.GetBoolean(1);
-    await stateReader.CloseAsync();
-
-    if (!twoFactorEnabled)
-        return BadRequest("TWO_FACTOR_NOT_ENABLED", "Yedek kod oluşturmak için önce iki faktörlü doğrulamayı etkinleştirin.");
-
-    // İlk üretim (2FA etkinleştirildikten hemen sonra) dışında mevcut kodları yenilemek step-up ister.
-    if (hasExistingCodes
-        && await RequireStepUpAsync(connection, bruteForce, userId, request?.Password, request?.TotpCode) is { } stepUpError)
+    var is2faEnabled = false;
+    string? totpSecret = null;
+    await using (var stateReader = await stateCmd.ExecuteReaderAsync())
     {
-        return stepUpError;
+        if (await stateReader.ReadAsync())
+        {
+            is2faEnabled = stateReader.GetBoolean(0);
+            totpSecret = stateReader.IsDBNull(1) ? null : stateReader.GetString(1);
+        }
     }
 
-    await using var tx = await connection.BeginTransactionAsync();
+    // Yedek kod = TOTP'siz giriş; yalnızca geçerli TOTP kodu ya da az önce 2FA'yı açan oturum alabilir
+    // (ilk üretim de dahil: 2FA açık ama hiç kodu olmayan hesapta da çalınmış token yetmez).
+    var freshEnableGrant = string.IsNullOrWhiteSpace(codeRequest?.Code)
+        && is2faEnabled
+        && await redis.GetDb().KeyDeleteAsync($"2fa:fresh-enable:{userId}");
+    switch (AuthAccountPolicy.CheckBackupCodeIssue(is2faEnabled, totpSecret, codeRequest?.Code, freshEnableGrant))
+    {
+        case BackupCodeIssueCheck.NotEnabled:
+            await tx.RollbackAsync();
+            return Conflict("TWO_FACTOR_NOT_ENABLED", "Yedek kod için önce iki faktörlü doğrulamayı aç.");
+        case BackupCodeIssueCheck.SecondFactorRequired:
+            await tx.RollbackAsync();
+            return BadRequest("TWO_FACTOR_REQUIRED", "Yeni yedek kodlar için geçerli iki faktörlü doğrulama kodu gerekli.");
+        case BackupCodeIssueCheck.InvalidTotpCode:
+            await tx.RollbackAsync();
+            await bruteForce.RecordFailedAttemptAsync(bfIdentity);
+            return BadRequest("INVALID_TOTP_CODE", "Doğrulama kodu hatalı.");
+    }
 
     await using var deleteOld = new NpgsqlCommand(
         "DELETE FROM totp_backup_codes WHERE user_id = @userId",
@@ -15765,6 +15962,24 @@ static async Task RevokeUserRefreshTokensAsync(
         command.Parameters.AddWithValue("keepHash", JwtService.HashRefreshToken(keepRefreshToken));
     }
     await command.ExecuteNonQueryAsync();
+}
+
+// Gövdesi isteğe bağlı JSON uç noktaları: boş/JSON olmayan/bozuk gövde → null (500 yerine).
+static async Task<T?> ReadOptionalJsonRequestAsync<T>(HttpRequest request) where T : class
+{
+    if (request.ContentLength is null or 0 || !request.HasJsonContentType())
+    {
+        return null;
+    }
+
+    try
+    {
+        return await request.ReadFromJsonAsync<T>();
+    }
+    catch (System.Text.Json.JsonException)
+    {
+        return null;
+    }
 }
 
 static async Task<CommentDto?> ReadCommentDtoAsync(

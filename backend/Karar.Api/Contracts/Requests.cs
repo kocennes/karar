@@ -88,6 +88,12 @@ public sealed record TwoFactorCodeRequest(
     [Required, StringLength(6, MinimumLength = 6)] string Code
 );
 
+public sealed record TwoFactorDisableRequest(
+    [StringLength(72)] string? Password = null,
+    [StringLength(6)] string? Code = null,
+    [StringLength(32)] string? BackupCode = null
+);
+
 public sealed record CreateReportRequest(
     [Required] string TargetType,
     [Required] Guid TargetId,
@@ -257,12 +263,8 @@ public sealed record GoogleSignInRequest(
     [StringLength(6, MinimumLength = 6)] string? TotpCode = null
 );
 
-// Hassas işlemler için yeniden doğrulama (step-up): şifreli hesapta şifre, şifresiz hesapta TOTP.
-public sealed record StepUpRequest(
-    [StringLength(72)] string? Password = null,
-    [StringLength(6, MinimumLength = 6)] string? TotpCode = null
-);
-
+// Google hesabı bağlama step-up ister (RequireStepUpAsync): şifreli hesapta şifre, şifresiz hesapta TOTP.
+// 2FA kapatma/yedek kod için TwoFactorDisableRequest / TwoFactorCodeRequest kullanılır.
 public sealed record GoogleLinkRequest(
     [Required] string IdToken,
     [StringLength(72)] string? Password = null,
