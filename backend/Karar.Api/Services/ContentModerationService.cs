@@ -5,14 +5,18 @@ namespace Karar.Api.Services;
 
 public sealed class ContentModerationService
 {
+    // Türk cep telefonu: 5xx ile başlayan 10 hane; "+90 / 0" öneki, parantezli operatör kodu ve
+    // boşluk / tire / nokta ayırıcıları kabul edilir ("0 (532) 123 45 67", "0532-123-45-67").
     private static readonly Regex TurkishPhonePattern = new(
-        @"(\+90|0)?\s?5\d{2}\s?\d{3}\s?\d{2}\s?\d{2}",
+        @"(\+90|0)?\s?\(?5\d{2}\)?[\s\-.]?\d{3}[\s\-.]?\d{2}[\s\-.]?\d{2}",
         RegexOptions.Compiled
     );
 
+    // CultureInvariant şart: tr-TR kültüründe IgnoreCase ile [A-Z] sınıfı 'I'↔'ı' eşlediğinden
+    // küçük 'i' (ali, gmail…) sınıfa girmez ve e-posta hiç yakalanmaz.
     private static readonly Regex EmailPattern = new(
         @"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant
     );
 
     // ── Doxxing: raw-text patterns (digit normalization must NOT run here) ──────
@@ -160,7 +164,9 @@ public sealed class ContentModerationService
             return ModerationDecision.Reject("CONTENT_REJECTED", "İçerik politikası gereği bu metin yayınlanamaz.");
         }
 
-        if (TurkishPhonePattern.IsMatch(normalized) || EmailPattern.IsMatch(normalized))
+        // Doxxing: telefon / e-posta — bu kalıplar da ham metinde aranır. Normalizer rakamları ve '@'
+        // işaretini harfe çevirdiğinden (0→o, 5→s, @→a) normalize metinde hiçbir zaman eşleşemezler.
+        if (TurkishPhonePattern.IsMatch(text) || EmailPattern.IsMatch(text))
         {
             return ModerationDecision.Review("Kişisel bilgi olabilecek veri tespit edildi.", isCrisis);
         }
