@@ -47,6 +47,41 @@ class ApiClient {
         ),
       );
 
+  static const ApiException _invalidPath = ApiException(
+    statusCode: 400,
+    code: 'INVALID_PATH',
+    message: 'Geçersiz istek adresi.',
+  );
+
+  /// Kimlik doğrulamalı isteğin başka bir uç noktaya kaymasını engeller.
+  /// Dio yolu `normalizePath()` ile birleştirdiği için `..`/`.` segmentleri
+  /// (ham ya da `%2E` kodlu), `?`, `#`, `\` ve kontrol karakterleri hedef
+  /// yolu değiştirebilir; yol ayrıca baseUrl'e göre göreli (`/` ile başlayan)
+  /// olmalıdır.
+  static bool _isSafePath(String path) {
+    if (!path.startsWith('/') || path.startsWith('//')) return false;
+    for (final unit in path.codeUnits) {
+      final isControlOrSpace = unit <= 0x20 || unit == 0x7f;
+      final isDelimiter = unit == 0x23 || unit == 0x3f || unit == 0x5c;
+      if (isControlOrSpace || isDelimiter) return false; // #, ?, \
+    }
+    for (final segment in path.split('/')) {
+      final String decoded;
+      try {
+        decoded = Uri.decodeComponent(segment);
+      } catch (_) {
+        return false;
+      }
+      if (decoded == '.' || decoded == '..') return false;
+    }
+    return true;
+  }
+
+  static String _checkedPath(String path) {
+    if (!_isSafePath(path)) throw _invalidPath;
+    return path;
+  }
+
   Future<Map<String, String>> _authHeaders() async {
     final headers = <String, String>{};
 
@@ -79,7 +114,7 @@ class ApiClient {
   }) =>
       _request<T>(
         () async => _dio.get<dynamic>(
-          path,
+          _checkedPath(path),
           queryParameters: {
             for (final e in {...query, ...queryParams}.entries)
               if (e.value != null && e.value!.isNotEmpty) e.key: e.value,
@@ -89,6 +124,7 @@ class ApiClient {
       );
 
   Future<Uint8List> getBytes(String path) async {
+    _checkedPath(path);
     final headers = await _authHeaders();
     final response = await _dio.get<List<int>>(
       path,
@@ -103,7 +139,7 @@ class ApiClient {
   Future<T> postJson<T>(String path, {Object? body, String? adminToken}) =>
       _request<T>(
         () async => _dio.post<dynamic>(
-          path,
+          _checkedPath(path),
           data: body,
           options: Options(headers: await _headersWithAdmin(adminToken)),
         ),
@@ -112,7 +148,7 @@ class ApiClient {
   Future<T> putJson<T>(String path, {Object? body, String? adminToken}) =>
       _request<T>(
         () async => _dio.put<dynamic>(
-          path,
+          _checkedPath(path),
           data: body,
           options: Options(headers: await _headersWithAdmin(adminToken)),
         ),
@@ -122,7 +158,7 @@ class ApiClient {
           String path, {Object? body, String? adminToken}) =>
       _request<T>(
         () async => _dio.delete<dynamic>(
-          path,
+          _checkedPath(path),
           data: body,
           options: Options(headers: await _headersWithAdmin(adminToken)),
         ),
@@ -130,7 +166,7 @@ class ApiClient {
 
   Future<T> postMultipart<T>(String path, FormData formData) => _request<T>(
         () async => _dio.post<dynamic>(
-          path,
+          _checkedPath(path),
           data: formData,
           options: Options(
             headers: {
@@ -173,6 +209,7 @@ class ApiClient {
   }
 
   Stream<SseEvent> sseStream(String path) async* {
+    if (!_isSafePath(path)) return;
     final headers = await _authHeaders();
     late final Response<ResponseBody> response;
     try {
