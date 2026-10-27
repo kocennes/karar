@@ -23,12 +23,16 @@ public sealed class SybilVotingTests
             "app.MapPost(\"/api/v1/devices/register\", async (",
             "app.MapPut(\"/api/v1/devices/fcm-token\", async (");
 
-        block.Should().Contain("DeviceRegistrationRateLimit.GetBuckets(",
+        // Single implementation shared with SubnetBanServiceTests (per-IP budget first, then network buckets).
+        block.Should().Contain("DeviceRegistrationRateLimit.TryConsumeAsync(",
             "rotating /64s inside one /56 or /48 must hit a shared registration bucket");
-        block.Should().Contain("count > bucket.Limit");
-        block.IndexOf("DeviceRegistrationRateLimit.GetBuckets(", StringComparison.Ordinal)
+        block.IndexOf("DeviceRegistrationRateLimit.TryConsumeAsync(", StringComparison.Ordinal)
             .Should().BeLessThan(block.IndexOf("INSERT INTO devices", StringComparison.Ordinal),
                 "the limit must be enforced before a device row is created");
+
+        var limiter = TestRepoPaths.ReadText("backend", "Karar.Api", "Common", "DeviceRegistrationRateLimit.cs");
+        limiter.Should().Contain("foreach (var bucket in GetBuckets(ip))");
+        limiter.Should().Contain("count > bucket.Limit");
     }
 
     [Fact]
@@ -83,63 +87,61 @@ public sealed class SybilVotingTests
     }
 
     [Fact]
-    public void Ipv4Registration_KeepsTheExistingSingleSlash24Bucket()
+    public void Ipv4Registration_CountsPerIpThenTheSlash24Bucket()
     {
-        DeviceRegistrationRateLimit.GetBuckets(IPAddress.Parse("203.0.113.42"))
-            .Should().Equal(new DeviceRegistrationBucket("device_reg:subnet:203.0.113.0/24", 5));
-        DeviceRegistrationRateLimit.GetBuckets(IPAddress.Parse("::ffff:203.0.113.42"))
-            .Should().Equal(new DeviceRegistrationBucket("device_reg:subnet:203.0.113.0/24", 5));
+        var ip = IPAddress.Parse("203.0.113.42");
+        var ipBucket = new DeviceRegistrationBucket(
+            $"device_reg:ip:{IpAddressPrivacy.ToHashedAddressKey(ip)}", DeviceRegistrationRateLimit.PerIpLimit);
+
+        DeviceRegistrationRateLimit.GetBuckets(ip).Should().Equal(
+            ipBucket,
+            new DeviceRegistrationBucket("device_reg:subnet:203.0.113.0/24", DeviceRegistrationRateLimit.PerIpv4Slash24Limit));
+        DeviceRegistrationRateLimit.GetBuckets(IPAddress.Parse("::ffff:203.0.113.42")).Should().Equal(
+            ipBucket,
+            new DeviceRegistrationBucket("device_reg:subnet:203.0.113.0/24", DeviceRegistrationRateLimit.PerIpv4Slash24Limit));
         DeviceRegistrationRateLimit.GetBuckets(null).Should().BeEmpty();
+        ipBucket.Key.Should().NotContain("203.0.113", "raw client IPs must not be written to Redis");
     }
 
     [Fact]
     public void Ipv6Registration_CountsTowardsSlash64Slash56AndSlash48Buckets()
     {
-        DeviceRegistrationRateLimit.GetBuckets(IPAddress.Parse("2001:db8:abcd:1234::99")).Should().Equal(
+        var ip = IPAddress.Parse("2001:db8:abcd:1234::99");
+        DeviceRegistrationRateLimit.GetBuckets(ip).Should().Equal(
+            new DeviceRegistrationBucket($"device_reg:ip:{IpAddressPrivacy.ToHashedAddressKey(ip)}", 5),
             new DeviceRegistrationBucket("device_reg:subnet:2001:db8:abcd:1234::/64", 5),
             new DeviceRegistrationBucket("device_reg:v6p56:2001:db8:abcd:1200::/56", 20),
             new DeviceRegistrationBucket("device_reg:v6p48:2001:db8:abcd::/48", 50));
     }
 
     [Fact]
-    public void RotatingSlash64sInsideOneSlash56_IsCappedPerHour()
+    public async Task RotatingSlash64sInsideOneSlash56_IsCappedPerHour()
     {
         // One registration from each of the 256 /64s of 2001:db8:abcd:1200::/56 (the old limit allowed all 256 × 5).
         var addresses = Enumerable.Range(0, 256)
             .Select(i => IPAddress.Parse($"2001:db8:abcd:12{i:x2}::1"));
 
-        CountAllowedRegistrations(addresses).Should().Be(DeviceRegistrationRateLimit.PerIpv6Slash56Limit);
+        (await CountAllowedRegistrationsAsync(addresses)).Should().Be(DeviceRegistrationRateLimit.PerIpv6Slash56Limit);
     }
 
     [Fact]
-    public void RotatingSlash56sInsideOneSlash48_IsCappedPerHour()
+    public async Task RotatingSlash56sInsideOneSlash48_IsCappedPerHour()
     {
         // Five registrations from each of 256 different /56s of 2001:db8:abcd::/48.
         var addresses = Enumerable.Range(0, 256)
             .SelectMany(i => Enumerable.Range(0, 5).Select(j => IPAddress.Parse($"2001:db8:abcd:{i:x2}{j:x2}::1")));
 
-        CountAllowedRegistrations(addresses).Should().Be(DeviceRegistrationRateLimit.PerIpv6Slash48Limit);
+        (await CountAllowedRegistrationsAsync(addresses)).Should().Be(DeviceRegistrationRateLimit.PerIpv6Slash48Limit);
     }
 
-    // Mirrors the register handler: INCR every bucket key, reject as soon as one exceeds its limit.
-    private static int CountAllowedRegistrations(IEnumerable<IPAddress> addresses)
+    // Runs the same limiter the register handler calls against an in-memory Redis.
+    private static async Task<int> CountAllowedRegistrationsAsync(IEnumerable<IPAddress> addresses)
     {
-        var counters = new Dictionary<string, int>();
+        var (cache, _) = InMemoryRedisDatabase.Create();
         var allowed = 0;
         foreach (var address in addresses)
         {
-            var rejected = false;
-            foreach (var bucket in DeviceRegistrationRateLimit.GetBuckets(address))
-            {
-                counters[bucket.Key] = counters.GetValueOrDefault(bucket.Key) + 1;
-                if (counters[bucket.Key] > bucket.Limit)
-                {
-                    rejected = true;
-                    break;
-                }
-            }
-
-            if (!rejected) allowed++;
+            if (await DeviceRegistrationRateLimit.TryConsumeAsync(cache, address)) allowed++;
         }
 
         return allowed;

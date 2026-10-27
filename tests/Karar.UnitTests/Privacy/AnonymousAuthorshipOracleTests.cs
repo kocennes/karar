@@ -53,8 +53,12 @@ public sealed class AnonymousAuthorshipOracleTests
             "app.MapGet(\"/api/v1/posts/{id:guid}/comments\"",
             "app.MapPost(\"/api/v1/posts/{id:guid}/comments\"");
 
+        // The blocked-commenter predicate lives in one shared fragment (sec/07) that is interpolated
+        // into the count, top-level and both recursive descendant queries.
+        Regex.Matches(block, Regex.Escape("{blockedCommentAuthorFilter}")).Count.Should().Be(4,
+            "count, top-level and both recursive descendant queries filter blocked commenters");
         var matches = Regex.Matches(block, @"bu\.blocked_user_id = cm\.user_id(?<tail>[^\r\n]*)");
-        matches.Count.Should().Be(4, "count, top-level and both recursive descendant queries filter blocked commenters");
+        matches.Count.Should().Be(1, "the predicate is defined once and reused");
         foreach (Match match in matches)
         {
             match.Groups["tail"].Value.Should().Contain(

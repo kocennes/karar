@@ -1,10 +1,22 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 
 namespace Karar.Api.Common;
 
 public static class IpAddressPrivacy
 {
+    /// <summary>
+    /// Ham IP Redis'e yazılmaz (IP minimizasyonu): IPv4-mapped adresler IPv4'e indirgenip
+    /// kısaltılmış SHA-256 özeti (32 hex karakter) döndürülür.
+    /// </summary>
+    public static string? ToHashedAddressKey(IPAddress? ip)
+    {
+        if (ip is null) return null;
+        if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+        return Convert.ToHexString(SHA256.HashData(ip.GetAddressBytes()), 0, 16).ToLowerInvariant();
+    }
+
     public static string? ToNetworkBlock(IPAddress? ip)
     {
         if (ip is null)

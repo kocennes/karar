@@ -12,10 +12,10 @@ namespace Karar.UnitTests.Privacy;
 public sealed class CommentAuthorRedactionContractTests
 {
     private const string RedactedUsername =
-        "CASE WHEN p.is_anonymous = TRUE AND cm.user_id = p.user_id THEN NULL ELSE u.username END";
+        "CASE WHEN (p.is_anonymous = TRUE AND cm.user_id = p.user_id) OR u.deleted_at IS NOT NULL THEN NULL ELSE u.username END";
 
     private const string RedactedAuthorId =
-        "CASE WHEN p.is_anonymous = TRUE AND cm.user_id = p.user_id THEN NULL ELSE cm.user_id END";
+        "CASE WHEN (p.is_anonymous = TRUE AND cm.user_id = p.user_id) OR u.deleted_at IS NOT NULL THEN NULL ELSE cm.user_id END";
 
     private const string NullSafeOwnership =
         "COALESCE((CASE WHEN cm.user_id IS NULL THEN cm.device_id = @deviceId ELSE cm.user_id = @userId END), FALSE)";

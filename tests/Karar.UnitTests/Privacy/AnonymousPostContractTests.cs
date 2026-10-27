@@ -114,8 +114,8 @@ public sealed class AnonymousPostContractTests
             "static async Task<CommentDto?> ReadCommentDtoAsync",
             "static async Task<IResult> SetCommentUpvoteAsync");
 
-        block.Should().Contain("CASE WHEN p.is_anonymous = TRUE AND cm.user_id = p.user_id THEN NULL ELSE u.username END");
-        block.Should().Contain("CASE WHEN p.is_anonymous = TRUE AND cm.user_id = p.user_id THEN NULL ELSE cm.user_id END");
+        block.Should().Contain("CASE WHEN (p.is_anonymous = TRUE AND cm.user_id = p.user_id) OR u.deleted_at IS NOT NULL THEN NULL ELSE u.username END");
+        block.Should().Contain("CASE WHEN (p.is_anonymous = TRUE AND cm.user_id = p.user_id) OR u.deleted_at IS NOT NULL THEN NULL ELSE cm.user_id END");
         block.Should().NotContain("u.username, cm.user_id,",
             "the raw author name/id of the anonymous post owner must not be projected");
     }
@@ -125,7 +125,7 @@ public sealed class AnonymousPostContractTests
     {
         const string authorJoin = "LEFT JOIN users u ON u.id = cm.user_id";
         var listColumns = SliceBlock(ProgramText, "const string commentSelectColumns", "static CommentDto ReadCommentRow");
-        listColumns.Should().Contain("CASE WHEN p.is_anonymous = TRUE AND cm.user_id = p.user_id THEN NULL ELSE u.username END");
+        listColumns.Should().Contain("CASE WHEN (p.is_anonymous = TRUE AND cm.user_id = p.user_id) OR u.deleted_at IS NOT NULL THEN NULL ELSE u.username END");
 
         var found = 0;
         for (var idx = ProgramText.IndexOf(authorJoin, StringComparison.Ordinal);

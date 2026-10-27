@@ -25,11 +25,12 @@ public sealed class SubnetBanMiddleware(RequestDelegate next, SubnetBanService s
 
         await next(context);
 
-        if (context.Response.StatusCode == StatusCodes.Status429TooManyRequests)
+        // Yalnızca rate limiter retleri sayılır; endpoint kotası 429'ları ne sayılır ne sıfırlar.
+        if (SubnetBanService.IsLimiterRejection(context))
         {
             await subnetBan.RecordRateLimitRejectionAsync(ip);
         }
-        else
+        else if (context.Response.StatusCode != StatusCodes.Status429TooManyRequests)
         {
             await subnetBan.ClearRateLimitRejectionsAsync(ip);
         }

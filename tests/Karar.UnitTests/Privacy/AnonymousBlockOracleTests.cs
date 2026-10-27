@@ -30,15 +30,26 @@ public sealed class AnonymousBlockOracleTests
     [Fact]
     public void CommentAuthorBlockFilters_DoNotHideAnonymousOwnerReplies()
     {
-        var subqueries = BlockSubqueries("bu.blocked_user_id = cm.user_id");
-
-        subqueries.Should().HaveCountGreaterThanOrEqualTo(4,
+        // One shared filter (sec/07 blockedCommentAuthorFilter) serves the comment count, the top-level
+        // list and both descendant branches.
+        var block = Slice(
+            ProgramText,
+            "app.MapGet(\"/api/v1/posts/{id:guid}/comments\"",
+            "app.MapPost(\"/api/v1/posts/{id:guid}/comments\"");
+        CountOccurrences(block, "{blockedCommentAuthorFilter}").Should().Be(4,
             "comment count, top-level list and both descendant branches filter by comment author");
+
+        var subqueries = BlockSubqueries("bu.blocked_user_id = cm.user_id");
+        subqueries.Should().NotBeEmpty();
         foreach (var subquery in subqueries)
         {
             subquery.Should().Contain("AND NOT (p.is_anonymous AND p.user_id IS NOT DISTINCT FROM cm.user_id",
                 "the anonymous OP's replies on their own post must not disappear when the OP is blocked");
         }
+
+        var filter = Slice(block, "const string blockedCommentAuthorFilter", "await using var countCommand");
+        filter.Should().Contain("AND NOT (p.is_anonymous AND cm.device_id = p.device_id)",
+            "the device-linked (JWT-less) branch must exempt the anonymous OP's own replies as well");
     }
 
     [Fact]
@@ -85,7 +96,10 @@ public sealed class AnonymousBlockOracleTests
         var batcher = TestRepoPaths.ReadText("backend", "Karar.Api", "Services", "CommentNotificationBatcher.cs");
         var replyBlock = Slice(batcher, "private async Task NotifyReplyAuthorAsync", "protected override async Task ExecuteAsync");
 
-        replyBlock.Should().Contain("WHERE id = @postId AND is_anonymous = TRUE AND user_id = @commenterUserId");
+        replyBlock.Should().Contain("WHERE id = @postId AND is_anonymous = TRUE");
+        replyBlock.Should().Contain(
+            "AND (user_id = @commenterUserId OR (@commenterUserId IS NULL AND device_id = @commenterDeviceId))",
+            "the exemption covers the OP replying with the account and JWT-less from the posting device");
         replyBlock.Should().Contain("blockCmd.Parameters.AddWithValue(\"postId\", postId)");
     }
 
@@ -104,6 +118,16 @@ public sealed class AnonymousBlockOracleTests
         }
 
         return result;
+    }
+
+    private static int CountOccurrences(string text, string value)
+    {
+        var count = 0;
+        for (var i = text.IndexOf(value, StringComparison.Ordinal); i >= 0; i = text.IndexOf(value, i + value.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+        return count;
     }
 
     private static string Slice(string text, string start, string end)
