@@ -14,12 +14,14 @@ public sealed class DiscoverAuthorDiversityTests
             "app.MapGet(\"/api/v1/posts/discover/feed\"",
             "app.MapGet(\"/api/v1/posts/{id:guid}/stats\"");
 
-        discoverFeedBlock.Should().Contain("COALESCE(p.user_id, p.device_id) AS ranking_author_key",
-            because: "the in-memory no-consecutive-author pass needs a stable author/device key");
+        discoverFeedBlock.Should().Contain(
+            "CASE WHEN p.is_anonymous THEN p.id ELSE COALESCE(p.user_id, p.device_id) END AS ranking_author_key",
+            because: "the in-memory no-consecutive-author pass needs a stable author/device key, " +
+                     "but an anonymous post gets its own key so skipping it cannot reveal its author");
         discoverFeedBlock.Should().Contain("prevRankingAuthorKey",
             because: "discover/feed must compare consecutive posts by ranking_author_key, not public author_id");
         discoverFeedBlock.Should().Contain("post.RankingAuthorKey",
-            because: "the diversity pass must use the internal key even for anonymous posts");
+            because: "the diversity pass must use the internal key, never the public (redacted) author_id");
     }
 
     [Fact]

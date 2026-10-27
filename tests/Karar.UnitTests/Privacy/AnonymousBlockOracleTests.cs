@@ -36,7 +36,7 @@ public sealed class AnonymousBlockOracleTests
             "comment count, top-level list and both descendant branches filter by comment author");
         foreach (var subquery in subqueries)
         {
-            subquery.Should().Contain("AND NOT (p.is_anonymous = TRUE AND cm.user_id = p.user_id",
+            subquery.Should().Contain("AND NOT (p.is_anonymous AND p.user_id IS NOT DISTINCT FROM cm.user_id",
                 "the anonymous OP's replies on their own post must not disappear when the OP is blocked");
         }
     }
@@ -61,7 +61,7 @@ public sealed class AnonymousBlockOracleTests
         subqueries.Should().HaveCountGreaterThanOrEqualTo(3);
         foreach (var subquery in subqueries)
         {
-            subquery.Should().Contain("AND NOT (p.is_anonymous IS TRUE AND nc.user_id = p.user_id");
+            subquery.Should().Contain("AND NOT (p.is_anonymous AND p.user_id IS NOT DISTINCT FROM nc.user_id");
         }
     }
 

@@ -10,9 +10,10 @@ public sealed class ContentModerationService
         RegexOptions.Compiled
     );
 
+    // CultureInvariant: tr-TR kültüründe IgnoreCase 'i'yi 'İ' ile eşler ve [A-Z] dışında kalır.
     private static readonly Regex EmailPattern = new(
         @"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant
     );
 
     // ── Doxxing: raw-text patterns (digit normalization must NOT run here) ──────
@@ -160,7 +161,11 @@ public sealed class ContentModerationService
             return ModerationDecision.Reject("CONTENT_REJECTED", "İçerik politikası gereği bu metin yayınlanamaz.");
         }
 
-        if (TurkishPhonePattern.IsMatch(normalized) || EmailPattern.IsMatch(normalized))
+        // Telefon / e-posta: normalizer rakamları ve '@' işaretini harfe çevirdiğinden (5→s, 0→o, @→a)
+        // bu kalıplar normalize metinde hiç eşleşmez. Yalnızca NFKC uygulanmış ham metinde kontrol edilir
+        // (tam genişlikli rakamlar ASCII'ye iner).
+        var piiText = text.Normalize(System.Text.NormalizationForm.FormKC);
+        if (TurkishPhonePattern.IsMatch(piiText) || EmailPattern.IsMatch(piiText))
         {
             return ModerationDecision.Review("Kişisel bilgi olabilecek veri tespit edildi.", isCrisis);
         }

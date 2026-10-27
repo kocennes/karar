@@ -72,7 +72,7 @@ public sealed class AnonymousPostContractTests
         profilePostCount.Should().Contain("p.is_unlisted = FALSE");
 
         var profileCommentCount = SliceBlock(profile, "(SELECT COUNT(*) FROM comments cm", "AS comment_count");
-        profileCommentCount.Should().Contain("NOT (cp.is_anonymous = TRUE AND cp.user_id = cm.user_id)",
+        profileCommentCount.Should().Contain("NOT (cp.is_anonymous AND cp.user_id IS NOT DISTINCT FROM cm.user_id)",
             "replies by the anonymous author on their own post are shown as '@anonim' and must not move the public counter");
         profileCommentCount.Should().Contain("cp.is_unlisted = FALSE");
 
@@ -99,7 +99,8 @@ public sealed class AnonymousPostContractTests
 
         foreach (var sql in new[] { countSql, listSql })
         {
-            sql.Should().Contain("NOT (p.is_anonymous = TRUE AND p.user_id = cm.user_id)");
+            sql.Should().Contain("NOT (p.is_anonymous AND p.user_id IS NOT DISTINCT FROM cm.user_id)",
+                "null-safe: a reply on a guest's (user_id NULL) anonymous post must not be dropped by a NULL comparison");
             sql.Should().Contain("p.is_unlisted = FALSE");
         }
     }
