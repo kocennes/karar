@@ -335,7 +335,9 @@ if (args.Contains("migrate", StringComparer.OrdinalIgnoreCase) ||
 
 var app = builder.Build();
 
-// Global exception handler — logs full exception to console and returns JSON error body
+// Global exception handler — logs full exception (with traceId) to console and returns JSON error body.
+// Development dışında istisna mesajı ve stack trace istemciye gitmez (bağlantı dizesi, iç yol sızıntısı);
+// istemci yalnızca genel mesaj + traceId alır, destek traceId ile log satırını bulur.
 app.Use(async (ctx, next) =>
 {
     try
@@ -344,16 +346,16 @@ app.Use(async (ctx, next) =>
     }
     catch (Exception ex)
     {
+        var traceId = System.Diagnostics.Activity.Current?.Id ?? ctx.TraceIdentifier;
         var logger = ctx.RequestServices.GetRequiredService<ILogger<Program>>();
-        logger.LogError(ex, "Unhandled exception on {Method} {Path}", ctx.Request.Method, ctx.Request.Path);
+        logger.LogError(ex, "Unhandled exception on {Method} {Path} (TraceId: {TraceId})",
+            ctx.Request.Method, ctx.Request.Path, traceId);
         if (!ctx.Response.HasStarted)
         {
             ctx.Response.StatusCode = 500;
             ctx.Response.ContentType = "application/json";
-            await ctx.Response.WriteAsJsonAsync(new
-            {
-                error = new { code = "INTERNAL_ERROR", message = ex.Message, detail = ex.ToString() }
-            });
+            await ctx.Response.WriteAsJsonAsync(
+                UnhandledExceptionResponse.BuildErrorBody(app.Environment.IsDevelopment(), ex, traceId));
         }
     }
 });
