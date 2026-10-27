@@ -12,22 +12,22 @@ public sealed class BolaIdorContractTests
     [InlineData(
         "app.MapDelete(\"/api/v1/posts/{id:guid}\"",
         "// Records a view impression",
-        "AND (device_id = @deviceId OR user_id = @userId)",
+        "AND (CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END)",
         "UPDATE posts")]
     [InlineData(
         "app.MapPut(\"/api/v1/posts/{id:guid}\"",
         "app.MapPost(\"/api/v1/posts/{id:guid}/save\"",
-        "AND (device_id = @deviceId OR user_id = @userId)",
+        "AND (CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END)",
         "UPDATE posts")]
     [InlineData(
         "app.MapDelete(\"/api/v1/comments/{id:guid}\"",
         "app.MapPut(\"/api/v1/comments/{id:guid}\"",
-        "AND (device_id = @deviceId OR user_id = @userId)",
+        "AND (CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END)",
         "UPDATE comments")]
     [InlineData(
         "app.MapPut(\"/api/v1/comments/{id:guid}\"",
         "app.MapPost(\"/api/v1/comments/{id:guid}/upvote\"",
-        "AND (device_id = @deviceId OR user_id = @userId)",
+        "AND (CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END)",
         "UPDATE comments")]
     public void OwnerScopedWriteEndpoints_ConstrainMutationToCallerIdentity(
         string start,
@@ -55,7 +55,7 @@ public sealed class BolaIdorContractTests
             "app.MapGet(\"/api/v1/posts/{id:guid}/events\"");
 
         Assert.Contains("return Unauthorized()", endpoint);
-        Assert.Contains("SELECT 1 FROM posts WHERE id = @id AND (device_id = @deviceId OR user_id = @userId)", endpoint);
+        Assert.Contains("SELECT 1 FROM posts WHERE id = @id AND (CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END)", endpoint);
         Assert.Contains("return Forbid(\"NOT_OWNER\"", endpoint);
     }
 
