@@ -563,8 +563,8 @@ app.MapGet("/sitemap.xml", async (HttpContext httpContext, Db db, IConfiguration
     var webBaseUrl = GetWebBaseUrl(configuration);
     await using var connection = await db.OpenConnectionAsync();
 
-    // Get total count of active posts
-    await using var countCmd = new NpgsqlCommand("SELECT COUNT(*) FROM posts WHERE status = 'active'", connection);
+    // Get total count of active, listed posts (liste dışı gönderiler sitemap'e girmez)
+    await using var countCmd = new NpgsqlCommand("SELECT COUNT(*) FROM posts WHERE status = 'active' AND is_unlisted = FALSE", connection);
     var totalCount = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
     var pageSize = 40000;
     var pageCount = (int)Math.Ceiling((double)totalCount / pageSize);
@@ -652,7 +652,7 @@ app.MapGet("/sitemap-posts-{page:int}.xml", async (int page, HttpContext httpCon
         """
         SELECT COALESCE(slug, id::text), updated_at
         FROM posts
-        WHERE status = 'active'
+        WHERE status = 'active' AND is_unlisted = FALSE
         ORDER BY updated_at DESC
         LIMIT @limit OFFSET @offset
         """,
@@ -704,7 +704,7 @@ app.MapGet("/posts/{id:guid}", async (
     await using var command = new NpgsqlCommand(
         """
         SELECT title, content, image_url, vote_count_hakli, vote_count_haksiz,
-               COALESCE(slug, id::text), created_at
+               COALESCE(slug, id::text), created_at, is_unlisted
         FROM posts
         WHERE id = @id AND status = 'active'
         """,
@@ -723,8 +723,9 @@ app.MapGet("/posts/{id:guid}", async (
     var haksiz = reader.GetInt32(4);
     var slug = reader.GetString(5);
     var createdAt = reader.GetFieldValue<DateTimeOffset>(6);
+    var isUnlisted = reader.GetBoolean(7);
 
-    var html = BuildOgHtml(id, slug, title, content, hakli, haksiz, customImageUrl, webBaseUrl, createdAt);
+    var html = BuildOgHtml(id, slug, title, content, hakli, haksiz, customImageUrl, webBaseUrl, createdAt, isUnlisted);
     await redis.SetAsync(cacheKey, html, TimeSpan.FromMinutes(5));
     return Results.Content(html, "text/html; charset=utf-8");
 });
@@ -752,7 +753,7 @@ app.MapGet("/posts/{slug}", async (
     await using var connection = await db.OpenConnectionAsync();
     await using var command = new NpgsqlCommand(
         """
-        SELECT id, title, content, image_url, vote_count_hakli, vote_count_haksiz, created_at
+        SELECT id, title, content, image_url, vote_count_hakli, vote_count_haksiz, created_at, is_unlisted
         FROM posts
         WHERE slug = @slug AND status = 'active'
         """,
@@ -771,8 +772,9 @@ app.MapGet("/posts/{slug}", async (
     var hakli = reader.GetInt32(4);
     var haksiz = reader.GetInt32(5);
     var createdAt = reader.GetFieldValue<DateTimeOffset>(6);
+    var isUnlisted = reader.GetBoolean(7);
 
-    var html = BuildOgHtml(id, slug, title, content, hakli, haksiz, customImageUrl, webBaseUrl, createdAt);
+    var html = BuildOgHtml(id, slug, title, content, hakli, haksiz, customImageUrl, webBaseUrl, createdAt, isUnlisted);
     await redis.SetAsync(cacheKey, html, TimeSpan.FromMinutes(5));
     return Results.Content(html, "text/html; charset=utf-8");
 });
@@ -2535,7 +2537,7 @@ app.MapGet("/api/v1/posts/trending/city", async (
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
-        WHERE p.id = ANY(@postIds) AND p.status = 'active'
+        WHERE p.id = ANY(@postIds) AND p.status = 'active' AND p.is_unlisted = FALSE
         ORDER BY p.trend_score DESC
         """,
         connection
@@ -10294,7 +10296,7 @@ app.MapGet("/api/v1/users/{username}/posts", async (
     if (ownerId is null) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
 
     await using var countCmd = new NpgsqlCommand(
-        "SELECT COUNT(*) FROM posts WHERE user_id = @ownerId AND status = 'active'",
+        "SELECT COUNT(*) FROM posts WHERE user_id = @ownerId AND status = 'active' AND is_unlisted = FALSE",
         connection
     );
     countCmd.Parameters.AddWithValue("ownerId", ownerId);
@@ -10313,7 +10315,7 @@ app.MapGet("/api/v1/users/{username}/posts", async (
         JOIN categories c ON c.id = p.category_id
         JOIN users u ON u.id = p.user_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceParam
-        WHERE p.user_id = @ownerId AND p.status = 'active'
+        WHERE p.user_id = @ownerId AND p.status = 'active' AND p.is_unlisted = FALSE
         ORDER BY {orderBy}
         LIMIT @limit OFFSET @offset
         """,
@@ -13776,8 +13778,11 @@ static string ToSlug(string title, Guid id)
 static string BuildOgHtml(
     Guid id, string slug, string title, string content,
     int hakli, int haksiz, string? customImageUrl,
-    string webBaseUrl, DateTimeOffset createdAt)
+    string webBaseUrl, DateTimeOffset createdAt, bool isUnlisted)
 {
+    // Liste dışı gönderi: link önizlemesi çalışır ama arama motorları dizine eklememeli.
+    var robotsMeta = isUnlisted ? "\n  <meta name=\"robots\" content=\"noindex\">" : string.Empty;
+
     var total = hakli + haksiz;
     var hakliPct = total > 0 ? (int)Math.Round(hakli * 100.0 / total) : 0;
 
@@ -13801,7 +13806,7 @@ static string BuildOgHtml(
         <html lang="tr">
         <head>
           <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">{{robotsMeta}}
           <title>{{titleEncoded}} - Karar</title>
           <meta name="description" content="{{descEncoded}}">
           <link rel="canonical" href="{{urlEncoded}}">
