@@ -99,6 +99,22 @@ public sealed class StepUpReauthTests
     }
 
     [Fact]
+    public void TwoFactorEnable_CannotMintBackupCodeGrantWhenAlreadyEnabled()
+    {
+        // Regression (sec/09 lockout + sec/10 grant): with 2FA already on, /2fa/enable validated TOTP
+        // guesses with no per-account lockout and, on a hit, set the one-shot "fresh-enable" grant that
+        // /2fa/backup-codes accepts instead of a code - bypassing that endpoint's "stepup" lockout.
+        var block = Slice("app.MapPost(\"/api/v1/auth/2fa/enable\"", "app.MapPost(\"/api/v1/auth/2fa/disable\"");
+
+        block.Should().Contain("SELECT totp_secret, is_2fa_enabled FROM users");
+        AssertBefore(block, "if (alreadyEnabled)", "TotpService.Validate(secret, request.Code)");
+        AssertBefore(block, "\"TWO_FACTOR_ALREADY_ENABLED\"", "TotpService.Validate(secret, request.Code)");
+        block.Should().Contain("WHERE id = @id AND is_2fa_enabled = FALSE",
+            "only the request that actually turns 2FA on may receive the grant");
+        AssertBefore(block, "if (await update.ExecuteNonQueryAsync() != 1)", "2fa:fresh-enable:");
+    }
+
+    [Fact]
     public void BackupCodes_RequireEnabled2faAndStepUpToReplaceExistingCodes()
     {
         // Single kept implementation (sec/10 AuthAccountPolicy.CheckBackupCodeIssue): every issuance -

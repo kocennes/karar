@@ -10601,22 +10601,44 @@ app.MapPost("/api/v1/auth/2fa/enable", async (
 
     await using var connection = await db.OpenConnectionAsync();
     await using var select = new NpgsqlCommand(
-        "SELECT totp_secret FROM users WHERE id = @id AND deleted_at IS NULL",
+        "SELECT totp_secret, is_2fa_enabled FROM users WHERE id = @id AND deleted_at IS NULL",
         connection
     );
     select.Parameters.AddWithValue("id", userId);
-    var secret = await select.ExecuteScalarAsync() as string;
+    string? secret = null;
+    var alreadyEnabled = false;
+    await using (var reader = await select.ExecuteReaderAsync())
+    {
+        if (await reader.ReadAsync())
+        {
+            secret = reader.IsDBNull(0) ? null : reader.GetString(0);
+            alreadyEnabled = reader.GetBoolean(1);
+        }
+    }
+
+    // 2FA zaten açıkken bu uç nokta hesap kilidi olmayan bir TOTP doğrulayıcısı olur ve başarılı
+    // tahmin yedek kod iznini (fresh-enable) basar; /2fa/backup-codes'taki "stepup" kilidi aşılmasın
+    // diye kod doğrulanmadan önce reddedilir (geçerli/geçersiz kod ayrımı da sızmaz).
+    if (alreadyEnabled)
+    {
+        return Conflict("TWO_FACTOR_ALREADY_ENABLED", "İki faktörlü doğrulama zaten açık.");
+    }
+
     if (secret is null || !TotpService.Validate(secret, request.Code))
     {
         return BadRequest("INVALID_TOTP_CODE", "Doğrulama kodu hatalı.");
     }
 
     await using var update = new NpgsqlCommand(
-        "UPDATE users SET is_2fa_enabled = TRUE, updated_at = NOW() WHERE id = @id",
+        "UPDATE users SET is_2fa_enabled = TRUE, updated_at = NOW() WHERE id = @id AND is_2fa_enabled = FALSE",
         connection
     );
     update.Parameters.AddWithValue("id", userId);
-    await update.ExecuteNonQueryAsync();
+    if (await update.ExecuteNonQueryAsync() != 1)
+    {
+        // Eşzamanlı ikinci /enable: izin yalnızca 2FA'yı gerçekten açan isteğe verilir.
+        return Conflict("TWO_FACTOR_ALREADY_ENABLED", "İki faktörlü doğrulama zaten açık.");
+    }
 
     // Geçerli kodla 2FA'yı açan oturum, ilk yedek kodlarını kodsuz alabilsin (kısa süreli, tek kullanımlık).
     await redis.GetDb().StringSetAsync($"2fa:fresh-enable:{userId}", "1", TimeSpan.FromMinutes(10));
