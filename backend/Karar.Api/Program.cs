@@ -3559,7 +3559,7 @@ app.MapGet("/api/v1/search/users", async (
         """
         SELECT u.username,
                u.karma,
-               (SELECT COUNT(*) FROM posts p WHERE p.user_id = u.id AND p.status = 'active') AS post_count
+               (SELECT COUNT(*) FROM posts p WHERE p.user_id = u.id AND p.status = 'active' AND p.is_anonymous = FALSE) AS post_count
         FROM users u
         WHERE u.deleted_at IS NULL
           AND u.is_banned = FALSE
@@ -9951,8 +9951,9 @@ app.MapGet("/api/v1/users/{username}/profile", async (
                u.created_at,
                u.bio,
                u.username_changed_at,
-               (SELECT COUNT(*) FROM posts p WHERE p.user_id = u.id AND p.status != 'deleted') AS post_count,
-               (SELECT COUNT(*) FROM comments cm WHERE cm.user_id = u.id AND cm.status != 'deleted') AS comment_count
+               (SELECT COUNT(*) FROM posts p WHERE p.user_id = u.id AND p.status = 'active' AND p.is_anonymous = FALSE) AS post_count,
+               (SELECT COUNT(*) FROM comments cm WHERE cm.user_id = u.id AND cm.status != 'deleted'
+                  AND NOT EXISTS (SELECT 1 FROM posts ap WHERE ap.id = cm.post_id AND ap.is_anonymous AND ap.user_id = cm.user_id)) AS comment_count
         FROM users u
         WHERE lower(u.username) = lower(@username) AND u.deleted_at IS NULL
         """,
@@ -13949,7 +13950,7 @@ static async Task CheckPostVoteMilestoneAsync(
 {
     // post sahibi user_id ve device_id'yi çek
     await using var ownerCmd = new NpgsqlCommand(
-        "SELECT user_id, device_id FROM posts WHERE id = @postId",
+        "SELECT user_id, device_id, is_anonymous FROM posts WHERE id = @postId",
         connection,
         transaction
     );
@@ -13958,6 +13959,7 @@ static async Task CheckPostVoteMilestoneAsync(
     if (!await ownerReader.ReadAsync()) return;
     var userId = ownerReader.IsDBNull(0) ? (Guid?)null : ownerReader.GetGuid(0);
     var ownerDeviceId = ownerReader.GetGuid(1);
+    var isAnonymousPost = ownerReader.GetBoolean(2);
     await ownerReader.CloseAsync();
 
     // Milestone tablosu: eşik → karma_delta
@@ -13992,8 +13994,9 @@ static async Task CheckPostVoteMilestoneAsync(
     {
         if (oldTotal < threshold && newTotal >= threshold)
         {
-            // Karma güncelle (sadece kayıtlı kullanıcı ise)
-            if (userId.HasValue)
+            // Karma güncelle (sadece kayıtlı kullanıcı ise).
+            // Anonim postlar herkese açık karmaya yansımaz: eşikte oluşan karma sıçraması yazarı ele verir.
+            if (userId.HasValue && !isAnonymousPost)
             {
                 await using var karmaCmd = new NpgsqlCommand(
                     """
@@ -14050,8 +14053,15 @@ static async Task CheckCommentUpvoteMilestoneAsync(
     int newUpvotes
 )
 {
+    // Anonim post sahibinin kendi postundaki yorumları karma kazandırmaz (yazar kimliği sızmasın).
     await using var ownerCmd = new NpgsqlCommand(
-        "SELECT user_id FROM comments WHERE id = @commentId",
+        """
+        SELECT cm.user_id
+        FROM comments cm
+        JOIN posts p ON p.id = cm.post_id
+        WHERE cm.id = @commentId
+          AND NOT COALESCE(p.is_anonymous AND p.user_id = cm.user_id, FALSE)
+        """,
         connection,
         transaction
     );
