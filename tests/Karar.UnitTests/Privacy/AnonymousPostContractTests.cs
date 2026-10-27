@@ -105,6 +105,45 @@ public sealed class AnonymousPostContractTests
     }
 
     [Fact]
+    public void ReadCommentDtoAsync_RedactsAnonymousPostOwnerIdentity()
+    {
+        // Reaction add/remove return this DTO; it must redact the anonymous OP exactly like the list does.
+        var block = SliceBlock(
+            ProgramText,
+            "static async Task<CommentDto?> ReadCommentDtoAsync",
+            "static async Task<IResult> SetCommentUpvoteAsync");
+
+        block.Should().Contain("CASE WHEN p.is_anonymous = TRUE AND cm.user_id = p.user_id THEN NULL ELSE u.username END");
+        block.Should().Contain("CASE WHEN p.is_anonymous = TRUE AND cm.user_id = p.user_id THEN NULL ELSE cm.user_id END");
+        block.Should().NotContain("u.username, cm.user_id,",
+            "the raw author name/id of the anonymous post owner must not be projected");
+    }
+
+    [Fact]
+    public void EveryCommentProjectionJoiningAuthors_RedactsAnonymousPostOwner()
+    {
+        const string authorJoin = "LEFT JOIN users u ON u.id = cm.user_id";
+        var listColumns = SliceBlock(ProgramText, "const string commentSelectColumns", "static CommentDto ReadCommentRow");
+        listColumns.Should().Contain("CASE WHEN p.is_anonymous = TRUE AND cm.user_id = p.user_id THEN NULL ELSE u.username END");
+
+        var found = 0;
+        for (var idx = ProgramText.IndexOf(authorJoin, StringComparison.Ordinal);
+             idx >= 0;
+             idx = ProgramText.IndexOf(authorJoin, idx + authorJoin.Length, StringComparison.Ordinal))
+        {
+            found++;
+            var sqlStart = ProgramText.LastIndexOf("\"\"\"", idx, StringComparison.Ordinal);
+            var sqlEnd = ProgramText.IndexOf("\"\"\"", idx, StringComparison.Ordinal);
+            var sql = ProgramText[sqlStart..sqlEnd];
+            (sql.Contains("p.is_anonymous", StringComparison.Ordinal) ||
+             sql.Contains("{commentSelectColumns}", StringComparison.Ordinal))
+                .Should().BeTrue($"comment SQL joining author names must redact the anonymous post owner:{Environment.NewLine}{sql}");
+        }
+
+        found.Should().BeGreaterThan(0);
+    }
+
+    [Fact]
     public void ReadPostsAsync_UsesColumnNamesForOptionalFields()
     {
         var block = SliceBlock(

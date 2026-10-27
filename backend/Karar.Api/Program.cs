@@ -14957,7 +14957,10 @@ static async Task<CommentDto?> ReadCommentDtoAsync(
         """
         SELECT cm.id, cm.content, cm.upvote_count, cm.downvote_count, cu.comment_id IS NOT NULL, cd.comment_id IS NOT NULL,
                (cm.device_id = @deviceId OR cm.user_id = @userId), cm.created_at,
-               cm.is_pinned, u.username, cm.user_id, cm.is_edited,
+               cm.is_pinned,
+               CASE WHEN p.is_anonymous = TRUE AND cm.user_id = p.user_id THEN NULL ELSE u.username END AS username,
+               CASE WHEN p.is_anonymous = TRUE AND cm.user_id = p.user_id THEN NULL ELSE cm.user_id END AS author_id,
+               cm.is_edited,
                ((cm.user_id IS NOT NULL AND cm.user_id = p.user_id) OR (cm.user_id IS NULL AND cm.device_id = p.device_id)) AS is_post_owner,
                (SELECT COUNT(*)::int FROM comment_upvotes cu_h
                 JOIN votes v_h ON v_h.device_id = cu_h.device_id AND v_h.post_id = cm.post_id AND v_h.vote_type = 'hakli'
