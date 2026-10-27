@@ -227,6 +227,14 @@ jobs:
           MAX_RETRIES=8
           RETRY_DELAY=30
           for i in $(seq 1 $MAX_RETRIES); do
+            # Liveness first (DB-free): is the new instance up? Readiness (DB) is asked only once it is.
+            LIVE=$(curl -o /dev/null -s -w "%{http_code}" --max-time 15 \
+              "${STAGING_API_URL}/health/live" || echo "000")
+            if [ "$LIVE" != "200" ]; then
+              echo "⏳ Attempt $i/$MAX_RETRIES: /health/live → HTTP $LIVE (instance not up yet)"
+              sleep $RETRY_DELAY
+              continue
+            fi
             STATUS=$(curl -o /dev/null -s -w "%{http_code}" --max-time 15 \
               "${STAGING_API_URL}/health/ready" || echo "000")
             echo "⏳ Attempt $i/$MAX_RETRIES: /health/ready → HTTP $STATUS"
@@ -360,6 +368,14 @@ jobs:
           RETRY_DELAY=30
 
           for i in $(seq 1 $MAX_RETRIES); do
+            # Liveness first (DB-free): is the new instance up? Readiness (DB) is asked only once it is.
+            LIVE=$(curl -o /dev/null -s -w "%{http_code}" --max-time 15 \
+              "${API_URL}/health/live" || echo "000")
+            if [ "$LIVE" != "200" ]; then
+              echo "⏳ Attempt $i/$MAX_RETRIES: /health/live → HTTP $LIVE (instance not up yet)"
+              sleep $RETRY_DELAY
+              continue
+            fi
             STATUS=$(curl -o /dev/null -s -w "%{http_code}" --max-time 15 \
               "${API_URL}/health/ready" || echo "000")
             echo "⏳ Attempt $i/$MAX_RETRIES: /health/ready → HTTP $STATUS"

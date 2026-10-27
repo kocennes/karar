@@ -430,7 +430,9 @@ app.UseMiddleware<DistributedRateLimitMiddleware>();
 app.UseMiddleware<AppAttestationMiddleware>();
 app.UseMiddleware<AdminSecurityMiddleware>();
 
-app.MapHealthChecks("/health/live", new HealthCheckOptions
+// Liveness: yalnızca "self" (DB'siz). "/health" takma adı dış uptime ping'leri ve admin keepalive içindir;
+// aynı seçenekleri paylaşır, Neon'u uyandırmaz ve ActivityTrackingMiddleware'de etkinlik sayılmaz.
+var liveHealthOptions = new HealthCheckOptions
 {
     Predicate = c => c.Tags.Contains("live"),
     ResultStatusCodes =
@@ -439,7 +441,9 @@ app.MapHealthChecks("/health/live", new HealthCheckOptions
         [HealthStatus.Degraded]  = 200,
         [HealthStatus.Unhealthy] = 503
     }
-});
+};
+app.MapHealthChecks("/health", liveHealthOptions);
+app.MapHealthChecks("/health/live", liveHealthOptions);
 
 app.MapHealthChecks("/health/ready", new HealthCheckOptions
 {

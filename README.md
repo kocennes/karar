@@ -16,6 +16,16 @@ Bu README, code review toplantisi icin projenin teknik kapsamini, deploy yapisin
 
 Admin panel kodu bu repoda local olarak `admin-panel/` altinda gelistiriliyor, ancak ana repoya commit/push edilmiyor. Ayrica `karar_admin` private reposuna senkronize edilip Vercel uzerinden deploy ediliyor.
 
+## Ucretsiz Katmanda Calistirma
+
+Production kendi sunucumuza tasinana kadar ucretsiz katmanlarda kosar (Render Free web service, Neon Free Postgres, Upstash Free Redis). Buna gore:
+
+- Render Free, ~15 dk HTTP istegi gelmezse servisi uyutur; ilk istek 30-60 sn soguk baslangic bekler. Sahibin dis bir ping kurmasi gerekir: cron-job.org veya UptimeRobot ile `https://<render-host>/health` adresine 5-10 dakikada bir GET. `/health` (= `/health/live`) yalnizca process'in ayakta oldugunu soyler, veritabanina dokunmaz: Render'i uyanik tutar ama Neon'u uyandirmaz.
+- Neon Free compute-saat faturalar ve 5 dk bossa askiya alir. Bu yuzden zamanlayici isciler (bildirim, trend, gorsel moderasyon, dagitim, brigade, viral) `FreeTier__IdleAfterMinutes` (varsayilan 10) dakika kullanici istegi gelmeyince dongulerini atlar; `/health*`, `/metrics`, `/robots.txt`, `/sitemap*`, `/.well-known` ve OG kabuguna gelen crawler istekleri etkinlik sayilmaz. Saatlik/gunluk isler (karar hatirlatma, audit export, veri saklama, siyasi kume) planlarinda kalir.
+- Konfigurasyon: `FreeTier__Enabled` (varsayilan: yalnizca Production'da `true`), `FreeTier__IdleAfterMinutes` (varsayilan 10). Atlanan donguler Debug seviyesinde loglanir.
+- `/health/ready` DB + Redis'e baglanir; yalnizca deploy sonrasi hazirlik sorusu icin kullanilir (CI ve `scripts/smoke-api.ps1`), uptime ping'i icin kullanilmaz.
+- Kendi sunucuya gecis icin `backend/docker-compose.yml` (Postgres + Redis + API) hazir; o ortamda `FreeTier__Enabled=false` verilir.
+
 ## Urun Ozeti
 
 Karar'in temel akisi:
@@ -572,6 +582,7 @@ Backend:
 - `ConnectionStrings__Redis`
 - `Redis__Password`
 - `Redis__Ssl`
+- `FreeTier__Enabled` ve `FreeTier__IdleAfterMinutes` (opsiyonel; bkz. "Ucretsiz Katmanda Calistirma")
 - `Jwt__Secret` veya ileride RS256 key pair (appsettings.json'daki `CHANGE_ME...` varsayilani Development/Testing disinda reddedilir)
 - `Admin__Email`
 - `Admin__Password` veya `Admin__PasswordHash` (varsayilan `dev-admin-password` Development/Testing disinda reddedilir)
