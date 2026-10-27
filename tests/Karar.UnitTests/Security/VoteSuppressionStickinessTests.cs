@@ -51,6 +51,22 @@ public sealed class VoteSuppressionStickinessTests
     }
 
     [Fact]
+    public void VoteContext_TreatsRememberedSuppressionAsSuppressed()
+    {
+        // DELETE + re-vote: the fresh row is re-suppressed by UpsertVoteAsync, but the handler reads
+        // the suppression state earlier (GetVoteContextAsync). Without the history lookup the re-vote
+        // would still feed affinity and city trending.
+        var context = Slice(
+            ProgramText,
+            "static async Task<(string? OldVote, int OldTotal",
+            "static async Task<(int Hakli, int Haksiz)> UpdateVoteCountersReturningAsync(");
+
+        context.Should().Contain("COALESCE(v.is_suppressed, FALSE)");
+        context.Should().Contain(
+            "OR EXISTS (SELECT 1 FROM vote_suppression_history h WHERE h.post_id = p.id AND h.device_id = @deviceId)");
+    }
+
+    [Fact]
     public void Migration_CreatesVoteSuppressionHistory()
     {
         TestRepoPaths.TryReadText(out var migration, "backend", "migrations", "V111__vote_suppression_history.sql")

@@ -67,6 +67,40 @@ public sealed class PendingRegistrationContractTests
     }
 
     [Fact]
+    public void AccountTakeoverPaths_DropRegistrantDeviceLinks()
+    {
+        // Birleşim regresyonu (sec/10 devralma koruması + sec/07 user_device_links): kaydı açan
+        // saldırganın cihazı sahibin hesabına bağlı kalırsa "paylaşılan cihaz" istisnası sayesinde
+        // sahibin engellerini JWT'siz isteklerle atlatır. Her iki devralma yolu da bağları silmeli.
+        var program = ReadProgram();
+        const string dropLinks = "DELETE FROM user_device_links WHERE user_id = @id";
+
+        var verify = SliceEndpointBlock(
+            program,
+            "app.MapPost(\"/api/v1/auth/verify-email\"",
+            "app.MapPost(\"/api/v1/auth/resend-otp\"");
+        var mismatch = verify.IndexOf("if (!AuthAccountPolicy.KeepsRegistrantPassword(", StringComparison.Ordinal);
+        var verifyDrop = verify.IndexOf(dropLinks, StringComparison.Ordinal);
+        var relink = verify.IndexOf(
+            "LinkUserDeviceAsync(connection, transaction, userId, verifyingDeviceId.Value)", StringComparison.Ordinal);
+        mismatch.Should().BeGreaterThan(0);
+        verifyDrop.Should().BeGreaterThan(mismatch, "registrant links are dropped only on a device mismatch");
+        relink.Should().BeGreaterThan(verifyDrop, "the verifying device is linked after the cleanup");
+
+        var google = SliceEndpointBlock(
+            program,
+            "app.MapPost(\"/api/v1/auth/google\", async (",
+            "app.MapPost(\"/api/v1/auth/google/link\"");
+        var takeover = google.IndexOf("if (pendingUserId is not null)", StringComparison.Ordinal);
+        var googleDrop = google.IndexOf(dropLinks, StringComparison.Ordinal);
+        var googleLink = google.IndexOf(
+            "await LinkUserDeviceAsync(connection, transaction, userId, deviceId.Value);", StringComparison.Ordinal);
+        takeover.Should().BeGreaterThan(0);
+        googleDrop.Should().BeGreaterThan(takeover, "only a pending-registration takeover drops links");
+        googleLink.Should().BeGreaterThan(googleDrop, "the Google device is linked after the cleanup");
+    }
+
+    [Fact]
     public void DataRetention_PurgesStaleUnverifiedPasswordRegistrations()
     {
         var service = TestRepoPaths.ReadText("backend", "Karar.Api", "Services", "DataRetentionService.cs");
