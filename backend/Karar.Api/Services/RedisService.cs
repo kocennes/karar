@@ -27,11 +27,9 @@ public sealed class RedisService : IDisposable
 
         if (configuration.GetValue<bool>("Redis:Ssl"))
         {
+            // Sertifika sistem CA deposu ve host adıyla doğrulanır (Upstash genel CA kullanır).
+            // Her sertifikayı kabul eden callback, araya girene AUTH parolasını veriyordu.
             options.Ssl = true;
-            // Memorystore typically uses a self-signed cert for transit encryption
-            // We allow any certificate in the internal VPC context for simplicity,
-            // or we could point to a root cert if strictly needed.
-            options.CertificateValidation += (sender, cert, chain, errors) => true;
         }
 
         _redis = ConnectionMultiplexer.Connect(options);

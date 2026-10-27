@@ -68,7 +68,8 @@ public sealed class Db : IDisposable
         var port = uri.Port > 0 ? uri.Port : 5432;
         var database = uri.AbsolutePath.TrimStart('/');
 
-        var sslMode = "Require";
+        // Bağlantı internetten (Render → Neon) geçer: sunucu sertifikası ve host adı doğrulanır.
+        var sslMode = "VerifyFull";
         if (!string.IsNullOrEmpty(uri.Query))
         {
             var parts = uri.Query.TrimStart('?').Split('&');
@@ -76,12 +77,23 @@ public sealed class Db : IDisposable
             {
                 var kv = part.Split('=', 2);
                 if (kv.Length == 2 && kv[0].Equals("sslmode", StringComparison.OrdinalIgnoreCase))
-                    sslMode = Uri.UnescapeDataString(kv[1]);
+                    sslMode = NormalizeSslMode(Uri.UnescapeDataString(kv[1]));
             }
         }
 
-        return $"Host={host};Port={port};Database={database};Username={user};Password={password};SSL Mode={sslMode};Trust Server Certificate=true";
+        return $"Host={host};Port={port};Database={database};Username={user};Password={password};SSL Mode={sslMode}";
     }
+
+    // libpq "require" yalnızca şifreler, sunucuyu doğrulamaz (MITM parolayı alır).
+    // Sağlayıcı URI'leri (Neon) "sslmode=require" ile gelir ve genel CA zinciri kullanır,
+    // bu yüzden VerifyFull'a yükseltilir. libpq yazımı (verify-full/verify-ca) Npgsql adına çevrilir.
+    private static string NormalizeSslMode(string value) =>
+        value.Replace("-", string.Empty).ToLowerInvariant() switch
+        {
+            "require" or "verifyfull" => "VerifyFull",
+            "verifyca" => "VerifyCA",
+            _ => value,
+        };
 
     private static async Task<string> GetCloudSqlLoginTokenAsync()
     {
