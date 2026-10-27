@@ -75,6 +75,7 @@ public sealed class CrawlerOgHtmlInjectionTests
             null,
             "https://karar.app",
             new DateTimeOffset(2026, 10, 27, 12, 0, 0, TimeSpan.Zero),
+            false, // isUnlisted (sec/02 + sec/05): a listed post keeps its slug canonical/refresh URL
         })!;
     }
 
