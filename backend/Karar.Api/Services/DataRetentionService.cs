@@ -6,6 +6,7 @@ namespace Karar.Api.Services;
 public sealed class DataRetentionService(
     Db db,
     AffinityService affinity,
+    ActivityTracker activityTracker,
     ILogger<DataRetentionService> logger) : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromDays(1);
@@ -19,6 +20,10 @@ public sealed class DataRetentionService(
         {
             try
             {
+                // Daily job: keeps its schedule on the free tier; only leaves a trace when it wakes the DB while idle.
+                if (activityTracker.IsIdle())
+                    logger.LogDebug("DataRetentionService: API idle, daily run proceeds (not gated)");
+
                 var auditRetentionDays    = await GetSettingAsync("audit_log_retention_days",          365, stoppingToken);
                 var anonymizeDays         = await GetSettingAsync("deleted_user_anonymization_days",    30,  stoppingToken);
 
