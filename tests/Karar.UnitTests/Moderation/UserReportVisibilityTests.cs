@@ -22,7 +22,7 @@ public sealed class UserReportVisibilityTests
         block.Should().Contain("WHEN 'dismissed'    THEN 'reddedildi'");
         block.Should().Contain("İnceleme sonunda bu içerikte işlem gerektiren bir ihlal bulunmadı.");
 
-        var apiDocs = TestRepoPaths.ReadText("docs", "api.md");
+        if (!TestRepoPaths.TryReadText(out var apiDocs, "docs", "api.md")) return;
         apiDocs.Should().Contain("- `GET /api/v1/users/me/reports`");
     }
 

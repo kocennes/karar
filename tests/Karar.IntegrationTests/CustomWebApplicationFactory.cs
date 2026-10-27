@@ -29,7 +29,6 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
                 // - Redis: connectTimeout=500ms instead of the 5000ms default that can block for 30s
                 ["ConnectionStrings:Postgres"] = "Host=localhost;Port=5432;Database=karar_test;Username=karar;Password=karar_dev_password;Timeout=2;Command Timeout=2",
                 ["ConnectionStrings:Redis"] = "localhost:6379,abortConnect=false,connectTimeout=500,syncTimeout=200",
-                ["Admin:Token"] = "test-admin-token",
                 ["Admin:Email"] = "admin@test.local",
                 ["Admin:Password"] = "test-admin-password",
                 ["Admin:TotpSecret"] = "",

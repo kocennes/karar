@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/auth/auth_service.dart';
 import '../../core/notifications/notification_permission_dialog.dart';
 import '../../core/providers.dart';
 import '../../core/theme/app_colors.dart';

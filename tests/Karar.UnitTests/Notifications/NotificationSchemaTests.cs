@@ -238,7 +238,7 @@ public sealed class NotificationSchemaTests
     }
 
     [Fact]
-    public void CrisisSupportNotification_BodyContains182HotlineAndImeceUrl()
+    public void CrisisSupportNotification_PointsTo112AndNoDeadOrHijackableLinks()
     {
         var programPath = FindRepoFile("backend/Karar.Api/Program.cs");
         var program = File.ReadAllText(programPath);
@@ -250,10 +250,12 @@ public sealed class NotificationSchemaTests
 
         crisisBlock.Should().Contain("'crisis_support'",
             because: "bildirim tipi 'crisis_support' olmalı");
-        crisisBlock.Should().Contain("182",
-            because: "bildirim gövdesi 182 ALO hattına atıfta bulunmalı");
-        crisisBlock.Should().Contain("imece.org",
-            because: "bildirim gövdesi imece.org destek URL'ini içermeli");
+        crisisBlock.Should().Contain("112",
+            because: "kriz bildirimi 112 Acil Çağrı'ya yönlendirmeli");
+        crisisBlock.Should().NotContain("182",
+            because: "182 artık MHRS hastane randevu hattı, intihar önleme hattı değil");
+        crisisBlock.Should().NotContain("imece",
+            because: "imece.org satılık bir alan adı; kriz anındaki kullanıcı oraya gönderilmemeli");
         crisisBlock.Should().NotContain("uyarı",
             because: "kriz bildirimi cezalandırıcı değil destek odaklı olmalı");
         crisisBlock.Should().NotContain("ihlal",

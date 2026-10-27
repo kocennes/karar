@@ -60,11 +60,16 @@ Authenticated guest requests use:
 X-Device-Token: dt_...
 ```
 
-Local admin requests use:
+Admin requests use a short-lived admin JWT obtained from `POST /api/v1/admin/auth/login`
+(local Docker defaults: `admin@karar.local` / `dev-admin-password`, accepted only in
+Development/Testing; without an email provider the OTP step is skipped only in
+Development/Testing, every other environment including Staging returns 503). Send the returned `accessToken`:
 
 ```text
-X-Admin-Token: dev-admin-token
+Authorization: Bearer <accessToken>
 ```
+
+There is no static admin token; `Admin__Token` / `Admin__SkipEmailOtp` are no longer read.
 
 ## Notes
 

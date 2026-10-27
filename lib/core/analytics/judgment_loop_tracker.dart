@@ -1,5 +1,3 @@
-import 'dart:async';
-
 enum _LoopStage { impression, reading, voted }
 
 class _LoopState {

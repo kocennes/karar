@@ -1,7 +1,7 @@
 
 # Karar - Örnek İçerik Yükleme Scripti
 $baseUrl = "https://karar-oq5t.onrender.com"
-$adminToken = "kral-token-123"
+# Not: POST /api/v1/posts yalnizca cihaz token'i ister. Statik admin token (X-Admin-Token) artik yok.
 
 # 1. Önce bir dummy cihaz kaydedelim
 Write-Host "📱 Dummy cihaz kaydediliyor..." -ForegroundColor Cyan
@@ -23,7 +23,6 @@ try {
 # 2. Örnek postları yükleyelim
 $headers = @{
     "Content-Type" = "application/json"
-    "X-Admin-Token" = $adminToken
     "X-Device-Token" = $deviceToken
 }
 

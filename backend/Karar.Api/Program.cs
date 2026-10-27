@@ -181,7 +181,7 @@ builder.Services.AddRateLimiter(options =>
         )
     );
 
-    // SSE: IP baÅŸÄ±na eÅŸ zamanlÄ± baÄŸlantÄ± sÄ±nÄ±rÄ± â€" uzun yaÅŸayan baÄŸlantÄ±lar iÃ§in
+    // SSE: IP başına eş zamanlı bağlantı sınırı — uzun yaşayan bağlantılar için
     options.AddPolicy("sse", context =>
         RateLimitPartition.GetConcurrencyLimiter(
             context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
@@ -265,7 +265,7 @@ builder.Services.AddRateLimiter(options =>
         ctx.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
         await ctx.HttpContext.Response.WriteAsJsonAsync(new
         {
-            error = new { code = "RATE_LIMIT_EXCEEDED", message = "Ã‡ok fazla istek. LÃ¼tfen bekleyin." }
+            error = new { code = "RATE_LIMIT_EXCEEDED", message = "Çok fazla istek. Lütfen bekleyin." }
         });
     };
 });
@@ -358,7 +358,7 @@ app.Use(async (ctx, next) =>
     }
 });
 
-// Cloud Run arkasÄ±ndaki gerÃ§ek client IP'sini al
+// Cloud Run arkasındaki gerçek client IP'sini al
 app.UseForwardedHeaders(new ForwardedHeadersOptions
 {
     ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
@@ -389,7 +389,7 @@ app.Use(async (ctx, next) =>
     await next();
 });
 
-// Request body boyut limiti: 6 MB (gÃ¶rsel 5 MB + meta)
+// Request body boyut limiti: 6 MB (görsel 5 MB + meta)
 app.Use(async (ctx, next) =>
 {
     if (ctx.Request.ContentLength > 6_291_456)
@@ -397,7 +397,7 @@ app.Use(async (ctx, next) =>
         ctx.Response.StatusCode = StatusCodes.Status413RequestEntityTooLarge;
         await ctx.Response.WriteAsJsonAsync(new
         {
-            error = new { code = "PAYLOAD_TOO_LARGE", message = "Ä°stek gÃ¶vdesi Ã§ok bÃ¼yÃ¼k. Maksimum 6 MB." }
+            error = new { code = "PAYLOAD_TOO_LARGE", message = "İstek gövdesi çok büyük. Maksimum 6 MB." }
         });
         return;
     }
@@ -964,7 +964,7 @@ app.MapPut("/api/v1/devices/fcm-token", async (
 
     if (!IsSupportedPlatform(request.Platform))
     {
-        return BadRequest("INVALID_PLATFORM", "Platform android, ios veya web olmalÄ±.");
+        return BadRequest("INVALID_PLATFORM", "Platform android, ios veya web olmalı.");
     }
 
     var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
@@ -1241,8 +1241,8 @@ app.MapGet("/api/v1/posts", async (
     var userId = GetOptionalUserId(httpRequest, jwtService);
     var userParam = userId ?? Guid.Empty;
 
-    // Anonim istekler iÃ§in feed cache (60s trending, 30s new).
-    // GiriÅŸ yapmÄ±ÅŸ / cihaz tanÄ±mlÄ± kullanÄ±cÄ±lar her zaman DB'ye gider (kiÅŸisel oy durumu).
+    // Anonim istekler için feed cache (60s trending, 30s new).
+    // Giriş yapmış / cihaz tanımlı kullanıcılar her zaman DB'ye gider (kişisel oy durumu).
     var isAnonymous = deviceId is null && userId is null;
     FeedResponse? feedCached = null;
     string? feedCacheKey = null;
@@ -2569,7 +2569,7 @@ app.MapPost("/api/v1/posts", async (
     var (request, imageFile) = await ReadCreatePostRequestWithImageAsync(httpRequest);
     if (request is null)
     {
-        return BadRequest("INVALID_REQUEST", "GÃ¶nderi iÃ§eriÄŸi okunamadÄ±.");
+        return BadRequest("INVALID_REQUEST", "Gönderi içeriği okunamadı.");
     }
 
     if (ValidateRequest(request) is { } validationError)
@@ -2625,7 +2625,7 @@ app.MapPost("/api/v1/posts", async (
     var createPostTrustDecision = await deviceTrust.EvaluateForActionAsync(connection, effectiveDeviceId.Value);
     _ = createPostTrustDecision; // intentionally unused: soft-enforce only logs risk
 
-    // Per-device gÃ¼nlÃ¼k post limiti
+    // Per-device günlük post limiti
     await using var limitCmd = new NpgsqlCommand(
         userId is null
             ? "SELECT COUNT(*) FROM posts WHERE device_id = @deviceId AND created_at > NOW() - INTERVAL '1 hour'"
@@ -2644,7 +2644,7 @@ app.MapPost("/api/v1/posts", async (
     var hourlyLimit = userId is null ? 3 : 10;
     if (hourlyCount >= hourlyLimit)
     {
-        return TooManyRequests("DAILY_POST_LIMIT", "GÃ¼nlÃ¼k gÃ¶nderi limitine ulaÅŸtÄ±nÄ±z. YarÄ±n tekrar deneyin.");
+        return TooManyRequests("DAILY_POST_LIMIT", "Günlük gönderi limitine ulaştınız. Yarın tekrar deneyin.");
     }
 
     var moderationStarted = TimeProvider.System.GetTimestamp();
@@ -2657,18 +2657,18 @@ app.MapPost("/api/v1/posts", async (
         return BadRequest(moderation.Code ?? "CONTENT_REJECTED", moderation.Message);
     }
 
-    // Perspective API â€" runs after keyword check, overrides status if content is toxic
+    // Perspective API — runs after keyword check, overrides status if content is toxic
     var perspectiveResult = await perspectiveService.AnalyzeAsync($"{request.Title}\n{request.Content}");
     if (perspectiveResult is not null)
     {
         var perspectiveStatus = PerspectiveApiService.DetermineStatus(perspectiveResult);
         if (perspectiveStatus == "rejected")
-            return BadRequest("CONTENT_REJECTED", "Ä°Ã§erik politikasÄ± gereÄŸi bu metin yayÄ±nlanamaz.");
+            return BadRequest("CONTENT_REJECTED", "İçerik politikası gereği bu metin yayınlanamaz.");
         if (perspectiveStatus == "under_review" && moderation.Status == "active")
-            moderation = ModerationDecision.Review("Ä°Ã§erik moderasyon incelemesine alÄ±ndÄ±.");
+            moderation = ModerationDecision.Review("İçerik moderasyon incelemesine alındı.");
     }
 
-    // GÃ¶rsel yÃ¼kleme (GCS)
+    // Görsel yükleme (GCS)
     string? imageUrl = null;
     string? imageModerationStatus = null;
     if (imageFile is not null)
@@ -2791,7 +2791,7 @@ app.MapPost("/api/v1/posts", async (
     var newPostStatus = reader.GetString(0);
     var newPostCreatedAt = reader.GetFieldValue<DateTimeOffset>(1);
 
-    // Yeni post yayÄ±nlandÄ±ysa feed cache'ini invalidate et (ilk 2 sayfa yeterli).
+    // Yeni post yayınlandıysa feed cache'ini invalidate et (ilk 2 sayfa yeterli).
     if (newPostStatus == "active")
     {
         await redis.DeleteAsync(
@@ -2800,7 +2800,7 @@ app.MapPost("/api/v1/posts", async (
         );
     }
 
-    // Kriz sinyali: icerik sahibine destek bildirimi gonder (182 hatti + imece.org).
+    // Kriz sinyali: icerik sahibine destek bildirimi gonder (112 Acil Cagri yonlendirmesi).
     // Bu bildirim cezalandirici degil; sakin, destek odakli bir mesajdir.
     if (moderation.IsCrisisFlagged)
     {
@@ -2867,7 +2867,7 @@ app.MapGet("/api/v1/posts/{id:guid}", async (
     command.Parameters.AddWithValue("userId", userParam);
 
     var posts = await ReadPostsAsync(command);
-    return posts.Count == 0 ? NotFound("POST_NOT_FOUND", "Post bulunamadÄ±.") : Results.Ok(posts[0]);
+    return posts.Count == 0 ? NotFound("POST_NOT_FOUND", "Post bulunamadı.") : Results.Ok(posts[0]);
 });
 
 app.MapPost("/api/v1/posts/{id:guid}/ai-summary", async (
@@ -3030,7 +3030,7 @@ app.MapDelete("/api/v1/posts/{id:guid}", async (
     command.Parameters.AddWithValue("userId", userParam);
 
     var affected = await command.ExecuteNonQueryAsync();
-    return affected == 0 ? NotFound("POST_NOT_FOUND", "Silinecek post bulunamadÄ±.") : Results.NoContent();
+    return affected == 0 ? NotFound("POST_NOT_FOUND", "Silinecek post bulunamadı.") : Results.NoContent();
 });
 
 // Records a view impression for post_views (re-impression limiting + cold-start rescue).
@@ -3179,7 +3179,7 @@ app.MapPut("/api/v1/posts/{id:guid}", async (
     await transaction.CommitAsync();
     if (affected == 0)
     {
-        return NotFound("POST_NOT_EDITABLE", "Post bulunamadÃ„Â± veya dÃƒÂ¼zenleme sÃƒÂ¼resi doldu.");
+        return NotFound("POST_NOT_EDITABLE", "Post bulunamadı veya düzenleme süresi doldu.");
     }
 
     await redis.MarkPostDirtyAsync(id);
@@ -3459,7 +3459,7 @@ app.MapGet("/api/v1/search", async (
     if (q.Length < 3)
     {
         await EnforceMinimumResponseTimeAsync(responseTimer, httpRequest.HttpContext.RequestAborted);
-        return BadRequest("QUERY_TOO_SHORT", "Arama en az 3 karakter olmalÄ±.");
+        return BadRequest("QUERY_TOO_SHORT", "Arama en az 3 karakter olmalı.");
     }
 
     var offset = (page - 1) * limit;
@@ -3627,7 +3627,7 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
 
     if (request.VoteType is not ("hakli" or "haksiz"))
     {
-        return BadRequest("INVALID_VOTE_TYPE", "Oy tipi hakli veya haksiz olmalÄ±.");
+        return BadRequest("INVALID_VOTE_TYPE", "Oy tipi hakli veya haksiz olmalı.");
     }
 
     var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
@@ -3841,7 +3841,7 @@ app.MapDelete("/api/v1/posts/{id:guid}/vote", async (
     return Results.Ok(response);
 });
 
-// SSE: GerÃ§ek zamanlÄ± oy ve yorum gÃ¼ncellemeleri
+// SSE: Gerçek zamanlı oy ve yorum güncellemeleri
 app.MapGet("/api/v1/posts/{id:guid}/events", async (
     Guid id,
     HttpContext httpContext,
@@ -3871,7 +3871,7 @@ app.MapGet("/api/v1/posts/{id:guid}/events", async (
     }
     catch (OperationCanceledException)
     {
-        // Ä°stemci baÄŸlantÄ±sÄ± kesildi
+        // İstemci bağlantısı kesildi
     }
     finally
     {
@@ -4301,7 +4301,7 @@ app.MapPost("/api/v1/posts/{id:guid}/comments", async (
         }
     }
 
-    // Kriz sinyali: yorum sahibine destek bildirimi gonder (182 hatti + imece.org).
+    // Kriz sinyali: yorum sahibine destek bildirimi gonder (112 Acil Cagri yonlendirmesi).
     if (moderation.IsCrisisFlagged)
     {
         await InsertCrisisSupportNotificationForContentAsync(connection, effectiveDeviceId.Value, id);
@@ -4353,7 +4353,7 @@ app.MapDelete("/api/v1/comments/{id:guid}", async (
     if (result is not Guid postId)
     {
         await transaction.RollbackAsync();
-        return NotFound("COMMENT_NOT_FOUND", "Silinecek yorum bulunamadÄ±.");
+        return NotFound("COMMENT_NOT_FOUND", "Silinecek yorum bulunamadı.");
     }
 
     await using var updatePost = new NpgsqlCommand(
@@ -4419,7 +4419,7 @@ app.MapPut("/api/v1/comments/{id:guid}", async (
 
     var affected = await command.ExecuteNonQueryAsync();
     return affected == 0
-        ? NotFound("COMMENT_NOT_EDITABLE", "Yorum bulunamadÃ„Â± veya dÃƒÂ¼zenleme sÃƒÂ¼resi doldu.")
+        ? NotFound("COMMENT_NOT_EDITABLE", "Yorum bulunamadı veya düzenleme süresi doldu.")
         : Results.NoContent();
 });
 
@@ -4581,7 +4581,7 @@ app.MapPost("/api/v1/reports", async (
     if (!await ReportTargetExistsAsync(connection, transaction, request.TargetType, request.TargetId))
     {
         await transaction.RollbackAsync();
-        return NotFound("TARGET_NOT_FOUND", "Åikayet edilecek aktif iÃ§erik bulunamadÄ±.");
+        return NotFound("TARGET_NOT_FOUND", "Şikayet edilecek aktif içerik bulunamadı.");
     }
 
     await using var command = new NpgsqlCommand(
@@ -4622,7 +4622,7 @@ app.MapPost("/api/v1/reports", async (
     if (result is not Guid reportId)
     {
         await transaction.RollbackAsync();
-        return Conflict("REPORT_EXISTS", "Bu iÃ§eriÄŸi zaten ÅŸikayet ettiniz.");
+        return Conflict("REPORT_EXISTS", "Bu içeriği zaten şikayet ettiniz.");
     }
 
     var threshold = await EvaluateReportThresholdAsync(
@@ -4639,7 +4639,7 @@ app.MapPost("/api/v1/reports", async (
             transaction,
             request.TargetType,
             request.TargetId,
-            threshold.Reason ?? "Rapor eÅŸiÄŸi aÅŸÄ±ldÄ±."
+            threshold.Reason ?? "Rapor eşiği aşıldı."
         );
     }
 
@@ -4664,7 +4664,7 @@ app.MapPost("/api/v1/reports", async (
     // Yeni hesap yüksek rapor kontrolü: ilk 24 saatte ≥10 rapor alan cihazı bayrakla
     _ = CheckAndFlagNewAccountHighReportAsync(db, request.TargetType, request.TargetId);
 
-    return Results.Created($"/api/v1/reports/{reportId}", new ReportResponse(reportId, "Åikayetiniz alÄ±ndÄ±. Ä°ncelenecek."));
+    return Results.Created($"/api/v1/reports/{reportId}", new ReportResponse(reportId, "Şikayetiniz alındı. İncelenecek."));
 });
 
 app.MapPost("/api/v1/feedback", async (
@@ -5285,7 +5285,7 @@ app.MapPost("/api/v1/admin/auth/login", async (
     RedisService redis,
     EmailService emailService,
     ILogger<Program> logger,
-    IConfiguration config
+    IHostEnvironment environment
 ) =>
 {
     if (ValidateRequest(request) is { } validationError)
@@ -5293,7 +5293,7 @@ app.MapPost("/api/v1/admin/auth/login", async (
         return validationError;
     }
 
-    // IP allowlist kontrolÃ¼
+    // IP allowlist kontrolü
     if (!adminAuth.IsIpAllowed(httpContext))
     {
         return Unauthorized();
@@ -5305,7 +5305,7 @@ app.MapPost("/api/v1/admin/auth/login", async (
 
     if (await bruteForce.IsLockedOutAsync(bfIdentity))
     {
-        return TooManyRequests("ACCOUNT_LOCKED", "Ã‡ok fazla baÅŸarÄ±sÄ±z deneme. 15 dakika bekleyin.");
+        return TooManyRequests("ACCOUNT_LOCKED", "Çok fazla başarısız deneme. 15 dakika bekleyin.");
     }
 
     if (!adminAuth.ValidateCredentials(request.Email, request.Password))
@@ -5316,23 +5316,29 @@ app.MapPost("/api/v1/admin/auth/login", async (
         return Unauthorized();
     }
 
-    // OTP atla: email yapılandırılmamışsa veya Admin:SkipEmailOtp=true ise.
-    // TODO: Admin:SkipEmailOtp=false yaparak email OTP'yi tekrar devreye al.
-    var skipOtp = !emailService.IsConfigured
-        || (config["Admin:SkipEmailOtp"] == "true");
-    if (skipOtp)
+    // E-posta OTP admin girişinin ikinci faktörüdür ve fail-closed çalışır: kod
+    // gönderilemiyorsa token verilmez. Yalnızca Development/Testing ortamlarında (lokal
+    // geliştirme/test) e-posta servisi yoksa OTP adımı atlanır; Staging dahil diğer
+    // tüm ortamlarda giriş reddedilir.
+    if (!emailService.IsConfigured)
     {
+        if (!environment.IsDevelopment() && !environment.IsEnvironment("Testing"))
+        {
+            logger.LogCritical(
+                "Admin girişi reddedildi: e-posta servisi yapılandırılmamış, admin OTP gönderilemiyor. Brevo/Resend/SMTP ayarlarını kontrol edin.");
+            return ServiceUnavailable(
+                "OTP_DELIVERY_FAILED",
+                "Doğrulama kodu şu anda gönderilemiyor. Lütfen daha sonra tekrar deneyin.");
+        }
+
         await bruteForce.ClearAsync(bfIdentity);
-        return Results.Ok(new AdminLoginResponse(
-            adminAuth.IssueToken(),
-            DateTimeOffset.UtcNow.AddHours(4)
-        ));
+        return Results.Ok(adminAuth.IssueToken());
     }
 
     var otpKey = $"otp:admin:{request.Email.ToLowerInvariant()}";
     if (string.IsNullOrWhiteSpace(request.TotpCode))
     {
-        var (otp, tooSoon, waitSecs, _) = await GetOrCreateCachedOtpAsync(
+        var (otp, tooSoon, waitSecs, isNewOtp) = await GetOrCreateCachedOtpAsync(
             redis.GetDb(), otpKey,
             validFor: TimeSpan.FromMinutes(10),
             resendAfter: TimeSpan.FromMinutes(3));
@@ -5347,13 +5353,14 @@ app.MapPost("/api/v1/admin/auth/login", async (
         }
         catch (Exception ex)
         {
-            // Mail gönderilemedi — şifre doğrulaması + IP allowlist yeterli güvenlik sağlar
-            logger.LogError(ex, "Admin OTP e-postası gönderilemedi, fallback login: {Email}", request.Email);
-            await bruteForce.ClearAsync(bfIdentity);
-            return Results.Ok(new AdminLoginResponse(
-                adminAuth.IssueToken(),
-                DateTimeOffset.UtcNow.AddHours(4)
-            ));
+            // Mail gönderilemedi — token VERİLMEZ (fail-closed). Kimseye ulaşmamış yeni kodu
+            // silerek bir sonraki denemenin OTP_TOO_SOON beklemesine takılmadan yeniden göndermesini sağla.
+            logger.LogError(ex, "Admin OTP e-postası gönderilemedi; admin girişi reddedildi.");
+            if (isNewOtp)
+                await redis.GetDb().KeyDeleteAsync(otpKey);
+            return ServiceUnavailable(
+                "OTP_DELIVERY_FAILED",
+                "Doğrulama kodu gönderilemedi. Lütfen birkaç dakika sonra tekrar deneyin.");
         }
     }
 
@@ -5367,10 +5374,7 @@ app.MapPost("/api/v1/admin/auth/login", async (
 
     await bruteForce.ClearAsync(bfIdentity);
 
-    return Results.Ok(new AdminLoginResponse(
-        adminAuth.IssueToken(),
-        DateTimeOffset.UtcNow.AddHours(4)
-    ));
+    return Results.Ok(adminAuth.IssueToken());
 }).RequireRateLimiting("auth-strict");
 
 app.MapGet("/api/v1/admin/moderation/queue", async (
@@ -5491,7 +5495,7 @@ app.MapPost("/api/v1/admin/moderation/{targetType}/{targetId:guid}/{action}", as
 
     if (targetType is not ("post" or "comment"))
     {
-        return BadRequest("INVALID_TARGET_TYPE", "Hedef tipi post veya comment olmalÄ±.");
+        return BadRequest("INVALID_TARGET_TYPE", "Hedef tipi post veya comment olmalı.");
     }
 
     var nextStatus = action switch
@@ -5503,7 +5507,7 @@ app.MapPost("/api/v1/admin/moderation/{targetType}/{targetId:guid}/{action}", as
     };
     if (nextStatus is null)
     {
-        return BadRequest("INVALID_ADMIN_ACTION", "Aksiyon approve, hide veya delete olmalÄ±.");
+        return BadRequest("INVALID_ADMIN_ACTION", "Aksiyon approve, hide veya delete olmalı.");
     }
 
     await using var connection = await db.OpenConnectionAsync();
@@ -5512,7 +5516,7 @@ app.MapPost("/api/v1/admin/moderation/{targetType}/{targetId:guid}/{action}", as
     if (affected == 0)
     {
         await transaction.RollbackAsync();
-        return NotFound("TARGET_NOT_FOUND", "Moderasyon hedefi bulunamadÄ±.");
+        return NotFound("TARGET_NOT_FOUND", "Moderasyon hedefi bulunamadı.");
     }
 
     await MarkReportsForTargetAsync(
@@ -5547,7 +5551,7 @@ app.MapPost("/api/v1/admin/moderation/bulk", async (
         "delete" => "deleted",
         _ => null
     };
-    if (nextStatus is null) return BadRequest("INVALID_ACTION", "Aksiyon geÃ§ersiz.");
+    if (nextStatus is null) return BadRequest("INVALID_ACTION", "Aksiyon geçersiz.");
 
     await using var connection = await db.OpenConnectionAsync();
     await using var transaction = await connection.BeginTransactionAsync();
@@ -5666,7 +5670,7 @@ app.MapPost("/api/v1/admin/reports/{id:guid}/action", async (
 
     if (request.Action is not ("actioned" or "dismissed"))
     {
-        return BadRequest("INVALID_REPORT_ACTION", "Rapor aksiyonu actioned veya dismissed olmalÄ±.");
+        return BadRequest("INVALID_REPORT_ACTION", "Rapor aksiyonu actioned veya dismissed olmalı.");
     }
 
     await using var connection = await db.OpenConnectionAsync();
@@ -5688,7 +5692,7 @@ app.MapPost("/api/v1/admin/reports/{id:guid}/action", async (
     if (!await reader.ReadAsync())
     {
         await transaction.RollbackAsync();
-        return NotFound("REPORT_NOT_FOUND", "Bekleyen rapor bulunamadÄ±.");
+        return NotFound("REPORT_NOT_FOUND", "Bekleyen rapor bulunamadı.");
     }
 
     var targetType = reader.GetString(0);
@@ -5865,7 +5869,7 @@ app.MapPost("/api/v1/admin/devices/{id:guid}/ban", async (
 
     if (request.Type is not ("temporary" or "permanent"))
     {
-        return BadRequest("INVALID_BAN_TYPE", "Ban tipi temporary veya permanent olmalÄ±.");
+        return BadRequest("INVALID_BAN_TYPE", "Ban tipi temporary veya permanent olmalı.");
     }
 
     var expiresAt = request.Type == "temporary"
@@ -5923,7 +5927,7 @@ app.MapPost("/api/v1/admin/devices/{id:guid}/unban", async (
     if (affected == 0)
     {
         await transaction.RollbackAsync();
-        return NotFound("DEVICE_NOT_FOUND", "Cihaz bulunamadÄ±.");
+        return NotFound("DEVICE_NOT_FOUND", "Cihaz bulunamadı.");
     }
 
     await LogAdminActionAsync(connection, transaction, adminEmail, "unban_device", "device", id, null);
@@ -5932,7 +5936,7 @@ app.MapPost("/api/v1/admin/devices/{id:guid}/unban", async (
     return Results.NoContent();
 });
 
-// â"€â"€ AUTH â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── AUTH ─────────────────────────────────────────────────────────────────────
 
 app.MapGet("/api/v1/admin/posts", async (
     HttpRequest httpRequest,
@@ -8211,7 +8215,7 @@ app.MapPost("/api/v1/auth/register", async (
 
     await using var connection = await db.OpenConnectionAsync();
 
-    // KullanÄ±cÄ± adÄ± veya e-posta daha Ã¶nce alÄ±nmÄ±ÅŸ mÄ±?
+    // Kullanıcı adı veya e-posta daha önce alınmış mı?
     await using var checkCmd = new NpgsqlCommand(
         "SELECT COUNT(*) FROM users WHERE username = @username OR email = @email",
         connection
@@ -8221,7 +8225,7 @@ app.MapPost("/api/v1/auth/register", async (
     var existing = Convert.ToInt32(await checkCmd.ExecuteScalarAsync());
     if (existing > 0)
     {
-        return Conflict("USER_EXISTS", "Bu kullanÄ±cÄ± adÄ± veya e-posta zaten kullanÄ±lÄ±yor.");
+        return Conflict("USER_EXISTS", "Bu kullanıcı adı veya e-posta zaten kullanılıyor.");
     }
 
     // Bekleyen OTP varsa temizle
@@ -8275,7 +8279,7 @@ app.MapPost("/api/v1/auth/register", async (
     var nowTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
     await redis.GetDb().StringSetAsync(verifyOtpKey, $"{nowTs}|{otpHash}|{otp}", TimeSpan.FromMinutes(10));
 
-    // OTP e-postasÄ±nÄ± arka planda gÃ¶nder
+    // OTP e-postasını arka planda gönder
     _ = emailService.SendOtpAsync(request.Email, otp);
 
     var regIp = httpRequest.HttpContext.Connection.RemoteIpAddress?.ToString();
@@ -8283,7 +8287,7 @@ app.MapPost("/api/v1/auth/register", async (
 
     return Results.Created(
         "/api/v1/auth/register",
-        new RegisterResponse("DoÄŸrulama kodu e-postanÄ±za gÃ¶nderildi.", request.Email.ToLowerInvariant())
+        new RegisterResponse("Doğrulama kodu e-postanıza gönderildi.", request.Email.ToLowerInvariant())
     );
 }).RequireRateLimiting("auth-strict");
 
@@ -8321,7 +8325,7 @@ app.MapPost("/api/v1/auth/verify-email", async (
     await using var otpReader = await otpCmd.ExecuteReaderAsync();
     if (!await otpReader.ReadAsync())
     {
-        return BadRequest("OTP_NOT_FOUND", "Aktif doÄŸrulama kodu bulunamadÄ±.");
+        return BadRequest("OTP_NOT_FOUND", "Aktif doğrulama kodu bulunamadı.");
     }
 
     var otpId = otpReader.GetGuid(0);
@@ -8332,12 +8336,12 @@ app.MapPost("/api/v1/auth/verify-email", async (
 
     if (expiresAt < DateTimeOffset.UtcNow)
     {
-        return BadRequest("OTP_EXPIRED", "DoÄŸrulama kodu sÃ¼resi dolmuÅŸ. Yeniden gÃ¶nder.");
+        return BadRequest("OTP_EXPIRED", "Doğrulama kodu süresi dolmuş. Yeniden gönder.");
     }
 
     if (attempts >= 3)
     {
-        return BadRequest("OTP_MAX_ATTEMPTS", "Ã‡ok fazla hatalÄ± deneme. Yeni kod isteyin.");
+        return BadRequest("OTP_MAX_ATTEMPTS", "Çok fazla hatalı deneme. Yeni kod isteyin.");
     }
 
     if (!string.Equals(storedHash, otpHash, StringComparison.OrdinalIgnoreCase))
@@ -8348,10 +8352,10 @@ app.MapPost("/api/v1/auth/verify-email", async (
         );
         incCmd.Parameters.AddWithValue("id", otpId);
         await incCmd.ExecuteNonQueryAsync();
-        return BadRequest("OTP_INVALID", $"Kod hatalÄ±. {2 - attempts} deneme hakkÄ±n kaldÄ±.");
+        return BadRequest("OTP_INVALID", $"Kod hatalı. {2 - attempts} deneme hakkın kaldı.");
     }
 
-    // OTP doÄŸrulama baÅŸarÄ±lÄ±
+    // OTP doğrulama başarılı
     await using var transaction = await connection.BeginTransactionAsync();
 
     await using var verifyCmd = new NpgsqlCommand(
@@ -8369,7 +8373,7 @@ app.MapPost("/api/v1/auth/verify-email", async (
     if (!await userReader.ReadAsync())
     {
         await transaction.RollbackAsync();
-        return BadRequest("USER_NOT_FOUND", "KullanÄ±cÄ± bulunamadÄ± veya zaten doÄŸrulanmÄ±ÅŸ.");
+        return BadRequest("USER_NOT_FOUND", "Kullanıcı bulunamadı veya zaten doğrulanmış.");
     }
 
     var userId = userReader.GetGuid(0);
@@ -8481,7 +8485,7 @@ app.MapPost("/api/v1/auth/google", async (
     var firebaseToken = await firebaseAuth.VerifyIdTokenAsync(request.IdToken);
     if (firebaseToken is null)
     {
-        return BadRequest("INVALID_FIREBASE_TOKEN", "Google kimlik doÄŸrulama baÅŸarÄ±sÄ±z.");
+        return BadRequest("INVALID_FIREBASE_TOKEN", "Google kimlik doğrulama başarısız.");
     }
 
     var googleId = firebaseToken.Uid;
@@ -8491,7 +8495,7 @@ app.MapPost("/api/v1/auth/google", async (
 
     if (string.IsNullOrEmpty(googleEmail))
     {
-        return BadRequest("EMAIL_MISSING", "Google hesabÄ±nda e-posta bulunamadÄ±.");
+        return BadRequest("EMAIL_MISSING", "Google hesabında e-posta bulunamadı.");
     }
 
     var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
@@ -8503,7 +8507,7 @@ app.MapPost("/api/v1/auth/google", async (
     await using var connection = await db.OpenConnectionAsync();
     await using var transaction = await connection.BeginTransactionAsync();
 
-    // Mevcut kullanÄ±cÄ± var mÄ±? (google_id veya email ile bul)
+    // Mevcut kullanıcı var mı? (google_id veya email ile bul)
     await using var findCmd = new NpgsqlCommand(
         """
         SELECT id, username, email, karma, auth_provider
@@ -8527,7 +8531,7 @@ app.MapPost("/api/v1/auth/google", async (
 
     if (await findReader.ReadAsync())
     {
-        // Mevcut kullanÄ±cÄ± â€" gÃ¼ncelle
+        // Mevcut kullanıcı — güncelle
         userId = findReader.GetGuid(0);
         username = findReader.GetString(1);
         userEmail = findReader.GetString(2);
@@ -8550,7 +8554,7 @@ app.MapPost("/api/v1/auth/google", async (
         await findReader.CloseAsync();
         isNewUser = true;
 
-        // E-posta Google'dan alÄ±ndÄ±ÄŸÄ±ndan doÄŸrulanmÄ±ÅŸ kabul edilir
+        // E-posta Google'dan alındığından doğrulanmış kabul edilir
         var baseUsername = googleEmail.Split('@')[0]
             .Replace('.', '_')
             .Replace('-', '_');
@@ -8558,7 +8562,7 @@ app.MapPost("/api/v1/auth/google", async (
         if (baseUsername.Length < 3) baseUsername = "user_" + baseUsername;
         if (baseUsername.Length > 16) baseUsername = baseUsername[..16];
 
-        // Benzersiz username oluÅŸtur
+        // Benzersiz username oluştur
         username = baseUsername;
         var suffix = 0;
         while (true)
@@ -8648,13 +8652,13 @@ app.MapPost("/api/v1/auth/google/link", async (
     var firebaseToken = await firebaseAuth.VerifyIdTokenAsync(request.IdToken);
     if (firebaseToken is null)
     {
-        return BadRequest("INVALID_FIREBASE_TOKEN", "Google kimlik doÄŸrulama baÅŸarÄ±sÄ±z.");
+        return BadRequest("INVALID_FIREBASE_TOKEN", "Google kimlik doğrulama başarısız.");
     }
 
     var googleId = firebaseToken.Uid;
     await using var connection = await db.OpenConnectionAsync();
 
-    // Bu googleId baÅŸka birine baÄŸlÄ± mÄ±?
+    // Bu googleId başka birine bağlı mı?
     await using var checkCmd = new NpgsqlCommand(
         "SELECT id FROM users WHERE google_id = @googleId AND id != @userId",
         connection
@@ -8663,7 +8667,7 @@ app.MapPost("/api/v1/auth/google/link", async (
     checkCmd.Parameters.AddWithValue("userId", userId);
     if (await checkCmd.ExecuteScalarAsync() is not null)
     {
-        return Conflict("GOOGLE_ALREADY_LINKED", "Bu Google hesabÄ± baÅŸka bir kullanÄ±cÄ±ya baÄŸlÄ±.");
+        return Conflict("GOOGLE_ALREADY_LINKED", "Bu Google hesabı başka bir kullanıcıya bağlı.");
     }
 
     await using var updateCmd = new NpgsqlCommand(
@@ -8689,7 +8693,7 @@ app.MapDelete("/api/v1/auth/google", async (
 
     await using var connection = await db.OpenConnectionAsync();
 
-    // Google baÄŸlantÄ±sÄ±nÄ± kesmek iÃ§in ÅŸifre olmasÄ± ÅŸart (hesaba eriÅŸim kalmasÄ± iÃ§in)
+    // Google bağlantısını kesmek için şifre olması şart (hesaba erişim kalması için)
     await using var findCmd = new NpgsqlCommand(
         "SELECT password_hash FROM users WHERE id = @userId",
         connection
@@ -8699,7 +8703,7 @@ app.MapDelete("/api/v1/auth/google", async (
 
     if (string.IsNullOrEmpty(passwordHash))
     {
-        return BadRequest("PASSWORD_REQUIRED", "Google baÄŸlantÄ±sÄ±nÄ± kesmek iÃ§in Ã¶nce bir ÅŸifre belirlemelisiniz.");
+        return BadRequest("PASSWORD_REQUIRED", "Google bağlantısını kesmek için önce bir şifre belirlemelisiniz.");
     }
 
     await using var updateCmd = new NpgsqlCommand(
@@ -8745,7 +8749,7 @@ app.MapPost("/api/v1/auth/login", async (
 
     await using var connection = await db.OpenConnectionAsync();
 
-    // KullanÄ±cÄ± adÄ± veya e-posta ile bul
+    // Kullanıcı adı veya e-posta ile bul
     var identifier = request.Identifier.ToLowerInvariant();
     await using var findCmd = new NpgsqlCommand(
         """
@@ -8765,7 +8769,7 @@ app.MapPost("/api/v1/auth/login", async (
     if (!await reader.ReadAsync())
     {
         await bruteForce.RecordFailedAttemptAsync(bfIdentity);
-        return BadRequest("INVALID_CREDENTIALS", "KullanÄ±cÄ± adÄ± veya ÅŸifre hatalÄ±.");
+        return BadRequest("INVALID_CREDENTIALS", "Kullanıcı adı veya şifre hatalı.");
     }
 
     var userId = reader.GetGuid(0);
@@ -8782,21 +8786,21 @@ app.MapPost("/api/v1/auth/login", async (
 
     if (isBanned)
     {
-        return BadRequest("USER_BANNED", "HesabÄ±nÄ±z askÄ±ya alÄ±nmÄ±ÅŸtÄ±r.");
+        return BadRequest("USER_BANNED", "Hesabınız askıya alınmıştır.");
     }
 
     if (!emailVerified)
     {
-        return BadRequest("EMAIL_NOT_VERIFIED", "E-posta adresiniz doÄŸrulanmamÄ±ÅŸ.");
+        return BadRequest("EMAIL_NOT_VERIFIED", "E-posta adresiniz doğrulanmamış.");
     }
 
     if (passwordHash is null || !PasswordService.Verify(request.Password, passwordHash))
     {
         await bruteForce.RecordFailedAttemptAsync(bfIdentity);
-        return BadRequest("INVALID_CREDENTIALS", "KullanÄ±cÄ± adÄ± veya ÅŸifre hatalÄ±.");
+        return BadRequest("INVALID_CREDENTIALS", "Kullanıcı adı veya şifre hatalı.");
     }
 
-    // BaÅŸarÄ±lÄ± giriÅŸ â€" sayacÄ± temizle
+    // Başarılı giriş — sayacı temizle
     var backupCodeUsed = false;
     if (is2faEnabled)
     {
@@ -8808,7 +8812,7 @@ app.MapPost("/api/v1/auth/login", async (
             if (request.BackupCode is null)
             {
                 await bruteForce.RecordFailedAttemptAsync(bfIdentity);
-                return BadRequest("TWO_FACTOR_REQUIRED", "GeÃ§erli iki faktÃ¶rlÃ¼ doÄŸrulama kodu veya yedek kod gerekli.");
+                return BadRequest("TWO_FACTOR_REQUIRED", "Geçerli iki faktörlü doğrulama kodu veya yedek kod gerekli.");
             }
             backupCodeUsed = true;
         }
@@ -8831,7 +8835,7 @@ app.MapPost("/api/v1/auth/login", async (
         {
             await transaction.RollbackAsync();
             await bruteForce.RecordFailedAttemptAsync(bfIdentity);
-            return BadRequest("INVALID_BACKUP_CODE", "Yedek kod geÃ§ersiz veya daha Ã¶nce kullanÄ±ldÄ±.");
+            return BadRequest("INVALID_BACKUP_CODE", "Yedek kod geçersiz veya daha önce kullanıldı.");
         }
     }
 
@@ -8848,7 +8852,7 @@ app.MapPost("/api/v1/auth/login", async (
     insertRefresh.Parameters.AddWithValue("hash", refreshHash);
     await insertRefresh.ExecuteNonQueryAsync();
 
-    // CihazÄ± bu kullanÄ±cÄ±yla iliÅŸkilendir
+    // Cihazı bu kullanıcıyla ilişkilendir
     if (deviceId is not null)
     {
         await using var linkCmd = new NpgsqlCommand(
@@ -8981,7 +8985,7 @@ app.MapPost("/api/v1/auth/logout", async (
     return Results.NoContent();
 }).RequireRateLimiting("auth-strict");
 
-// â"€â"€ USER PROFILE â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── USER PROFILE ──────────────────────────────────────────────────────────────
 
 app.MapGet("/api/v1/users/me", async (
     HttpRequest httpRequest,
@@ -9016,7 +9020,7 @@ app.MapGet("/api/v1/users/me", async (
     cmd.Parameters.AddWithValue("id", userId);
 
     await using var reader = await cmd.ExecuteReaderAsync();
-    if (!await reader.ReadAsync()) return NotFound("USER_NOT_FOUND", "KullanÄ±cÄ± bulunamadÄ±.");
+    if (!await reader.ReadAsync()) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
 
     return Results.Ok(new UserProfile(
         reader.GetGuid(0),
@@ -9153,7 +9157,7 @@ app.MapGet("/api/v1/users/username-availability", async (
     username = username.Trim().ToLowerInvariant();
     if (!Regex.IsMatch(username, "^[a-z0-9_]{3,20}$"))
     {
-        return BadRequest("VALIDATION_ERROR", "KullanÄ±cÄ± adÄ± 3-20 karakter, yalnÄ±zca kÃ¼Ã§Ã¼k harf/rakam/alt Ã§izgi.");
+        return BadRequest("VALIDATION_ERROR", "Kullanıcı adı 3-20 karakter, yalnızca küçük harf/rakam/alt çizgi.");
     }
 
     var currentUserId = GetJwtPrincipal(httpRequest, jwtService) is { } principal
@@ -9246,7 +9250,7 @@ app.MapPut("/api/v1/users/me", async (
     existing.Parameters.AddWithValue("username", username);
     if (await existing.ExecuteScalarAsync() is not null)
     {
-        return Conflict("USERNAME_TAKEN", "Bu kullanÄ±cÄ± adÄ± zaten alÄ±nmÄ±ÅŸ.");
+        return Conflict("USERNAME_TAKEN", "Bu kullanıcı adı zaten alınmış.");
     }
 
     await using var command = new NpgsqlCommand(
@@ -9285,7 +9289,7 @@ app.MapPut("/api/v1/users/me", async (
     try
     {
         await using var reader = await command.ExecuteReaderAsync();
-        if (!await reader.ReadAsync()) return NotFound("USER_NOT_FOUND", "KullanÄ±cÄ± bulunamadÄ±.");
+        if (!await reader.ReadAsync()) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
 
         return Results.Ok(new UserProfile(
             reader.GetGuid(0),
@@ -9304,7 +9308,7 @@ app.MapPut("/api/v1/users/me", async (
     }
     catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
     {
-        return Conflict("USERNAME_TAKEN", "Bu kullanÄ±cÄ± adÄ± zaten alÄ±nmÄ±ÅŸ.");
+        return Conflict("USERNAME_TAKEN", "Bu kullanıcı adı zaten alınmış.");
     }
 });
 
@@ -9327,7 +9331,7 @@ app.MapPut("/api/v1/users/me/notification-preferences", async (
     command.Parameters.AddWithValue("id", userId);
     command.Parameters.Add("prefs", NpgsqlDbType.Jsonb).Value = JsonSerializer.Serialize(request);
     var affected = await command.ExecuteNonQueryAsync();
-    return affected == 0 ? NotFound("USER_NOT_FOUND", "KullanÃ„Â±cÃ„Â± bulunamadÃ„Â±.") : Results.NoContent();
+    return affected == 0 ? NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.") : Results.NoContent();
 });
 
 app.MapGet("/api/v1/users/me/notification-preferences", async (
@@ -9350,7 +9354,7 @@ app.MapGet("/api/v1/users/me/notification-preferences", async (
     var preferencesJson = await command.ExecuteScalarAsync() as string;
     if (preferencesJson is null)
     {
-        return NotFound("USER_NOT_FOUND", "KullanÃ„Â±cÃ„Â± bulunamadÃ„Â±.");
+        return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
     }
 
     NotificationPreferencesRequest preferences;
@@ -9852,7 +9856,7 @@ app.MapPost("/api/v1/users/me/blocked", async (
     var principal = GetJwtPrincipal(httpRequest, jwtService);
     if (principal is null) return Unauthorized();
     var userId = GetUserId(principal);
-    if (userId == request.UserId) return BadRequest("CANNOT_BLOCK_SELF", "Kendi hesabÃ„Â±nÃ„Â±zÃ„Â± engelleyemezsiniz.");
+    if (userId == request.UserId) return BadRequest("CANNOT_BLOCK_SELF", "Kendi hesabınızı engelleyemezsiniz.");
 
     await using var connection = await db.OpenConnectionAsync();
     await using var command = new NpgsqlCommand(
@@ -9867,7 +9871,7 @@ app.MapPost("/api/v1/users/me/blocked", async (
     command.Parameters.AddWithValue("blockerId", userId);
     command.Parameters.AddWithValue("blockedId", request.UserId);
     var affected = await command.ExecuteNonQueryAsync();
-    return affected == 0 ? NotFound("USER_NOT_FOUND", "Engellenecek kullanÃ„Â±cÃ„Â± bulunamadÃ„Â±.") : Results.NoContent();
+    return affected == 0 ? NotFound("USER_NOT_FOUND", "Engellenecek kullanıcı bulunamadı.") : Results.NoContent();
 });
 
 app.MapDelete("/api/v1/users/me/blocked/{blockedId:guid}", async (
@@ -9955,7 +9959,7 @@ app.MapGet("/api/v1/users/{username}/profile", async (
     );
     command.Parameters.AddWithValue("username", username);
     await using var reader = await command.ExecuteReaderAsync();
-    if (!await reader.ReadAsync()) return NotFound("USER_NOT_FOUND", "KullanÃ„Â±cÃ„Â± bulunamadÃ„Â±.");
+    if (!await reader.ReadAsync()) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
 
     return Results.Ok(new UserProfile(
         reader.GetGuid(0),
@@ -9995,7 +9999,7 @@ app.MapPost("/api/v1/auth/2fa/setup", async (
     command.Parameters.AddWithValue("secret", secret);
     var affected = await command.ExecuteNonQueryAsync();
     return affected == 0
-        ? NotFound("USER_NOT_FOUND", "KullanÃ„Â±cÃ„Â± bulunamadÃ„Â±.")
+        ? NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.")
         : Results.Ok(new TwoFactorSetupResponse(secret, otpAuthUrl));
 });
 
@@ -10020,7 +10024,7 @@ app.MapPost("/api/v1/auth/2fa/enable", async (
     var secret = await select.ExecuteScalarAsync() as string;
     if (secret is null || !TotpService.Validate(secret, request.Code))
     {
-        return BadRequest("INVALID_TOTP_CODE", "DoÃ„Å¸rulama kodu hatalÃ„Â±.");
+        return BadRequest("INVALID_TOTP_CODE", "Doğrulama kodu hatalı.");
     }
 
     await using var update = new NpgsqlCommand(
@@ -10049,7 +10053,7 @@ app.MapPost("/api/v1/auth/2fa/disable", async (
     );
     command.Parameters.AddWithValue("id", userId);
     var affected = await command.ExecuteNonQueryAsync();
-    return affected == 0 ? NotFound("USER_NOT_FOUND", "KullanÃ„Â±cÃ„Â± bulunamadÃ„Â±.") : Results.NoContent();
+    return affected == 0 ? NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.") : Results.NoContent();
 });
 
 app.MapGet("/api/v1/users/me/sessions", async (
@@ -10211,7 +10215,7 @@ app.MapDelete("/api/v1/users/me", async (
     deactivateDevice.Parameters.AddWithValue("deviceToken", $"deleted:{deviceId:N}:{Guid.NewGuid():N}");
     await deactivateDevice.ExecuteNonQueryAsync();
 
-    // Hesap kurtarma tokeni oluÅŸtur
+    // Hesap kurtarma tokeni oluştur
     var recoveryRaw = $"{Guid.NewGuid():N}{Guid.NewGuid():N}";
     var recoveryHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(recoveryRaw)));
     await using var recoveryCmd = new NpgsqlCommand(
@@ -10232,7 +10236,7 @@ app.MapDelete("/api/v1/users/me", async (
     return Results.NoContent();
 });
 
-// â"€â"€ PUBLIC USER POSTS â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── PUBLIC USER POSTS ─────────────────────────────────────────────────────────
 
 app.MapGet("/api/v1/users/{username}/posts", async (
     string username,
@@ -10268,7 +10272,7 @@ app.MapGet("/api/v1/users/{username}/posts", async (
     );
     ownerCmd.Parameters.AddWithValue("username", username);
     var ownerId = await ownerCmd.ExecuteScalarAsync();
-    if (ownerId is null) return NotFound("USER_NOT_FOUND", "KullanÄ±cÄ± bulunamadÄ±.");
+    if (ownerId is null) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
 
     await using var countCmd = new NpgsqlCommand(
         "SELECT COUNT(*) FROM posts WHERE user_id = @ownerId AND status = 'active'",
@@ -10306,7 +10310,7 @@ app.MapGet("/api/v1/users/{username}/posts", async (
     return Results.Ok(new FeedResponse(posts, new Pagination(page, limit, total, offset + posts.Count < total)));
 });
 
-// â"€â"€ MY COMMENTS â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── MY COMMENTS ───────────────────────────────────────────────────────────────
 
 app.MapGet("/api/v1/users/me/comments", async (
     HttpRequest httpRequest,
@@ -10632,7 +10636,7 @@ app.MapGet("/api/v1/users/me/weekly-stats", async (
     ));
 });
 
-// â"€â"€ COMMENT PIN â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── COMMENT PIN ───────────────────────────────────────────────────────────────
 
 app.MapPost("/api/v1/posts/{id:guid}/comments/pin", async (
     Guid id,
@@ -10663,7 +10667,7 @@ app.MapPost("/api/v1/posts/{id:guid}/comments/pin", async (
     if (await ownerCmd.ExecuteScalarAsync() is null)
         return Forbid("NOT_POST_OWNER", "Sadece post sahibi yorum sabitleyebilir.");
 
-    // Yorumun bu posta ait olduÄŸunu doÄŸrula
+    // Yorumun bu posta ait olduğunu doğrula
     await using var checkCmd = new NpgsqlCommand(
         "SELECT 1 FROM comments WHERE id = @commentId AND post_id = @postId AND status = 'active'",
         connection
@@ -10671,10 +10675,10 @@ app.MapPost("/api/v1/posts/{id:guid}/comments/pin", async (
     checkCmd.Parameters.AddWithValue("commentId", commentId);
     checkCmd.Parameters.AddWithValue("postId", id);
     if (await checkCmd.ExecuteScalarAsync() is null)
-        return NotFound("COMMENT_NOT_FOUND", "Yorum bulunamadÄ±.");
+        return NotFound("COMMENT_NOT_FOUND", "Yorum bulunamadı.");
 
     await using var transaction = await connection.BeginTransactionAsync();
-    // Mevcut sabiti kaldÄ±r
+    // Mevcut sabiti kaldır
     await using var unpinCmd = new NpgsqlCommand(
         "UPDATE comments SET is_pinned = FALSE WHERE post_id = @postId AND is_pinned = TRUE",
         connection, transaction
@@ -10714,7 +10718,7 @@ app.MapDelete("/api/v1/posts/{id:guid}/comments/pin", async (
     ownerCmd.Parameters.AddWithValue("postId", id);
     ownerCmd.Parameters.AddWithValue("userId", userId);
     if (await ownerCmd.ExecuteScalarAsync() is null)
-        return Forbid("NOT_POST_OWNER", "Sadece post sahibi sabiti kaldÄ±rabilir.");
+        return Forbid("NOT_POST_OWNER", "Sadece post sahibi sabiti kaldırabilir.");
 
     await using var cmd = new NpgsqlCommand(
         "UPDATE comments SET is_pinned = FALSE WHERE post_id = @postId AND is_pinned = TRUE",
@@ -10779,7 +10783,7 @@ app.MapGet("/api/v1/users/me/posts", async (
     return Results.Ok(new FeedResponse(posts, new Pagination(page, limit, total, offset + posts.Count < total)));
 });
 
-// â"€â"€ CHANGE PASSWORD â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── CHANGE PASSWORD ───────────────────────────────────────────────────────────
 
 app.MapGet("/api/v1/users/me/saved", async (
     HttpRequest httpRequest,
@@ -10868,10 +10872,10 @@ app.MapPut("/api/v1/users/me/password", async (
     await reader.CloseAsync();
 
     if (authProvider == "google")
-        return BadRequest("GOOGLE_ACCOUNT", "Google ile giriÅŸ yapan hesaplarda ÅŸifre deÄŸiÅŸtirilemez.");
+        return BadRequest("GOOGLE_ACCOUNT", "Google ile giriş yapan hesaplarda şifre değiştirilemez.");
 
     if (passwordHash is null || !PasswordService.Verify(request.CurrentPassword, passwordHash))
-        return BadRequest("WRONG_PASSWORD", "Mevcut ÅŸifre hatalÄ±.");
+        return BadRequest("WRONG_PASSWORD", "Mevcut şifre hatalı.");
 
     var newHash = PasswordService.Hash(request.NewPassword);
     await using var updateCmd = new NpgsqlCommand(
@@ -10885,7 +10889,7 @@ app.MapPut("/api/v1/users/me/password", async (
     return Results.NoContent();
 });
 
-// â"€â"€ FORGOT PASSWORD â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── FORGOT PASSWORD ───────────────────────────────────────────────────────────
 
 app.MapPost("/api/v1/auth/forgot-password", async (
     ForgotPasswordRequest request,
@@ -10936,7 +10940,7 @@ app.MapPost("/api/v1/auth/forgot-password", async (
     return Results.Ok(new MessageResponse("Eğer bu e-posta kayıtlıysa kod gönderildi."));
 }).RequireRateLimiting("auth-strict");
 
-// â"€â"€ RESET PASSWORD â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── RESET PASSWORD ────────────────────────────────────────────────────────────
 
 app.MapPost("/api/v1/auth/reset-password", async (
     ResetPasswordRequest request,
@@ -10960,7 +10964,7 @@ app.MapPost("/api/v1/auth/reset-password", async (
     otpCmd.Parameters.AddWithValue("email", otpKey);
     await using var otpReader = await otpCmd.ExecuteReaderAsync();
     if (!await otpReader.ReadAsync())
-        return BadRequest("OTP_NOT_FOUND", "Aktif sÄ±fÄ±rlama kodu bulunamadÄ±.");
+        return BadRequest("OTP_NOT_FOUND", "Aktif sıfırlama kodu bulunamadı.");
 
     var otpId = otpReader.GetGuid(0);
     var storedHash = otpReader.GetString(1);
@@ -10969,10 +10973,10 @@ app.MapPost("/api/v1/auth/reset-password", async (
     await otpReader.CloseAsync();
 
     if (expiresAt < DateTimeOffset.UtcNow)
-        return BadRequest("OTP_EXPIRED", "SÄ±fÄ±rlama kodu sÃ¼resi dolmuÅŸ. Yeniden gÃ¶nder.");
+        return BadRequest("OTP_EXPIRED", "Sıfırlama kodu süresi dolmuş. Yeniden gönder.");
 
     if (attempts >= 3)
-        return BadRequest("OTP_MAX_ATTEMPTS", "Ã‡ok fazla hatalÄ± deneme. Yeni kod isteyin.");
+        return BadRequest("OTP_MAX_ATTEMPTS", "Çok fazla hatalı deneme. Yeni kod isteyin.");
 
     if (!string.Equals(storedHash, otpHash, StringComparison.OrdinalIgnoreCase))
     {
@@ -10982,10 +10986,10 @@ app.MapPost("/api/v1/auth/reset-password", async (
         );
         incCmd.Parameters.AddWithValue("id", otpId);
         await incCmd.ExecuteNonQueryAsync();
-        return BadRequest("OTP_INVALID", $"Kod hatalÄ±. {2 - attempts} deneme hakkÄ±n kaldÄ±.");
+        return BadRequest("OTP_INVALID", $"Kod hatalı. {2 - attempts} deneme hakkın kaldı.");
     }
 
-    // OTP geÃ§erli â€" ÅŸifreyi gÃ¼ncelle ve OTP'yi sil
+    // OTP geçerli — şifreyi güncelle ve OTP'yi sil
     var newHash = PasswordService.Hash(request.NewPassword);
     await using var transaction = await connection.BeginTransactionAsync();
 
@@ -11146,7 +11150,7 @@ app.MapGet("/api/v1/admin/analytics/trends", async (
     days = Math.Clamp(days, 1, 30);
     await using var connection = await db.OpenConnectionAsync();
 
-    // GÃ¼nlÃ¼k post sayÄ±larÄ±
+    // Günlük post sayıları
     await using var postCmd = new NpgsqlCommand(
         """
         SELECT series.day::date, COUNT(p.id)
@@ -11169,7 +11173,7 @@ app.MapGet("/api/v1/admin/analytics/trends", async (
     }
     await postReader.CloseAsync();
 
-    // GÃ¼nlÃ¼k oy sayÄ±larÄ±
+    // Günlük oy sayıları
     await using var voteCmd = new NpgsqlCommand(
         """
         SELECT series.day::date, COUNT(v.post_id)
@@ -13403,7 +13407,7 @@ app.MapGet("/api/v1/auth/2fa/backup-codes/count", async (
     return Results.Ok(new { remaining = count });
 });
 
-// â"€â"€ E-posta DeÄŸiÅŸtirme â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── E-posta Değiştirme ────────────────────────────────────────────────────────
 
 app.MapPost("/api/v1/auth/change-email/request", async (
     ChangeEmailRequest request,
@@ -13540,7 +13544,7 @@ app.MapPost("/api/v1/auth/change-email/confirm", async (
     return Results.NoContent();
 }).RequireRateLimiting("auth-strict");
 
-// â"€â"€ Hesap Kurtarma â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Hesap Kurtarma ────────────────────────────────────────────────────────────
 
 app.MapPost("/api/v1/auth/recover-account", async (
     RecoverAccountRequest request,
@@ -13715,6 +13719,9 @@ static IResult Unauthorized() =>
 static IResult Forbid(string code, string message) =>
     Results.Json(new ErrorEnvelope(new ErrorBody(code, message)), statusCode: StatusCodes.Status403Forbidden);
 
+static IResult ServiceUnavailable(string code, string message) =>
+    Results.Json(new ErrorEnvelope(new ErrorBody(code, message)), statusCode: StatusCodes.Status503ServiceUnavailable);
+
 static bool IsSupportedPlatform(string platform) => platform is "android" or "ios" or "web";
 
 static string GetWebBaseUrl(IConfiguration configuration) =>
@@ -13737,10 +13744,10 @@ static bool IsCrawler(string userAgent)
 static string ToSlug(string title, Guid id)
 {
     var normalized = title.ToLowerInvariant()
-        .Replace("ÄŸ", "g").Replace("Ã¼", "u").Replace("ÅŸ", "s")
-        .Replace("Ä±", "i").Replace("Ã¶", "o").Replace("Ã§", "c")
-        .Replace("Ä°", "i").Replace("Ãœ", "u").Replace("Å", "s")
-        .Replace("Ä", "g").Replace("Ã–", "o").Replace("Ã‡", "c");
+        .Replace("ğ", "g").Replace("ü", "u").Replace("ş", "s")
+        .Replace("ı", "i").Replace("ö", "o").Replace("ç", "c")
+        .Replace("İ", "i").Replace("Ü", "u").Replace("Ş", "s")
+        .Replace("Ğ", "g").Replace("Ö", "o").Replace("Ç", "c");
     normalized = Regex.Replace(normalized, @"[^a-z0-9\s-]", "");
     normalized = Regex.Replace(normalized, @"\s+", "-").Trim('-');
     if (normalized.Length > 50) normalized = normalized[..50].TrimEnd('-');
@@ -13756,7 +13763,7 @@ static string BuildOgHtml(
     var hakliPct = total > 0 ? (int)Math.Round(hakli * 100.0 / total) : 0;
 
     var description = total >= 10
-        ? $"{total} kiÅŸi oyladÄ± Â· %{hakliPct} HaklÄ± Â· Sen de karar ver"
+        ? $"{total} kişi oyladı · %{hakliPct} Haklı · Sen de karar ver"
         : TruncateForMeta(content, 160);
 
     var postUrl = $"{webBaseUrl}/posts/{slug}";
@@ -13923,14 +13930,14 @@ static IResult? ValidateRequest(object request)
         return null;
     }
 
-    var message = results.FirstOrDefault()?.ErrorMessage ?? "Ä°stek doÄŸrulamasÄ± baÅŸarÄ±sÄ±z.";
+    var message = results.FirstOrDefault()?.ErrorMessage ?? "İstek doğrulaması başarısız.";
     return BadRequest("VALIDATION_ERROR", message);
 }
 
-// â"€â"€ Karma + Verdict Milestone â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Karma + Verdict Milestone ─────────────────────────────────────────────────
 
-// Post oy sayÄ±sÄ± milestone'larÄ±nÄ± kontrol eder ve karma gÃ¼nceller.
-// oldTotal â†' newTotal geÃ§iÅŸinde hangi eÅŸikler aÅŸÄ±ldÄ±ysa tek seferlik karma verir.
+// Post oy sayısı milestone'larını kontrol eder ve karma günceller.
+// oldTotal → newTotal geçişinde hangi eşikler aşıldıysa tek seferlik karma verir.
 static async Task CheckPostVoteMilestoneAsync(
     NpgsqlConnection connection,
     NpgsqlTransaction transaction,
@@ -13939,7 +13946,7 @@ static async Task CheckPostVoteMilestoneAsync(
     int newTotal
 )
 {
-    // post sahibi user_id ve device_id'yi Ã§ek
+    // post sahibi user_id ve device_id'yi çek
     await using var ownerCmd = new NpgsqlCommand(
         "SELECT user_id, device_id FROM posts WHERE id = @postId",
         connection,
@@ -13952,7 +13959,7 @@ static async Task CheckPostVoteMilestoneAsync(
     var ownerDeviceId = ownerReader.GetGuid(1);
     await ownerReader.CloseAsync();
 
-    // Milestone tablosu: eÅŸik â†' karma_delta
+    // Milestone tablosu: eşik → karma_delta
     var milestones = new (int Threshold, int Delta, string NotifBody)[]
     {
         (10, 1, "İlk tepkiler geliyor. %{pct} Haklı buluyor."),
@@ -13962,7 +13969,7 @@ static async Task CheckPostVoteMilestoneAsync(
         (250, 10, "Postun büyük dikkat çekiyor. %{pct} Haklı buluyor."),
     };
 
-    // Oy oranÄ±nÄ± hesapla (notification mesajÄ± iÃ§in)
+    // Oy oranını hesapla (notification mesajı için)
     await using var votesCmd = new NpgsqlCommand(
         "SELECT vote_count_hakli, vote_count_haksiz FROM posts WHERE id = @postId",
         connection,
@@ -13984,7 +13991,7 @@ static async Task CheckPostVoteMilestoneAsync(
     {
         if (oldTotal < threshold && newTotal >= threshold)
         {
-            // Karma gÃ¼ncelle (sadece kayÄ±tlÄ± kullanÄ±cÄ± ise)
+            // Karma güncelle (sadece kayıtlı kullanıcı ise)
             if (userId.HasValue)
             {
                 await using var karmaCmd = new NpgsqlCommand(
@@ -14015,7 +14022,7 @@ static async Task CheckPostVoteMilestoneAsync(
                 }
             }
 
-            // Verdict milestone bildirimi (cihaz bazlÄ± â€" kayÄ±tlÄ± veya misafir)
+            // Verdict milestone bildirimi (cihaz bazlı — kayıtlı veya misafir)
             var body = notifTemplate.Replace("%{pct}", $"%{hakliPct}");
             await using var notifCmd = new NpgsqlCommand(
                 """
@@ -14033,7 +14040,7 @@ static async Task CheckPostVoteMilestoneAsync(
     }
 }
 
-// Comment upvote milestone'larÄ±nÄ± kontrol eder.
+// Comment upvote milestone'larını kontrol eder.
 static async Task CheckCommentUpvoteMilestoneAsync(
     NpgsqlConnection connection,
     NpgsqlTransaction transaction,
@@ -14134,6 +14141,8 @@ static async Task MarkReportsForTargetAsync(
     await command.ExecuteNonQueryAsync();
 }
 
+// Eski metin 182'ye (bugün MHRS randevu hattı) ve satılık bir alan adına yönlendiriyordu.
+// Türkiye'de ulusal intihar hattı olmadığından tek doğru yönlendirme 112 Acil Çağrı.
 static async Task InsertCrisisSupportNotificationForContentAsync(
     NpgsqlConnection connection,
     Guid deviceId,
@@ -14146,7 +14155,7 @@ static async Task InsertCrisisSupportNotificationForContentAsync(
             @deviceId,
             'crisis_support',
             'Destek alabilirsin',
-            'Zor bir an yaşıyorsan yalnız değilsin. 182 hattını arayabilir veya imece.org üzerinden destek kaynaklarına ulaşabilirsin.',
+            'Zor bir an yaşıyorsan yalnız değilsin. Kendini güvende hissetmiyorsan hemen 112 Acil Çağrı Merkezini ara. Güvendiğin biriyle ya da bir sağlık profesyoneliyle konuşmak da iyi gelebilir.',
             @postId,
             @payload::jsonb
         )
@@ -14157,8 +14166,7 @@ static async Task InsertCrisisSupportNotificationForContentAsync(
     command.Parameters.AddWithValue("postId", postId);
     command.Parameters.AddWithValue("payload", JsonSerializer.Serialize(new
     {
-        support_phone = "182",
-        support_url = "https://www.imece.org"
+        support_phone = "112"
     }));
     await command.ExecuteNonQueryAsync();
 }

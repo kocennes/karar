@@ -5,8 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('web push production contract', () {
     test('requires a VAPID key for secure web builds', () {
-      final appConfig =
-          File('lib/core/config/app_config.dart').readAsStringSync();
+      // Windows checkout'larında (core.autocrlf) satır sonları CRLF gelebilir.
+      final appConfig = File('lib/core/config/app_config.dart')
+          .readAsStringSync()
+          .replaceAll('\r\n', '\n');
 
       expect(
           appConfig, contains("String.fromEnvironment(\n    'WEB_VAPID_KEY'"));

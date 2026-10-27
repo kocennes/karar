@@ -12,17 +12,23 @@ void main() {
       expect(screen, contains('Ne kadar süre saklıyoruz?'));
     });
 
-    test('screen content aligns with docs/privacy.md data points', () {
+    test('screen content aligns with assets/legal/privacy.md data points', () {
       final screen = _read('lib/features/legal/privacy_summary_screen.dart');
+      final policy = _read('assets/legal/privacy.md');
 
       // Veri tipleri
       expect(screen, contains('Cihaz'));
       expect(screen, contains('IP'));
       expect(screen, contains('FCM'));
+      expect(policy, contains('Cihaz fingerprint'));
+      expect(policy, contains('IP adresi'));
+      expect(policy, contains('FCM token'));
 
       // Saklama süreleri
       expect(screen, contains('90 gün'));
       expect(screen, contains('30 gün'));
+      expect(policy, contains('90 gün'));
+      expect(policy, contains('30 gün'));
     });
 
     test('route /legal/privacy-summary is registered in router', () {

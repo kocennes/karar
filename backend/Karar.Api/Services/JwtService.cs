@@ -15,7 +15,14 @@ public sealed class JwtService
     private readonly string _algorithm;
     private readonly TimeSpan _accessTokenLifetime = TimeSpan.FromMinutes(15);
 
-    public JwtService(IConfiguration configuration)
+    // Admin oturum suresi. Login yanitindaki expiresAt da bu degerden uretilir (tek kaynak).
+    public static readonly TimeSpan AdminTokenLifetime = TimeSpan.FromHours(4);
+
+    // appsettings.json ile yayinlanan varsayilan HS256 secret'i herkes bilir; bununla imzalanan
+    // token (admin dahil) gecerli sayilacagi icin yalnizca Development/Testing'de kabul edilir.
+    private const string DefaultSecretPrefix = "CHANGE_ME";
+
+    public JwtService(IConfiguration configuration, IHostEnvironment? environment = null)
     {
         _issuer = configuration["Jwt:Issuer"] ?? "karar-api";
         _audience = configuration["Jwt:Audience"] ?? "karar-mobile";
@@ -36,6 +43,11 @@ public sealed class JwtService
                 ?? throw new InvalidOperationException("Jwt:Secret config eksik.");
             if (secret.Length < 32)
                 throw new InvalidOperationException("Jwt:Secret en az 32 karakter olmali.");
+            var allowsDefaultSecret = environment is not null &&
+                (environment.IsDevelopment() || environment.IsEnvironment("Testing"));
+            if (!allowsDefaultSecret && secret.StartsWith(DefaultSecretPrefix, StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    "Jwt:Secret varsayilan degerde; Development/Testing disinda Jwt:Secret veya Jwt:PrivateKeyPem tanimlanmalidir.");
 
             _signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret))
             {
@@ -46,7 +58,7 @@ public sealed class JwtService
         }
     }
 
-    public string GenerateAdminToken(string email)
+    public (string Token, DateTimeOffset ExpiresAt) GenerateAdminToken(string email)
     {
         var claims = new[]
         {
@@ -56,15 +68,19 @@ public sealed class JwtService
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
         };
 
+        // JWT "exp" saniye hassasiyetindedir; yanittaki expiresAt token'daki exp ile birebir ayni olsun.
+        var expiresAt = DateTimeOffset.FromUnixTimeSeconds(
+            DateTimeOffset.UtcNow.Add(AdminTokenLifetime).ToUnixTimeSeconds());
+
         var token = new JwtSecurityToken(
             issuer: _issuer,
             audience: _audience,
             claims: claims,
-            expires: DateTime.UtcNow.AddHours(8),
+            expires: expiresAt.UtcDateTime,
             signingCredentials: new SigningCredentials(_signingKey, _algorithm)
         );
 
-        return new JwtSecurityTokenHandler().WriteToken(token);
+        return (new JwtSecurityTokenHandler().WriteToken(token), expiresAt);
     }
 
     public string GenerateAccessToken(Guid userId, string username)
@@ -104,7 +120,11 @@ public sealed class JwtService
     {
         try
         {
-            var handler = new JwtSecurityTokenHandler();
+            // MapInboundClaims=false: claim'ler token'a yazildigi adla gelir ("sub", "email",
+            // "unique_name"). Varsayilan esleme bunlari ClaimTypes.NameIdentifier/Email/Name'e
+            // cevirdigi icin JwtRegisteredClaimNames ile yapilan okumalar null donuyordu
+            // (admin JWT'leri bu yuzden hep reddediliyordu).
+            var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
             var principal = handler.ValidateToken(token, new TokenValidationParameters
             {
                 ValidateIssuer = true,

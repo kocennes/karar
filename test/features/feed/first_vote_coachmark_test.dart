@@ -70,7 +70,7 @@ void main() {
   testWidgets('first user sees first vote coachmark', (tester) async {
     await pumpFeed(tester, FeedState(posts: samplePosts));
 
-    expect(find.text('Ilk oyunu at'), findsOneWidget);
+    expect(find.text('İlk oyunu at'), findsOneWidget);
   });
 
   testWidgets('coachmark is hidden after voting', (tester) async {
@@ -81,11 +81,11 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
-    expect(find.text('Ilk oyunu at'), findsNothing);
+    expect(find.text('İlk oyunu at'), findsNothing);
 
     await pumpFeed(tester, FeedState(posts: samplePosts));
 
-    expect(find.text('Ilk oyunu at'), findsNothing);
+    expect(find.text('İlk oyunu at'), findsNothing);
   });
 
   testWidgets('coachmark is hidden after dismiss', (tester) async {
@@ -97,16 +97,16 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
-    expect(find.text('Ilk oyunu at'), findsNothing);
+    expect(find.text('İlk oyunu at'), findsNothing);
 
     await pumpFeed(tester, FeedState(posts: samplePosts));
 
-    expect(find.text('Ilk oyunu at'), findsNothing);
+    expect(find.text('İlk oyunu at'), findsNothing);
   });
 
   testWidgets('coachmark is hidden when feed is empty', (tester) async {
     await pumpFeed(tester, FeedState());
 
-    expect(find.text('Ilk oyunu at'), findsNothing);
+    expect(find.text('İlk oyunu at'), findsNothing);
   });
 }

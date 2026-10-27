@@ -9,7 +9,7 @@ Bu README, code review toplantisi icin projenin teknik kapsamini, deploy yapisin
 | Parca | Teknoloji | Canli/Repo |
 |---|---|---|
 | Mobil + Web uygulama | Flutter 3.x, Riverpod, GoRouter, Dio | Firebase Hosting: `https://judge-app-karar.web.app` |
-| Backend API | ASP.NET Core 8 Minimal API | Render: `https://karar-oq5t.onrender.com` |
+| Backend API | ASP.NET Core 10 (.NET 10) Minimal API | Render: `https://karar-oq5t.onrender.com` |
 | Admin panel | Next.js 14, TypeScript, Tailwind, Radix UI | Vercel: `https://karar-admin.vercel.app` |
 | Ana repo | Flutter + backend + infra | `https://github.com/kocennes/karar` |
 | Admin repo | Private Next.js admin panel | `https://github.com/kocennes/karar_admin` |
@@ -82,14 +82,14 @@ Sprint onceligi genel olarak:
 
 ### Backend
 
-- ASP.NET Core 8 Minimal API
+- ASP.NET Core 10 (.NET 10) Minimal API
 - PostgreSQL 15
 - Redis 7
 - JWT auth
 - Argon2 password hashing
 - Firebase Admin SDK
 - MailKit SMTP
-- ImageSharp ile dinamik OG/story gorsel uretimi
+- SkiaSharp ile dinamik OG/story gorsel uretimi ve yuklenen gorsellerin guvenli islenmesi (EXIF/GPS temizleme)
 - Serilog structured logging
 - Health checks
 
@@ -120,7 +120,7 @@ Flutter Mobile/Web
         |
         | HTTPS / JSON
         v
-ASP.NET Core 8 API  ---- PostgreSQL / Neon
+ASP.NET Core 10 API ---- PostgreSQL / Neon
         |                  |
         |                  +-- Ana veri: users, posts, votes, comments, reports,
         |                      notifications, admin actions, automod rules
@@ -572,13 +572,14 @@ Backend:
 - `ConnectionStrings__Redis`
 - `Redis__Password`
 - `Redis__Ssl`
-- `Jwt__Secret` veya ileride RS256 key pair
+- `Jwt__Secret` veya ileride RS256 key pair (appsettings.json'daki `CHANGE_ME...` varsayilani Development/Testing disinda reddedilir)
 - `Admin__Email`
-- `Admin__Password` veya `Admin__PasswordHash`
-- `Admin__Token`
-- `Email__SmtpUser`
-- `Email__SmtpPass`
+- `Admin__Password` veya `Admin__PasswordHash` (varsayilan `dev-admin-password` Development/Testing disinda reddedilir)
+- `Admin__IpAllowlist` (opsiyonel, virgulle ayrilmis IP listesi)
+- `Brevo__ApiKey`, `Resend__ApiKey` veya `Email__SmtpUser` + `Email__SmtpPass` (en az biri Development/Testing disinda, Staging dahil, zorunlu: admin girisi e-posta OTP ister; kod gonderilemezse giris `503 OTP_DELIVERY_FAILED` ile reddedilir)
 - `Email__FromAddress`
+
+Admin API statik token kabul etmez (`Admin__Token` ve `Admin__SkipEmailOtp` kaldirildi; tanimliysa silinmeli). Admin panel `POST /api/v1/admin/auth/login` yanitindaki `accessToken` JWT'sini `Authorization: Bearer <accessToken>` ile gonderir; token `expiresAt` aninda (4 saat) sona erer.
 - `Storage__Provider`
 - `Supabase__Url`
 - `Supabase__Key`

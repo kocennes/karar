@@ -5,7 +5,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/api_client.dart';
 import '../api/api_endpoints.dart';
-import 'judgment_loop_tracker.dart';
 
 class AnalyticsService {
   AnalyticsService({ApiClient? apiClient}) : _apiClient = apiClient;
