@@ -4,6 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
 
@@ -17,6 +18,12 @@ import 'shared/widgets/offline_view.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   usePathUrlStrategy();
+  LicenseRegistry.addLicense(() async* {
+    final text = await rootBundle.loadString(
+      'assets/fonts/plus_jakarta_sans/OFL.txt',
+    );
+    yield LicenseEntryWithLineBreaks(['Plus Jakarta Sans'], text);
+  });
 
   try {
     await Firebase.initializeApp(
@@ -97,7 +104,7 @@ class _BootstrapAppState extends State<_BootstrapApp> {
       return const MaterialApp(
         debugShowCheckedModeBanner: false,
         home: Scaffold(
-          backgroundColor: Color(0xFF6366F1), // AppColors.primary
+          backgroundColor: Color(0xFF7D50F0), // AppColors.primary
           body: Center(
             child: CircularProgressIndicator(color: Colors.white),
           ),

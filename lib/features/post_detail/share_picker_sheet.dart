@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,7 +5,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../core/providers.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/karar_tokens.dart';
 import '../../shared/models/post.dart';
+import '../../shared/widgets/karar_pressable.dart';
+import '../../shared/widgets/karar_sheet.dart';
 import 'share_card_widget.dart';
 
 class SharePickerSheet extends ConsumerStatefulWidget {
@@ -16,8 +18,8 @@ class SharePickerSheet extends ConsumerStatefulWidget {
   final Post post;
 
   static Future<void> show(BuildContext context, Post post) {
-    return showModalBottomSheet<void>(
-      context: context,
+    return showKararSheet<void>(
+      context,
       builder: (_) => SharePickerSheet(post: post),
     );
   }
@@ -158,57 +160,53 @@ class _SharePickerSheetState extends ConsumerState<SharePickerSheet> {
   Widget build(BuildContext context) {
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 16),
+        padding: const EdgeInsets.only(bottom: 20),
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Theme.of(context)
-                    .colorScheme
-                    .onSurfaceVariant
-                    .withValues(alpha: 0.4),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Nasıl Paylaşmak İstersin?',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 20),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                _OptionButton(
-                  icon: Icons.link_rounded,
-                  label: 'Link\nPaylaş',
-                  onTap: () => _shareLink(context),
-                ),
-                const SizedBox(width: 16),
-                _OptionButton(
-                  icon: Icons.image_outlined,
-                  label: 'Kart\nOluştur',
-                  onTap: () => _showCardPreview(context),
-                ),
-                const SizedBox(width: 16),
-                _OptionButton(
-                  icon: Icons.auto_stories_outlined,
-                  label: 'Hikaye\nPaylaş',
-                  onTap: _storyLoading ? null : () => _shareStory(context),
-                  loading: _storyLoading,
-                ),
-              ],
+            KararSheetHeader(
+              title: 'Nasıl Paylaşmak İstersin?',
+              onClose: () => Navigator.pop(context),
             ),
             const SizedBox(height: 12),
-            _OptionButton(
-              icon: Icons.copy_rounded,
-              label: 'Linki\nKopyala',
-              onTap: () => _copyLink(context),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: _OptionButton(
+                      icon: Icons.link_rounded,
+                      label: 'Link\nPaylaş',
+                      onTap: () => _shareLink(context),
+                    ),
+                  ),
+                  Expanded(
+                    child: _OptionButton(
+                      icon: Icons.image_outlined,
+                      label: 'Kart\nOluştur',
+                      onTap: () => _showCardPreview(context),
+                    ),
+                  ),
+                  Expanded(
+                    child: _OptionButton(
+                      icon: Icons.auto_stories_outlined,
+                      label: 'Hikaye\nPaylaş',
+                      onTap: _storyLoading ? null : () => _shareStory(context),
+                      loading: _storyLoading,
+                    ),
+                  ),
+                  Expanded(
+                    child: _OptionButton(
+                      icon: Icons.copy_rounded,
+                      label: 'Linki\nKopyala',
+                      onTap: () => _copyLink(context),
+                    ),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 8),
           ],
         ),
       ),
@@ -216,6 +214,7 @@ class _SharePickerSheetState extends ConsumerState<SharePickerSheet> {
   }
 }
 
+/// Share target: 56 px muted circle + two-line 12/700 label.
 class _OptionButton extends StatelessWidget {
   const _OptionButton({
     required this.icon,
@@ -231,34 +230,46 @@ class _OptionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return InkWell(
+    final kc = context.kc;
+    return KararPressable(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        width: 100,
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        decoration: BoxDecoration(
-          border: Border.all(color: scheme.outlineVariant),
-          borderRadius: BorderRadius.circular(12),
-        ),
+      semanticLabel: label.replaceAll('\n', ' '),
+      focusRadius: KararRadius.tile,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            loading
-                ? SizedBox(
-                    width: 28,
-                    height: 28,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: scheme.primary,
-                    ),
-                  )
-                : Icon(icon, size: 28),
+            Container(
+              width: 56,
+              height: 56,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: kc.muted,
+                shape: BoxShape.circle,
+              ),
+              child: loading
+                  ? SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: kc.primary,
+                      ),
+                    )
+                  : Icon(icon, size: 24, color: kc.text1),
+            ),
             const SizedBox(height: 8),
             Text(
               label,
               textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodySmall,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: AppTypography.meta.copyWith(
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0,
+                color: kc.text1,
+              ),
             ),
           ],
         ),
@@ -305,7 +316,7 @@ class _CardPreviewScreenState extends State<_CardPreviewScreen> {
         actions: [
           if (_sharing)
             const Padding(
-              padding: EdgeInsets.all(16),
+              padding: EdgeInsets.all(12),
               child: SizedBox(
                 width: 20,
                 height: 20,
@@ -315,17 +326,20 @@ class _CardPreviewScreenState extends State<_CardPreviewScreen> {
           else
             TextButton.icon(
               onPressed: _share,
-              icon: const Icon(Icons.share_rounded),
+              icon: const Icon(Icons.send_rounded, size: 20),
               label: const Text('Paylaş'),
             ),
         ],
       ),
       body: Center(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
-          child: RepaintBoundary(
-            key: _repaintKey,
-            child: ShareCardWidget(post: widget.post),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: RepaintBoundary(
+              key: _repaintKey,
+              child: ShareCardWidget(post: widget.post),
+            ),
           ),
         ),
       ),

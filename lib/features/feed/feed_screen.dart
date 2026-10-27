@@ -7,23 +7,35 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/auth/auth_service.dart';
 import '../../core/providers.dart';
 import '../../core/layout/breakpoints.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/category_style.dart';
+import '../../core/theme/karar_tokens.dart';
+import '../../core/theme/motion.dart';
 import '../../shared/models/post.dart';
 import '../../shared/widgets/centered_content.dart';
 import '../../shared/widgets/error_view.dart';
+import '../../shared/widgets/karar_avatar.dart';
+import '../../shared/widgets/karar_button.dart';
+import '../../shared/widgets/karar_chip.dart';
+import '../../shared/widgets/karar_circle_button.dart';
+import '../../shared/widgets/karar_pressable.dart';
+import '../../shared/widgets/karar_sheet.dart';
+import '../../shared/widgets/karar_text_tabs.dart';
+import '../../shared/widgets/karma_badge.dart';
 import '../../shared/widgets/login_nudge.dart';
-import '../../shared/widgets/skeleton.dart';
 import '../../core/history/history_provider.dart';
 import '../../shared/widgets/karar_logo.dart';
 import '../../core/network/connectivity_provider.dart';
-import '../../core/theme/app_colors.dart';
 import '../ads/banner_ad_widget.dart';
 import 'categories_provider.dart';
 import 'feed_provider.dart';
 import 'post_card.dart';
 import 'trend_topics_panel.dart';
 import 'weekly_featured_card.dart';
+import 'widgets/feed_skeletons.dart';
 
 class FeedScreen extends ConsumerStatefulWidget {
   const FeedScreen({super.key});
@@ -37,6 +49,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
   var _sortMode = _FeedSort.trending;
   var _showFab = false;
   var _showTopBar = true;
+  var _scrolled = false;
   String? _lastRouteState;
   final _scrollController = ScrollController();
   ProviderSubscription<AsyncValue<ConnectivityStatus>>? _connectivitySub;
@@ -89,8 +102,8 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
         curve: Curves.easeOut,
       );
     } else if (_scrollController.hasClients) {
-      const estimatedItemHeight = 200.0;
-      const separatorHeight = 10.0;
+      const estimatedItemHeight = 440.0;
+      const separatorHeight = KararSpace.feedGap;
       final offset = index * (estimatedItemHeight + separatorHeight);
       _scrollController.animateTo(
         offset.clamp(0.0, _scrollController.position.maxScrollExtent),
@@ -116,6 +129,10 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
     // FAB visibility
     final shouldShowFab = _scrollController.position.pixels > _fabThreshold;
     if (shouldShowFab != _showFab) setState(() => _showFab = shouldShowFab);
+
+    // Hairline under the top bar once the list has moved.
+    final scrolled = _scrollController.position.pixels > 4;
+    if (scrolled != _scrolled) setState(() => _scrolled = scrolled);
 
     // Top bar visibility (hide on scroll down, show on scroll up)
     if (_scrollController.position.userScrollDirection ==
@@ -273,32 +290,44 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
         ref.read(followedCategoriesProvider).contains(category.id);
     final isMuted = ref.read(mutedCategoriesProvider).contains(category.id);
 
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ListTile(
-            leading: Icon(isFollowed ? Icons.star : Icons.star_border),
-            title: Text(isFollowed ? 'Takibi Bırak' : 'Takip Et'),
-            onTap: () {
-              Navigator.pop(context);
-              _toggleFollow(category);
-            },
-          ),
-          ListTile(
-            leading: Icon(isMuted ? Icons.volume_up : Icons.volume_off),
-            title: Text(isMuted ? 'Sessizden Çıkar' : 'Sessize Al'),
-            subtitle: isMuted
-                ? null
-                : const Text('Bu kategorideki gönderileri akışında görmezsin.'),
-            onTap: () {
-              Navigator.pop(context);
-              _toggleMute(category);
-            },
-          ),
-          const SizedBox(height: 20),
-        ],
+    showKararSheet<void>(
+      context,
+      builder: (context) => SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            KararSheetHeader(
+              title: category.name,
+              onClose: () => Navigator.pop(context),
+            ),
+            ListTile(
+              leading: Icon(
+                isFollowed ? Icons.star_rounded : Icons.star_border_rounded,
+              ),
+              title: Text(isFollowed ? 'Takibi Bırak' : 'Takip Et'),
+              onTap: () {
+                Navigator.pop(context);
+                _toggleFollow(category);
+              },
+            ),
+            ListTile(
+              leading: Icon(
+                isMuted ? Icons.volume_up_rounded : Icons.volume_off_rounded,
+              ),
+              title: Text(isMuted ? 'Sessizden Çıkar' : 'Sessize Al'),
+              subtitle: isMuted
+                  ? null
+                  : const Text(
+                      'Bu kategorideki gönderileri akışında görmezsin.'),
+              onTap: () {
+                Navigator.pop(context);
+                _toggleMute(category);
+              },
+            ),
+            const SizedBox(height: 20),
+          ],
+        ),
       ),
     );
   }
@@ -358,8 +387,11 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
           previous?.actionError != next.actionError) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(next.actionError!),
-            backgroundColor: Theme.of(context).colorScheme.error,
+            content: Text(
+              next.actionError!,
+              style: const TextStyle(color: Colors.white),
+            ),
+            backgroundColor: context.kc.haksizFill,
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -398,11 +430,81 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
     final connectivity = ref.watch(connectivityProvider);
     final isDisconnected =
         connectivity.value == ConnectivityStatus.isDisconnected;
+    final isDesktop = context.isDesktop;
+    final user = ref.watch(currentUserProvider);
+
+    final feedArea = _buildFeedArea(
+      feedState,
+      filtered,
+      focusedIndex,
+      showFirstVoteCoachmark,
+      horizontalPadding: isDesktop ? 8 : KararSpace.gutter,
+    );
 
     return Scaffold(
-      appBar: AppBar(
-        leadingWidth: 180,
-        leading: InkWell(
+      appBar: isDesktop ? null : _buildTopBar(user),
+      floatingActionButton: Padding(
+        // The shell's floating nav is part of the bottom padding; the FAB
+        // must clear it.
+        padding: EdgeInsets.only(bottom: context.navBottomInset),
+        child: _BackToTopButton(visible: _showFab, onPressed: _scrollToTop),
+      ),
+      body: isDesktop
+          ? _buildDesktopLayout(
+              feedArea: feedArea,
+              categories: categories,
+              followedIds: followedIds,
+              isDisconnected: isDisconnected,
+            )
+          : CenteredContent(
+              maxWidth: 640,
+              child: Column(
+                children: [
+                  if (isDisconnected) _buildDisconnectedBanner(),
+                  const BannerAdWidget(),
+                  AnimatedSize(
+                    duration: KararMotion.d(context, KararMotion.nav),
+                    curve: KararMotion.standard,
+                    alignment: Alignment.topCenter,
+                    child: _showTopBar
+                        ? Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const WeeklyFeaturedCard(),
+                              _buildSortTabs(
+                                padding:
+                                    const EdgeInsets.fromLTRB(20, 12, 20, 0),
+                              ),
+                              _buildCategoryRow(
+                                categories,
+                                followedIds,
+                                padding:
+                                    const EdgeInsets.fromLTRB(16, 6, 16, 10),
+                              ),
+                            ],
+                          )
+                        : const SizedBox(width: double.infinity),
+                  ),
+                  Expanded(child: feedArea),
+                ],
+              ),
+            ),
+    );
+  }
+
+  PreferredSizeWidget _buildTopBar(AuthUser? user) {
+    final kc = context.kc;
+    return AppBar(
+      automaticallyImplyLeading: false,
+      centerTitle: false,
+      titleSpacing: 16,
+      backgroundColor: kc.canvas,
+      shape: _scrolled || !_showTopBar
+          ? Border(bottom: BorderSide(color: kc.outlineVariant))
+          : null,
+      title: Align(
+        alignment: Alignment.centerLeft,
+        child: KararPressable(
           onTap: () {
             if (GoRouterState.of(context).uri.toString() == '/') {
               _scrollToTop();
@@ -410,204 +512,160 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
               context.go('/');
             }
           },
-          child: const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: KararLogo(size: LogoSize.medium),
-          ),
-        ),
-        actions: [
-          IconButton(
-            tooltip: 'Keşfet',
-            onPressed: () => context.push('/discover'),
-            icon: const Icon(Icons.explore_outlined),
-          ),
-          IconButton(
-            tooltip: 'Ara',
-            onPressed: () => context.push('/search'),
-            icon: const Icon(Icons.search),
-          ),
-        ],
-      ),
-      floatingActionButton: AnimatedSlide(
-        duration: const Duration(milliseconds: 250),
-        offset: _showFab ? Offset.zero : const Offset(0, 2),
-        child: AnimatedOpacity(
-          duration: const Duration(milliseconds: 250),
-          opacity: _showFab ? 1 : 0,
-          child: FloatingActionButton.small(
-            tooltip: 'Başa dön',
-            onPressed: _scrollToTop,
-            child: const Icon(Icons.keyboard_arrow_up),
-          ),
+          semanticLabel: 'karar',
+          pressedScale: 0.97,
+          focusRadius: 20,
+          child: const KararLogo(size: LogoSize.medium),
         ),
       ),
-      body: Column(
-        children: [
-          if (isDisconnected) _buildDisconnectedBanner(),
-          const BannerAdWidget(),
-          AnimatedSize(
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeInOut,
-            child: _showTopBar
-                ? Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (!context.isDesktop) const WeeklyFeaturedCard(),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-                        child: SegmentedButton<_FeedSort>(
-                          segments: [
-                            ButtonSegment(
-                              value: _FeedSort.trending,
-                              icon: Tooltip(
-                                message: 'Trend',
-                                child: const Icon(
-                                    Icons.local_fire_department_outlined),
-                              ),
-                            ),
-                            ButtonSegment(
-                              value: _FeedSort.newest,
-                              icon: Tooltip(
-                                message: 'Yeni',
-                                child: const Icon(Icons.schedule_outlined),
-                              ),
-                            ),
-                            ButtonSegment(
-                              value: _FeedSort.controversial,
-                              icon: Tooltip(
-                                message: 'Tartışmalı',
-                                child: const Icon(Icons.whatshot_outlined),
-                              ),
-                            ),
-                          ],
-                          selected: {_sortMode},
-                          onSelectionChanged: (s) => _onSortChanged(s.first),
-                        ),
-                      ),
-                      if (categories.isNotEmpty)
-                        SizedBox(
-                          height: 52,
-                          child: ListView.separated(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 16, vertical: 8),
-                            scrollDirection: Axis.horizontal,
-                            itemCount: categories.length,
-                            separatorBuilder: (_, __) =>
-                                const SizedBox(width: 8),
-                            itemBuilder: (context, index) {
-                              final category = categories[index];
-                              final isFollowed = ref
-                                  .watch(followedCategoriesProvider)
-                                  .contains(category.id);
-
-                              final isSelected =
-                                  _selectedCategoryId == category.id;
-                              return AnimatedScale(
-                                scale: isSelected ? 1.06 : 1.0,
-                                duration: const Duration(milliseconds: 100),
-                                curve: Curves.easeOut,
-                                child: GestureDetector(
-                                  onLongPress: () =>
-                                      _showCategoryOptions(category),
-                                  child: ChoiceChip(
-                                    label: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Text(category.name),
-                                        if (isFollowed && category.id != 0) ...[
-                                          const SizedBox(width: 4),
-                                          const Icon(Icons.star, size: 12),
-                                        ],
-                                      ],
-                                    ),
-                                    selected: isSelected,
-                                    onSelected: (_) =>
-                                        _onCategoryChanged(category.id),
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                    ],
-                  )
-                : const SizedBox.shrink(),
-          ),
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 220),
-            transitionBuilder: (child, animation) => SizeTransition(
-              sizeFactor: animation,
-              child: FadeTransition(opacity: animation, child: child),
-            ),
-            child: feedState.newPostsCount > 0
-                ? Padding(
-                    key: ValueKey(feedState.newPostsCount),
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                    child: _NewPostsBanner(
-                      count: feedState.newPostsCount,
-                      onTap: () async {
-                        await _scrollToTop();
-                        await ref.read(feedProvider.notifier).refresh();
-                      },
-                    ),
-                  )
-                : const SizedBox.shrink(),
-          ),
-          Expanded(
-            child: context.isDesktop
-                ? _buildDesktopLayout(
-                    feedState,
-                    filtered,
-                    focusedIndex,
-                    showFirstVoteCoachmark,
-                  )
-                : CenteredContent(
-                    child: _buildBody(
-                    feedState,
-                    filtered,
-                    focusedIndex,
-                    showFirstVoteCoachmark,
-                  )),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDesktopLayout(
-    FeedState feedState,
-    List<Post> posts,
-    int? focusedIndex,
-    bool showFirstVoteCoachmark,
-  ) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child: CenteredContent(
-            child: _buildBody(
-              feedState,
-              posts,
-              focusedIndex,
-              showFirstVoteCoachmark,
-            ),
-          ),
+      actions: [
+        IconButton(
+          tooltip: 'Ara',
+          onPressed: () => context.push('/search'),
+          icon: Icon(Icons.search, color: kc.text1),
         ),
-        const VerticalDivider(width: 1),
-        SizedBox(width: 300, child: _buildRightPanel()),
+        const SizedBox(width: 4),
+        _IdentityPill(user: user),
       ],
     );
   }
 
+  Widget _buildSortTabs({required EdgeInsets padding}) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: KararTextTabs(
+        labels: const ['Trend', 'Yeni', 'Tartışmalı'],
+        index: _FeedSort.values.indexOf(_sortMode),
+        onChanged: (i) => _onSortChanged(_FeedSort.values[i]),
+        padding: padding,
+      ),
+    );
+  }
+
+  Widget _buildCategoryRow(
+    List<Category> categories,
+    Set<int> followedIds, {
+    required EdgeInsets padding,
+  }) {
+    if (categories.isEmpty) return const SizedBox.shrink();
+    return SizedBox(
+      height: 48 + padding.vertical,
+      child: ListView.separated(
+        padding: padding,
+        scrollDirection: Axis.horizontal,
+        itemCount: categories.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final category = categories[index];
+          final isFollowed =
+              category.id != 0 && followedIds.contains(category.id);
+          return Center(
+            child: KararChip(
+              label: category.name,
+              icon: CategoryStyle.of(category).icon,
+              selected: _selectedCategoryId == category.id,
+              trailing: isFollowed
+                  ? const Icon(Icons.star_rounded, size: 12)
+                  : null,
+              onTap: () => _onCategoryChanged(category.id),
+              onLongPress: category.id == 0
+                  ? null
+                  : () {
+                      KararHaptics.longPress();
+                      _showCategoryOptions(category);
+                    },
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildDesktopLayout({
+    required Widget feedArea,
+    required List<Category> categories,
+    required Set<int> followedIds,
+    required bool isDisconnected,
+  }) {
+    final kc = context.kc;
+    final wide = context.isSideNavExpanded;
+    final railWidth = wide ? 300.0 : 280.0;
+    final gap = wide ? 32.0 : 24.0;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final showRail = constraints.maxWidth >= 560 + gap + railWidth;
+        final feedWidth = showRail
+            ? (constraints.maxWidth - railWidth - gap - 48).clamp(560.0, 640.0)
+            : constraints.maxWidth.clamp(0.0, 640.0);
+
+        final feedColumn = Column(
+          children: [
+            if (isDisconnected) _buildDisconnectedBanner(),
+            const BannerAdWidget(),
+            // Sticky header: tabs + category chips.
+            AnimatedContainer(
+              duration: KararMotion.d(context, KararMotion.fast),
+              decoration: BoxDecoration(
+                color: kc.canvas,
+                border: Border(
+                  bottom: BorderSide(
+                    color: _scrolled
+                        ? kc.outlineVariant
+                        : kc.outlineVariant.withValues(alpha: 0),
+                  ),
+                ),
+              ),
+              padding: const EdgeInsets.only(top: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildSortTabs(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                  _buildCategoryRow(
+                    categories,
+                    followedIds,
+                    padding: const EdgeInsets.fromLTRB(8, 6, 8, 10),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(child: feedArea),
+          ],
+        );
+
+        return Align(
+          alignment: Alignment.topCenter,
+          child: SizedBox(
+            width: showRail ? feedWidth + gap + railWidth : feedWidth,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SizedBox(width: feedWidth, child: feedColumn),
+                if (showRail) ...[
+                  SizedBox(width: gap),
+                  SizedBox(width: railWidth, child: _buildRightPanel()),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildRightPanel() {
-    return const SingleChildScrollView(
-      child: Column(
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(0, 20, 0, context.navBottomInset + 24),
+      child: const Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          WeeklyFeaturedCard(margin: EdgeInsets.zero),
           SizedBox(height: 16),
-          WeeklyFeaturedCard(),
-          SizedBox(height: 8),
-          TrendTopicsPanel(),
+          TrendTopicsPanel(margin: EdgeInsets.zero),
+          SizedBox(height: 16),
+          _FooterLinks(),
         ],
       ),
     );
@@ -623,67 +681,53 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
   }
 
   Widget _buildDisconnectedBanner() {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      width: double.infinity,
-      color: Colors.amber.shade100,
-      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.signal_wifi_connected_no_internet_4_outlined,
-              size: 16, color: Colors.amber.shade900),
-          const SizedBox(width: 8),
-          Text(
-            'İnternet bağlantısı yok',
-            style: TextStyle(
-              color: colorScheme.onSurface,
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
+    final kc = context.kc;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+        decoration: BoxDecoration(
+          color: kc.warnSoft,
+          borderRadius: KararRadius.all(KararRadius.input),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            ExcludeSemantics(
+              child: Icon(Icons.wifi_off_rounded, size: 16, color: kc.warnText),
             ),
-          ),
-        ],
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                'İnternet bağlantısı yok',
+                style: AppTypography.meta.copyWith(
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0,
+                  color: kc.warnText,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildOfflineFallback() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.wifi_off_rounded,
-              size: 56,
-              color: Theme.of(context).colorScheme.outline,
-            ),
-            const SizedBox(height: 20),
-            Text(
-              'İnternet bağlantısı yok',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleLarge
-                  ?.copyWith(fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Bağlantı gelince akış otomatik yenilenecek.',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: AppColors.textSecondary,
-                    height: 1.5,
-                  ),
-            ),
-            const SizedBox(height: 24),
-            OutlinedButton.icon(
-              onPressed: _onRefresh,
-              icon: const Icon(Icons.refresh),
-              label: const Text('Tekrar Dene'),
-            ),
-          ],
-        ),
+    final kc = context.kc;
+    return _FeedMessage(
+      icon: Icons.wifi_off_rounded,
+      discColor: kc.warnSoft,
+      iconColor: kc.warnText,
+      title: 'İnternet bağlantısı yok',
+      message: 'Bağlantı gelince akış otomatik yenilenecek.',
+      action: KararButton(
+        label: 'Tekrar Dene',
+        icon: Icons.refresh_rounded,
+        variant: KararButtonVariant.outlined,
+        expand: false,
+        onPressed: _onRefresh,
       ),
     );
   }
@@ -700,18 +744,84 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
     );
   }
 
+  /// The list (or its loading/empty/error state) with the floating
+  /// "N yeni gönderi" pill on top.
+  Widget _buildFeedArea(
+    FeedState feedState,
+    List<Post> posts,
+    int? focusedIndex,
+    bool showFirstVoteCoachmark, {
+    required double horizontalPadding,
+  }) {
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: _buildBody(
+            feedState,
+            posts,
+            focusedIndex,
+            showFirstVoteCoachmark,
+            horizontalPadding: horizontalPadding,
+          ),
+        ),
+        Positioned(
+          top: 8,
+          left: 0,
+          right: 0,
+          child: Center(
+            child: AnimatedSwitcher(
+              duration: KararMotion.d(context, KararMotion.base),
+              switchInCurve: KararMotion.standard,
+              switchOutCurve: KararMotion.exit,
+              transitionBuilder: (child, animation) => SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0, -0.8),
+                  end: Offset.zero,
+                ).animate(animation),
+                child: FadeTransition(opacity: animation, child: child),
+              ),
+              child: feedState.newPostsCount > 0
+                  ? _NewPostsBanner(
+                      key: ValueKey(feedState.newPostsCount),
+                      count: feedState.newPostsCount,
+                      onTap: () async {
+                        await _scrollToTop();
+                        await ref.read(feedProvider.notifier).refresh();
+                      },
+                    )
+                  : const SizedBox.shrink(),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildBody(
     FeedState feedState,
     List<Post> posts,
     int? focusedIndex,
-    bool showFirstVoteCoachmark,
-  ) {
+    bool showFirstVoteCoachmark, {
+    required double horizontalPadding,
+  }) {
+    final isDesktop = context.isDesktop;
+    final bottomPadding = context.navBottomInset + 24;
+
     if (feedState.isLoading && posts.isEmpty) {
       return ListView.separated(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-        itemCount: 5,
-        separatorBuilder: (_, __) => const SizedBox(height: 10),
-        itemBuilder: (_, __) => const PostCardSkeleton(),
+        padding: EdgeInsets.fromLTRB(
+          horizontalPadding,
+          4,
+          horizontalPadding,
+          bottomPadding,
+        ),
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: 3,
+        separatorBuilder: (_, __) => const SizedBox(height: KararSpace.feedGap),
+        itemBuilder: (_, __) => FeedCardSkeleton(
+          height: isDesktop ? 400 : 440,
+          compact: isDesktop,
+        ),
       );
     }
 
@@ -724,58 +834,47 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
     }
 
     if (posts.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('⚖️', style: TextStyle(fontSize: 56)),
-              const SizedBox(height: 20),
-              Text(
-                'Henüz paylaşım yok',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w800,
-                    ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'Bir durum anlat, topluluk Haklı mı Haksız mı karar versin.',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: AppColors.textSecondary,
-                      height: 1.5,
-                    ),
-              ),
-              const SizedBox(height: 24),
-              FilledButton.icon(
-                onPressed: () => context.go('/create'),
-                icon: const Icon(Icons.add),
-                label: const Text('Paylaşım Yap'),
-              ),
-            ],
-          ),
+      final kc = context.kc;
+      return _FeedMessage(
+        icon: Icons.balance_rounded,
+        discColor: kc.primaryContainer,
+        iconColor: kc.primary,
+        title: 'Henüz paylaşım yok',
+        message: 'Bir durum anlat, topluluk Haklı mı Haksız mı karar versin.',
+        action: KararButton(
+          label: 'Paylaşım Yap',
+          icon: Icons.add_rounded,
+          expand: false,
+          onPressed: () => context.go('/create'),
         ),
       );
     }
 
+    final reduceMotion = KararMotion.reduce(context);
+    final seenPosts = ref.watch(historyProvider);
+
     final listView = RefreshIndicator(
       onRefresh: _onRefresh,
-      child: ListView.separated(
-        controller: _scrollController,
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-        itemCount: posts.length + (feedState.isLoadingMore ? 3 : 0),
-        separatorBuilder: (_, __) => const SizedBox(height: 10),
-        itemBuilder: (context, index) {
-          if (index >= posts.length) {
-            return const PostCardSkeleton();
-          }
-          final post = posts[index];
-          final seenPosts = ref.watch(historyProvider);
-          final itemKey = _itemKeys.putIfAbsent(index, () => GlobalKey());
-          return KeyedSubtree(
-            key: itemKey,
-            child: PostCard(
+      child: BackdropGroup(
+        child: ListView.separated(
+          controller: _scrollController,
+          padding: EdgeInsets.fromLTRB(0, 4, 0, bottomPadding),
+          itemCount: posts.length + (feedState.isLoadingMore ? 1 : 0),
+          separatorBuilder: (_, __) =>
+              const SizedBox(height: KararSpace.feedGap),
+          itemBuilder: (context, index) {
+            if (index >= posts.length) {
+              return Padding(
+                padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+                child: FeedCardSkeleton(
+                  height: isDesktop ? 400 : 440,
+                  compact: isDesktop,
+                ),
+              );
+            }
+            final post = posts[index];
+            final itemKey = _itemKeys.putIfAbsent(index, () => GlobalKey());
+            Widget card = PostCard(
               post: post,
               isSeen: seenPosts.contains(post.id),
               isFocused: focusedIndex == index,
@@ -784,26 +883,47 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
               onVote: (voteType) => _voteFromFeed(post, voteType),
               onTap: () =>
                   context.push('/posts/${post.id}?source=feed', extra: post),
-            )
-                .animate(
-                  delay: Duration(milliseconds: (40 * index.clamp(0, 5))),
-                )
-                .slideY(
-                  begin: 0.05,
-                  end: 0,
-                  duration: 250.ms,
-                  curve: Curves.easeOut,
-                )
-                .fadeIn(duration: 250.ms),
-          );
-        },
+            );
+            if (!reduceMotion) {
+              card = card
+                  .animate(
+                    delay: Duration(milliseconds: (40 * index.clamp(0, 5))),
+                  )
+                  .fadeIn(
+                    duration: KararMotion.base,
+                    curve: KararMotion.standard,
+                  )
+                  .slideY(
+                    begin: 0.04,
+                    end: 0,
+                    duration: KararMotion.base,
+                    curve: KararMotion.standard,
+                  );
+            }
+            return KeyedSubtree(
+              key: itemKey,
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+                child: card,
+              ),
+            );
+          },
+        ),
       ),
     );
 
     if (feedState.isFallback) {
       return Column(
         children: [
-          const _FallbackBanner(),
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              horizontalPadding,
+              4,
+              horizontalPadding,
+              12,
+            ),
+            child: const _FallbackBanner(),
+          ),
           Expanded(child: listView),
         ],
       );
@@ -812,31 +932,281 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
   }
 }
 
+/// Logo-row identity pill (§5.3): avatar + username + karma badge → profile;
+/// guest: person glyph + "Giriş Yap" → login.
+class _IdentityPill extends StatelessWidget {
+  const _IdentityPill({required this.user});
+
+  final AuthUser? user;
+
+  @override
+  Widget build(BuildContext context) {
+    final kc = context.kc;
+    final user = this.user;
+    final textStyle = AppTypography.labelS.copyWith(
+      fontWeight: FontWeight.w800,
+      color: kc.text1,
+    );
+
+    final Widget content;
+    final VoidCallback onTap;
+    final String label;
+    if (user == null) {
+      label = 'Giriş Yap';
+      onTap = () => context.push('/auth/login');
+      content = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(color: kc.surface, shape: BoxShape.circle),
+            alignment: Alignment.center,
+            child: Icon(
+              Icons.person_outline_rounded,
+              size: 18,
+              color: kc.text2,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text('Giriş Yap', style: textStyle, maxLines: 1),
+        ],
+      );
+    } else {
+      label = 'Profilim, ${user.username}';
+      onTap = () => context.go('/profile');
+      content = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          KararAvatar(
+            username: user.username,
+            radius: 16,
+            ring: KararAvatarRing.surface,
+          ),
+          const SizedBox(width: 6),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 96),
+            child: Text(
+              user.username,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: textStyle,
+            ),
+          ),
+          const SizedBox(width: 4),
+          KarmaBadge(karma: user.karma, size: 14),
+        ],
+      );
+    }
+
+    return KararPressable(
+      onTap: onTap,
+      semanticLabel: label,
+      pressedScale: 0.97,
+      focusRadius: 20,
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 40),
+        padding: const EdgeInsets.fromLTRB(4, 2, 12, 2),
+        decoration: BoxDecoration(
+          color: kc.muted,
+          borderRadius: KararRadius.all(20),
+        ),
+        child: content,
+      ),
+    );
+  }
+}
+
+/// Back-to-top button: 48 px surface circle with the float shadow.
+class _BackToTopButton extends StatelessWidget {
+  const _BackToTopButton({required this.visible, required this.onPressed});
+
+  final bool visible;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final kc = context.kc;
+    final brightness = Theme.of(context).brightness;
+    final hairline = KararShadow.hairlineFor(KararShadowKind.float, brightness);
+    return IgnorePointer(
+      ignoring: !visible,
+      child: ExcludeSemantics(
+        excluding: !visible,
+        child: AnimatedSlide(
+          duration: KararMotion.d(context, KararMotion.base),
+          curve: KararMotion.standard,
+          offset: visible ? Offset.zero : const Offset(0, 0.6),
+          child: AnimatedOpacity(
+            duration: KararMotion.fade(context, KararMotion.base),
+            opacity: visible ? 1 : 0,
+            child: DecoratedBox(
+              decoration: ShapeDecoration(
+                shape: CircleBorder(
+                  side: hairline == null
+                      ? BorderSide.none
+                      : BorderSide(color: hairline),
+                ),
+                shadows: KararShadow.float(brightness),
+              ),
+              child: KararCircleButton(
+                icon: Icons.keyboard_arrow_up_rounded,
+                tooltip: 'Başa dön',
+                onPressed: onPressed,
+                size: 48,
+                iconSize: 26,
+                style: KararCircleStyle.muted,
+                backgroundColor: kc.isDark ? kc.elevated : kc.surface,
+                iconColor: kc.text1,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Centred disc + title + message + action (empty / offline states).
+class _FeedMessage extends StatelessWidget {
+  const _FeedMessage({
+    required this.icon,
+    required this.discColor,
+    required this.iconColor,
+    required this.title,
+    required this.message,
+    this.action,
+  });
+
+  final IconData icon;
+  final Color discColor;
+  final Color iconColor;
+  final String title;
+  final String message;
+  final Widget? action;
+
+  @override
+  Widget build(BuildContext context) {
+    final kc = context.kc;
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(32, 24, 32, context.navBottomInset + 24),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            minHeight: (constraints.maxHeight - context.navBottomInset - 48)
+                .clamp(0.0, double.infinity),
+          ),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 320),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ExcludeSemantics(
+                    child: Container(
+                      width: 88,
+                      height: 88,
+                      decoration: BoxDecoration(
+                        color: discColor,
+                        shape: BoxShape.circle,
+                      ),
+                      alignment: Alignment.center,
+                      child: Icon(icon, size: 36, color: iconColor),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    title,
+                    textAlign: TextAlign.center,
+                    style: AppTypography.headline.copyWith(color: kc.text1),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    message,
+                    textAlign: TextAlign.center,
+                    style: AppTypography.body.copyWith(color: kc.text2),
+                  ),
+                  if (action != null) ...[
+                    const SizedBox(height: 20),
+                    action!,
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _FallbackBanner extends StatelessWidget {
   const _FallbackBanner();
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
     return Container(
       width: double.infinity,
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: kc.muted,
+        borderRadius: KararRadius.all(KararRadius.input),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       child: Row(
         children: [
-          Icon(
-            Icons.explore_outlined,
-            size: 16,
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ExcludeSemantics(
+            child: Icon(Icons.explore_outlined, size: 16, color: kc.text2),
           ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               'Bu akışta henüz paylaşım yok — popüler gönderiler',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
+              style: AppTypography.bodyS.copyWith(color: kc.text2),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Desktop right-rail footer: legal links separated by " · ".
+class _FooterLinks extends StatelessWidget {
+  const _FooterLinks();
+
+  static const _links = [
+    ('Kullanım Koşulları', '/legal/terms'),
+    ('Gizlilik Politikası', '/legal/privacy'),
+    ('Topluluk Kuralları', '/legal/community'),
+    ('İçerik Politikası', '/legal/content-policy'),
+    ('Sık Sorulan Sorular', '/legal/faq'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final kc = context.kc;
+    final style = AppTypography.meta.copyWith(color: kc.text3);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          for (var i = 0; i < _links.length; i++) ...[
+            if (i > 0)
+              ExcludeSemantics(child: Text(' · ', style: style)),
+            TextButton(
+              onPressed: () => context.push(_links[i].$2),
+              style: TextButton.styleFrom(
+                foregroundColor: kc.text3,
+                minimumSize: const Size(0, 44),
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                textStyle: style,
+              ),
+              child: Text(_links[i].$1),
+            ),
+          ],
         ],
       ),
     );
@@ -861,39 +1231,38 @@ enum _FeedSort {
       };
 }
 
+/// Floating "N yeni gönderi" pill (primaryFill, white, float shadow).
 class _NewPostsBanner extends StatelessWidget {
-  const _NewPostsBanner({required this.count, required this.onTap});
+  const _NewPostsBanner({super.key, required this.count, required this.onTap});
   final int count;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    final kc = context.kc;
+    return KararPressable(
       onTap: onTap,
+      semanticLabel: '$count yeni gönderi',
+      pressedScale: 0.96,
+      focusRadius: 20,
       child: Container(
+        constraints: const BoxConstraints(minHeight: 40),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.primary,
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.2),
-              blurRadius: 8,
-              offset: const Offset(0, 4),
-            ),
-          ],
+          color: kc.primaryFill,
+          borderRadius: KararRadius.all(20),
+          boxShadow: KararShadow.float(Theme.of(context).brightness),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.arrow_upward, color: Colors.white, size: 16),
-            const SizedBox(width: 8),
+            const Icon(Icons.arrow_upward_rounded, color: Colors.white, size: 16),
+            const SizedBox(width: 6),
             Text(
               '$count yeni gönderi',
-              style: const TextStyle(
+              style: AppTypography.labelS.copyWith(
                 color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 13,
+                fontWeight: FontWeight.w800,
               ),
             ),
           ],

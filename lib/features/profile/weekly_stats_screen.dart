@@ -2,10 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/app_services.dart';
+import '../../core/layout/breakpoints.dart';
 import '../../core/providers.dart';
-import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/karar_tokens.dart';
 import '../../shared/models/post.dart';
 import '../../shared/widgets/centered_content.dart';
+import '../../shared/widgets/karar_button.dart';
+import '../../shared/widgets/karar_surface.dart';
 
 final weeklyStatsProvider =
     FutureProvider.autoDispose<WeeklyStats>((ref) async {
@@ -30,6 +34,7 @@ class WeeklyStatsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final statsAsync = ref.watch(weeklyStatsProvider);
+    final kc = context.kc;
 
     return Scaffold(
       appBar: AppBar(
@@ -41,19 +46,38 @@ class WeeklyStatsScreen extends ConsumerWidget {
           data: (stats) => _StatsBody(stats: stats),
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (e, _) => Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.error_outline,
-                    size: 48, color: AppColors.textTertiary),
-                const SizedBox(height: 12),
-                const Text('İstatistikler yüklenemedi.'),
-                const SizedBox(height: 8),
-                TextButton(
-                  onPressed: () => ref.refresh(weeklyStatsProvider),
-                  child: const Text('Tekrar Dene'),
-                ),
-              ],
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ExcludeSemantics(
+                    child: Container(
+                      width: 88,
+                      height: 88,
+                      decoration: BoxDecoration(
+                        color: kc.haksizSoft,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.error_outline_rounded,
+                          size: 36, color: kc.haksizFill),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'İstatistikler yüklenemedi.',
+                    textAlign: TextAlign.center,
+                    style: AppTypography.body.copyWith(color: kc.text2),
+                  ),
+                  const SizedBox(height: 16),
+                  KararButton(
+                    label: 'Tekrar Dene',
+                    icon: Icons.refresh_rounded,
+                    expand: false,
+                    onPressed: () => ref.refresh(weeklyStatsProvider),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -82,10 +106,10 @@ class _StatsBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.fromLTRB(16, 8, 16, context.navBottomInset + 24),
       children: [
         _WeekHeader(stats: stats),
-        const SizedBox(height: 16),
+        const SizedBox(height: 20),
         _StatsGrid(stats: stats),
         const SizedBox(height: 16),
         if (stats.votesGiven > 0) ...[
@@ -93,7 +117,6 @@ class _StatsBody extends StatelessWidget {
           const SizedBox(height: 16),
         ],
         _MotivationCard(message: _motivationalMessage()),
-        const SizedBox(height: 8),
       ],
     );
   }
@@ -105,58 +128,52 @@ class _WeekHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                stats.weekLabel,
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w900,
-                    ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Haftanın özeti',
-                style: Theme.of(context)
-                    .textTheme
-                    .bodySmall
-                    ?.copyWith(color: AppColors.textSecondary),
-              ),
-            ],
-          ),
-        ),
-        if (stats.streak > 0)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  AppColors.haksiz.withValues(alpha: 0.8),
-                  Colors.orange.withValues(alpha: 0.9),
-                ],
-              ),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
+    final kc = context.kc;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('🔥', style: TextStyle(fontSize: 18)),
-                const SizedBox(width: 4),
                 Text(
-                  '${stats.streak} gün seri',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 13,
-                  ),
+                  stats.weekLabel,
+                  style: AppTypography.titleXL.copyWith(color: kc.text1),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Haftanın özeti',
+                  style: AppTypography.meta.copyWith(color: kc.text3),
                 ),
               ],
             ),
           ),
-      ],
+          if (stats.streak > 0)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                gradient: KararGradients.streak,
+                borderRadius: KararRadius.all(KararRadius.pill),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const ExcludeSemantics(
+                    child: Text('🔥', style: TextStyle(fontSize: 16)),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    '${stats.streak} gün seri',
+                    style: AppTypography.label.copyWith(
+                      color: kc.onCapsuleText,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -167,38 +184,61 @@ class _StatsGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GridView.count(
-      crossAxisCount: 2,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      mainAxisSpacing: 10,
-      crossAxisSpacing: 10,
-      childAspectRatio: 1.6,
+    final kc = context.kc;
+    final tiles = [
+      _StatCard(
+        icon: Icons.auto_awesome_rounded,
+        label: 'Kazanılan Karma',
+        value: '+${stats.karmaEarned}',
+        tint: kc.warnSoft,
+        iconColor: kc.goldText,
+      ),
+      _StatCard(
+        icon: Icons.how_to_vote_rounded,
+        label: 'Verilen Oy',
+        value: '${stats.votesGiven}',
+        tint: kc.primaryContainer,
+        iconColor: kc.primary,
+      ),
+      _StatCard(
+        icon: Icons.article_rounded,
+        label: 'Paylaşım',
+        value: '${stats.postsCreated}',
+        tint: kc.hakliSoft,
+        iconColor: kc.hakliText,
+      ),
+      _StatCard(
+        icon: Icons.chat_bubble_rounded,
+        label: 'Yorum',
+        value: '${stats.commentsPosted}',
+        tint: kc.muted,
+        iconColor: kc.text2,
+      ),
+    ];
+    // Two rows of two; rows size to their content so large text never
+    // overflows a fixed aspect ratio.
+    return Column(
       children: [
-        _StatCard(
-          icon: Icons.auto_awesome_rounded,
-          label: 'Kazanılan Karma',
-          value: '+${stats.karmaEarned}',
-          color: AppColors.accent,
-          highlighted: true,
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(child: tiles[0]),
+              const SizedBox(width: 10),
+              Expanded(child: tiles[1]),
+            ],
+          ),
         ),
-        _StatCard(
-          icon: Icons.how_to_vote_outlined,
-          label: 'Verilen Oy',
-          value: '${stats.votesGiven}',
-          color: AppColors.primary,
-        ),
-        _StatCard(
-          icon: Icons.article_outlined,
-          label: 'Paylaşım',
-          value: '${stats.postsCreated}',
-          color: AppColors.hakli,
-        ),
-        _StatCard(
-          icon: Icons.chat_bubble_outline,
-          label: 'Yorum',
-          value: '${stats.commentsPosted}',
-          color: AppColors.textSecondary,
+        const SizedBox(height: 10),
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(child: tiles[2]),
+              const SizedBox(width: 10),
+              Expanded(child: tiles[3]),
+            ],
+          ),
         ),
       ],
     );
@@ -210,56 +250,52 @@ class _StatCard extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.value,
-    required this.color,
-    this.highlighted = false,
+    required this.tint,
+    required this.iconColor,
   });
 
   final IconData icon;
   final String label;
   final String value;
-  final Color color;
-  final bool highlighted;
+  final Color tint;
+  final Color iconColor;
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bg = highlighted
-        ? color.withValues(alpha: 0.12)
-        : (isDark
-            ? AppColors.darkSurfaceContainerHighest
-            : AppColors.surfaceContainerHighest);
-
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(14),
-        border: highlighted
-            ? Border.all(color: color.withValues(alpha: 0.3))
-            : null,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, size: 18, color: color),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w900,
-              color: color,
+    final kc = context.kc;
+    return KararSurface(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+      child: MergeSemantics(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ExcludeSemantics(
+              child: Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(color: tint, shape: BoxShape.circle),
+                child: Icon(icon, size: 20, color: iconColor),
+              ),
             ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: AppColors.textSecondary,
-                ),
-          ),
-        ],
+            const SizedBox(height: 12),
+            Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppTypography.display.copyWith(
+                fontSize: 28,
+                height: 32 / 28,
+                color: kc.text1,
+                fontFeatures: AppTypography.tabular,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              style: AppTypography.labelS.copyWith(color: kc.text2),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -271,67 +307,74 @@ class _VoteBreakdown extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
     final total = stats.hakliGiven + stats.haksizGiven;
     if (total == 0) return const SizedBox.shrink();
 
     final hakliRatio = stats.hakliGiven / total;
+    final hakliPercent = (hakliRatio * 100).round();
+    final haksizPercent = 100 - hakliPercent;
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Theme.of(context)
-            .colorScheme
-            .surfaceContainerHighest
-            .withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(14),
-      ),
+    return KararSurface(
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             'Oy dağılımın',
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textSecondary,
-                ),
+            style: AppTypography.bodyStrong.copyWith(
+              fontSize: 16,
+              color: kc.text1,
+            ),
           ),
-          const SizedBox(height: 12),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: Row(
-              children: [
-                Expanded(
-                  flex: (hakliRatio * 100).round(),
-                  child: Container(
-                    height: 12,
-                    color: AppColors.hakli,
-                  ),
-                ),
-                Expanded(
-                  flex: 100 - (hakliRatio * 100).round(),
-                  child: Container(
-                    height: 12,
-                    color: AppColors.haksiz,
-                  ),
-                ),
-              ],
+          const SizedBox(height: 14),
+          ExcludeSemantics(
+            child: SizedBox(
+              height: 14,
+              child: Row(
+                children: [
+                  if (hakliPercent > 0)
+                    Flexible(
+                      flex: hakliPercent,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: kc.hakliFill,
+                          borderRadius: KararRadius.all(7),
+                        ),
+                      ),
+                    ),
+                  if (hakliPercent > 0 && haksizPercent > 0)
+                    const SizedBox(width: 3),
+                  if (haksizPercent > 0)
+                    Flexible(
+                      flex: haksizPercent,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: kc.haksizFill,
+                          borderRadius: KararRadius.all(7),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
           const SizedBox(height: 10),
-          Row(
+          Wrap(
+            spacing: 20,
+            runSpacing: 6,
             children: [
               _VoteLegend(
-                color: AppColors.hakli,
+                hakli: true,
                 label: 'Haklı',
                 count: stats.hakliGiven,
-                percent: (hakliRatio * 100).round(),
+                percent: hakliPercent,
               ),
-              const SizedBox(width: 24),
               _VoteLegend(
-                color: AppColors.haksiz,
+                hakli: false,
                 label: 'Haksız',
                 count: stats.haksizGiven,
-                percent: 100 - (hakliRatio * 100).round(),
+                percent: haksizPercent,
               ),
             ],
           ),
@@ -343,33 +386,35 @@ class _VoteBreakdown extends StatelessWidget {
 
 class _VoteLegend extends StatelessWidget {
   const _VoteLegend({
-    required this.color,
+    required this.hakli,
     required this.label,
     required this.count,
     required this.percent,
   });
 
-  final Color color;
+  final bool hakli;
   final String label;
   final int count;
   final int percent;
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Container(
-          width: 10,
-          height: 10,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        Icon(
+          hakli ? Icons.check_rounded : Icons.close_rounded,
+          size: 16,
+          color: kc.voteText(hakli),
         ),
-        const SizedBox(width: 6),
+        const SizedBox(width: 4),
         Text(
           '$label: $count (%$percent)',
-          style: Theme.of(context)
-              .textTheme
-              .bodySmall
-              ?.copyWith(color: AppColors.textSecondary),
+          style: AppTypography.labelS.copyWith(
+            color: kc.voteText(hakli),
+            fontFeatures: AppTypography.tabular,
+          ),
         ),
       ],
     );
@@ -382,25 +427,27 @@ class _MotivationCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 18, 16),
       decoration: BoxDecoration(
-        color: AppColors.accent.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.accent.withValues(alpha: 0.15)),
+        color: kc.primaryContainer,
+        borderRadius: KararRadius.all(KararRadius.surface),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('💬', style: TextStyle(fontSize: 20)),
+          const ExcludeSemantics(
+            child: Text('💬', style: TextStyle(fontSize: 20)),
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Text(
               message,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    height: 1.5,
-                    color: Theme.of(context).colorScheme.onSurface,
-                  ),
+              style: AppTypography.body.copyWith(
+                color: kc.onPrimaryContainer,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ],

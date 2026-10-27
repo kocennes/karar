@@ -55,13 +55,13 @@ class HighlightText extends StatelessWidget {
       children.add(TextSpan(text: text.substring(start)));
     }
 
-    return RichText(
+    // Text.rich (not RichText) so the app's font-size setting (TextScaler)
+    // and DefaultTextStyle apply.
+    return Text.rich(
+      TextSpan(children: children),
+      style: style,
       maxLines: maxLines,
       overflow: overflow ?? TextOverflow.clip,
-      text: TextSpan(
-        style: style ?? DefaultTextStyle.of(context).style,
-        children: children,
-      ),
     );
   }
 }

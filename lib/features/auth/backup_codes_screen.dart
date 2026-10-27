@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../shared/widgets/centered_content.dart';
 import '../../shared/widgets/karar_logo.dart';
+import '../../core/theme/karar_tokens.dart';
 
 class BackupCodesScreen extends StatefulWidget {
   const BackupCodesScreen({super.key, required this.codes});
@@ -73,8 +74,8 @@ class _BackupCodesScreenState extends State<BackupCodesScreen> {
                         (code) => Container(
                           alignment: Alignment.center,
                           decoration: BoxDecoration(
-                            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                            borderRadius: BorderRadius.circular(8),
+                            color: context.kc.muted,
+                            borderRadius: KararRadius.all(KararRadius.input),
                           ),
                           child: Text(
                             code,
@@ -91,7 +92,7 @@ class _BackupCodesScreenState extends State<BackupCodesScreen> {
                 const SizedBox(height: 16),
                 OutlinedButton.icon(
                   onPressed: _copyAll,
-                  icon: const Icon(Icons.copy),
+                  icon: const Icon(Icons.copy_rounded),
                   label: const Text('Tümünü Kopyala'),
                 ),
                 const Spacer(),
@@ -118,4 +119,3 @@ class _BackupCodesScreenState extends State<BackupCodesScreen> {
     );
   }
 }
-

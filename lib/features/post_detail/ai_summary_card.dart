@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
-import '../../core/theme/app_colors.dart';
 
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/karar_tokens.dart';
+
+/// "Yapay Zeka Özeti" card (spec §6.1.8): brand-tinted surface, radius 24.
 class AiSummaryCard extends StatelessWidget {
   const AiSummaryCard({
     super.key,
@@ -15,86 +18,70 @@ class AiSummaryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
+    final kc = context.kc;
 
     return Container(
       width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(18, 8, 8, 16),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            AppColors.primary.withValues(alpha: 0.05),
-            AppColors.accent.withValues(alpha: 0.05),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: colorScheme.primary.withValues(alpha: 0.1),
-        ),
+        color: kc.primaryContainer,
+        borderRadius: KararRadius.all(KararRadius.surface),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
-            child: Row(
-              children: [
-                Icon(Icons.auto_awesome, size: 18, color: colorScheme.primary),
-                const SizedBox(width: 8),
-                Text(
-                  'Yapay Zeka Özeti',
-                  style: theme.textTheme.labelLarge?.copyWith(
-                    color: colorScheme.primary,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 0.5,
+          Row(
+            children: [
+              Icon(Icons.auto_awesome_rounded, size: 20, color: kc.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Semantics(
+                  header: true,
+                  child: Text(
+                    'Yapay Zeka Özeti',
+                    style: AppTypography.bodyStrong.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: kc.primaryText,
+                    ),
                   ),
                 ),
-                const Spacer(),
-                if (isRefreshing)
-                  const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                else
-                  IconButton(
-                    icon: const Icon(Icons.refresh, size: 16),
-                    onPressed: onRefresh,
-                    tooltip: 'Özeti Yenile',
-                    visualDensity: VisualDensity.compact,
-                    color: colorScheme.primary.withValues(alpha: 0.6),
-                  ),
-              ],
-            ),
+              ),
+              SizedBox(
+                width: 44,
+                height: 44,
+                child: isRefreshing
+                    ? Center(
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: kc.primary,
+                          ),
+                        ),
+                      )
+                    : IconButton(
+                        icon: const Icon(Icons.refresh_rounded, size: 20),
+                        onPressed: onRefresh,
+                        tooltip: 'Özeti Yenile',
+                        color: kc.primaryText,
+                      ),
+              ),
+            ],
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            padding: const EdgeInsets.only(right: 10),
             child: Text(
               summary,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                height: 1.5,
-                color: colorScheme.onSurface.withValues(alpha: 0.9),
-              ),
+              style: AppTypography.body.copyWith(color: kc.text1),
             ),
           ),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            decoration: BoxDecoration(
-              color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-              borderRadius: const BorderRadius.only(
-                bottomLeft: Radius.circular(16),
-                bottomRight: Radius.circular(16),
-              ),
-            ),
+          const SizedBox(height: 10),
+          Padding(
+            padding: const EdgeInsets.only(right: 10),
             child: Text(
               'Bu özet topluluk yorumlarından otomatik üretilmiştir.',
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
-                fontSize: 10,
-              ),
+              style: AppTypography.meta.copyWith(color: kc.text3),
             ),
           ),
         ],

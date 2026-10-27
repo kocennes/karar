@@ -1,23 +1,38 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shimmer/shimmer.dart';
 
+import '../../core/layout/breakpoints.dart';
 import '../../core/providers.dart';
-import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/karar_tokens.dart';
+import '../../core/theme/motion.dart';
 import '../../shared/models/post.dart';
+import '../../shared/widgets/centered_content.dart';
 import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/error_view.dart';
-import '../../shared/widgets/karar_logo.dart';
-import '../../shared/widgets/skeleton.dart';
+import '../../shared/widgets/karar_avatar.dart';
+import '../../shared/widgets/karar_circle_button.dart';
+import '../../shared/widgets/karar_pressable.dart';
+import '../../shared/widgets/karar_sheet.dart';
+import '../../shared/widgets/on_color_chip.dart';
+import '../../shared/widgets/post_surface.dart';
+import '../../shared/widgets/verdict_chip.dart';
+import '../../shared/widgets/vote_rail.dart';
 import '../post_detail/comment_list.dart';
 import '../post_detail/post_detail_provider.dart';
 import '../post_detail/share_picker_sheet.dart';
-import '../post_detail/vote_bar.dart';
 import 'discover_feed_provider.dart';
 import 'discover_provider.dart';
 import 'post_card.dart';
 
+/// Keşfet (spec §6.3): an immersive, full-bleed vertical pager on
+/// mobile/tablet and a centred phone frame with arrow buttons on desktop.
+/// The "Bölümler" toggle switches to the curated sections list.
 class DiscoverScreen extends ConsumerStatefulWidget {
   const DiscoverScreen({super.key});
 
@@ -34,6 +49,10 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen>
   String? _activePostId;
   int _snapDepthMilestoneFired = 0;
   bool _showSections = false;
+
+  /// One backdrop group for every live blur on the pages (glass rail,
+  /// chips) — kept stable so the group is not recreated on rebuilds.
+  final _backdropKey = BackdropKey();
 
   static const _snapMilestones = [3, 7, 15, 30];
 
@@ -180,170 +199,208 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen>
       }
     });
 
-    final theme = Theme.of(context);
-    return Scaffold(
-      backgroundColor: theme.colorScheme.surface,
-      extendBodyBehindAppBar: !_showSections,
-      appBar: AppBar(
-        backgroundColor:
-            _showSections ? theme.colorScheme.surface : Colors.transparent,
-        elevation: _showSections ? null : 0,
-        leadingWidth: 160,
-        leading: InkWell(
-          onTap: () => context.go('/'),
-          child: const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: KararLogo(size: LogoSize.medium),
+    if (_showSections) {
+      return _buildCanvas(
+        context,
+        toggleIcon: Icons.explore_rounded,
+        toggleTooltip: 'Akış',
+        body: const _DiscoverSectionsView(),
+      );
+    }
+
+    return feedAsync.when(
+      data: (state) {
+        if (state.items.isEmpty) {
+          return _buildCanvas(
+            context,
+            body: Center(
+              child: EmptyState(
+                message:
+                    'Şu an keşfedilecek içerik yok.\nBiraz sonra tekrar dene.',
+                icon: Icons.explore_outlined,
+                action: () => ref.invalidate(discoverFeedProvider),
+                actionLabel: 'Yenile',
+              ),
+            ),
+          );
+        }
+        return _buildImmersive(
+          context,
+          itemCount: state.items.length,
+          child: _buildPager(state),
+        );
+      },
+      loading: () => _buildImmersive(
+        context,
+        itemCount: 0,
+        child: const _DiscoverLoadingSkeleton(),
+      ),
+      error: (error, _) => _buildCanvas(
+        context,
+        body: Center(
+          child: ErrorView(
+            message: 'Keşfet yüklenemedi',
+            onRetry: () => ref.invalidate(discoverFeedProvider),
           ),
         ),
-        title: const Text(
-          'Keşfet',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
+      ),
+    );
+  }
+
+  /// Normal canvas page with a centred "Keşfet" app bar (sections view,
+  /// empty and error states).
+  Widget _buildCanvas(
+    BuildContext context, {
+    required Widget body,
+    IconData toggleIcon = Icons.dashboard_rounded,
+    String toggleTooltip = 'Bölümler',
+  }) {
+    return Scaffold(
+      backgroundColor: context.kc.canvas,
+      appBar: AppBar(
+        title: const Text('Keşfet'),
         centerTitle: true,
         actions: [
           IconButton(
-            icon: Icon(
-              _showSections ? Icons.explore_rounded : Icons.dashboard_rounded,
-            ),
-            tooltip: _showSections ? 'Akış' : 'Bölümler',
+            icon: Icon(toggleIcon),
+            tooltip: toggleTooltip,
             onPressed: _toggleSections,
           ),
         ],
       ),
-      body: _showSections
-          ? const _DiscoverSectionsView()
-          : feedAsync.when(
-              data: (state) {
-                if (state.items.isEmpty) {
-                  return Center(
-                    child: EmptyState(
-                      message:
-                          'Şu an keşfedilecek içerik yok.\nBiraz sonra tekrar dene.',
-                      icon: Icons.explore_outlined,
-                      action: () => ref.invalidate(discoverFeedProvider),
-                      actionLabel: 'Yenile',
-                    ),
-                  );
+      body: body,
+    );
+  }
+
+  /// Full-bleed dark pages (mobile/tablet) or the phone frame (desktop).
+  Widget _buildImmersive(
+    BuildContext context, {
+    required int itemCount,
+    required Widget child,
+  }) {
+    if (context.isDesktop) {
+      return Scaffold(
+        backgroundColor: context.kc.canvas,
+        body: _DesktopFrame(
+          controller: itemCount > 0 ? _ctrl : null,
+          itemCount: itemCount,
+          child: child,
+        ),
+      );
+    }
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.light,
+      child: Scaffold(
+        backgroundColor: KararColors.dark.canvas,
+        body: child,
+      ),
+    );
+  }
+
+  Widget _buildPager(DiscoverFeedState state) {
+    return BackdropGroup(
+      backdropKey: _backdropKey,
+      child: PageView.builder(
+        controller: _ctrl,
+        scrollDirection: Axis.vertical,
+        itemCount: state.items.length + (state.isLoadingMore ? 1 : 0),
+        itemBuilder: (context, index) {
+          if (index >= state.items.length) {
+            return const _DiscoverLoadingSkeleton();
+          }
+          final item = state.items[index];
+          return _DiscoverCard(
+            key: ValueKey(item.post.id),
+            item: item,
+            index: index,
+            total: state.items.length,
+            onOpenSections: _toggleSections,
+            onVote: (voteType) => ref
+                .read(discoverFeedProvider.notifier)
+                .vote(item.post.id, voteType,
+                    impressionToken: item.impressionToken),
+            onNotInterested: () {
+              ref.read(discoverFeedProvider.notifier).removeItem(item.post.id);
+              if (_activePostId == item.post.id) {
+                _activePostId = null;
+              }
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!mounted) return;
+                final nextItems =
+                    ref.read(discoverFeedProvider).valueOrNull?.items ?? [];
+                if (nextItems.isEmpty) return;
+                if (_currentIndex >= nextItems.length) {
+                  _currentIndex = nextItems.length - 1;
                 }
-                return PageView.builder(
-                  controller: _ctrl,
-                  scrollDirection: Axis.vertical,
-                  itemCount: state.items.length + (state.isLoadingMore ? 1 : 0),
-                  itemBuilder: (context, index) {
-                    if (index >= state.items.length) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    final item = state.items[index];
-                    return _DiscoverCard(
-                      key: ValueKey(item.post.id),
-                      item: item,
-                      index: index,
-                      total: state.items.length,
-                      onVote: (voteType) => ref
-                          .read(discoverFeedProvider.notifier)
-                          .vote(item.post.id, voteType,
-                              impressionToken: item.impressionToken),
-                      onNotInterested: () {
-                        ref
-                            .read(discoverFeedProvider.notifier)
-                            .removeItem(item.post.id);
-                        if (_activePostId == item.post.id) {
-                          _activePostId = null;
-                        }
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          if (!mounted) return;
-                          final nextItems = ref
-                                  .read(discoverFeedProvider)
-                                  .valueOrNull
-                                  ?.items ??
-                              [];
-                          if (nextItems.isEmpty) return;
-                          if (_currentIndex >= nextItems.length) {
-                            _currentIndex = nextItems.length - 1;
-                          }
-                          _handlePageEnter(_currentIndex, nextItems);
-                        });
-                        ref.read(postRepositoryProvider).sendDiscoverEvent(
-                              postId: item.post.id,
-                              eventType: 'not_interested',
-                              impressionToken: item.impressionToken,
-                              rankingReason: item.rankingReason,
-                            );
-                        ref.read(analyticsServiceProvider).logPostNotInterested(
-                              postId: item.post.id,
-                              rankingReason: item.rankingReason,
-                            );
-                        ref
-                            .read(postRepositoryProvider)
-                            .markNotInterested(item.post.id);
-                        if (_currentIndex >= state.items.length - 1) {
-                          _ctrl.previousPage(
-                            duration: const Duration(milliseconds: 300),
-                            curve: Curves.easeOut,
-                          );
-                        }
-                      },
-                      onCommentOpen: () {
-                        ref.read(postRepositoryProvider).sendDiscoverEvent(
-                              postId: item.post.id,
-                              eventType: 'comment_open',
-                              impressionToken: item.impressionToken,
-                              rankingReason: item.rankingReason,
-                            );
-                        ref
-                            .read(analyticsServiceProvider)
-                            .logDiscoverCommentOpen(
-                              postId: item.post.id,
-                              position: index,
-                              rankingReason: item.rankingReason,
-                            );
-                        _showCommentsSheet(
-                          context,
-                          item.post,
-                          impressionToken: item.impressionToken,
-                          rankingReason: item.rankingReason,
-                        );
-                      },
-                      onShare: () {
-                        ref.read(postRepositoryProvider).sendDiscoverEvent(
-                              postId: item.post.id,
-                              eventType: 'share',
-                              impressionToken: item.impressionToken,
-                              rankingReason: item.rankingReason,
-                            );
-                        ref.read(analyticsServiceProvider).logPostShared(
-                              postId: item.post.id,
-                              category: item.post.category.name,
-                            );
-                        SharePickerSheet.show(context, item.post);
-                      },
-                      onSave: (isSaved) async {
-                        final repo = ref.read(postRepositoryProvider);
-                        if (isSaved) {
-                          await repo.unsavePost(item.post.id);
-                        } else {
-                          await repo.savePost(item.post.id);
-                          ref.read(postRepositoryProvider).sendDiscoverEvent(
-                                postId: item.post.id,
-                                eventType: 'save',
-                                impressionToken: item.impressionToken,
-                                rankingReason: item.rankingReason,
-                              );
-                        }
-                      },
-                    );
-                  },
+                _handlePageEnter(_currentIndex, nextItems);
+              });
+              ref.read(postRepositoryProvider).sendDiscoverEvent(
+                    postId: item.post.id,
+                    eventType: 'not_interested',
+                    impressionToken: item.impressionToken,
+                    rankingReason: item.rankingReason,
+                  );
+              ref.read(analyticsServiceProvider).logPostNotInterested(
+                    postId: item.post.id,
+                    rankingReason: item.rankingReason,
+                  );
+              ref.read(postRepositoryProvider).markNotInterested(item.post.id);
+              if (_currentIndex >= state.items.length - 1) {
+                _ctrl.previousPage(
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeOut,
                 );
-              },
-              loading: () => const _DiscoverLoadingSkeleton(),
-              error: (error, _) => Center(
-                child: ErrorView(
-                  message: 'Keşfet yüklenemedi',
-                  onRetry: () => ref.invalidate(discoverFeedProvider),
-                ),
-              ),
-            ),
+              }
+            },
+            onCommentOpen: () {
+              ref.read(postRepositoryProvider).sendDiscoverEvent(
+                    postId: item.post.id,
+                    eventType: 'comment_open',
+                    impressionToken: item.impressionToken,
+                    rankingReason: item.rankingReason,
+                  );
+              ref.read(analyticsServiceProvider).logDiscoverCommentOpen(
+                    postId: item.post.id,
+                    position: index,
+                    rankingReason: item.rankingReason,
+                  );
+              _showCommentsSheet(
+                context,
+                item.post,
+                impressionToken: item.impressionToken,
+                rankingReason: item.rankingReason,
+              );
+            },
+            onShare: () {
+              ref.read(postRepositoryProvider).sendDiscoverEvent(
+                    postId: item.post.id,
+                    eventType: 'share',
+                    impressionToken: item.impressionToken,
+                    rankingReason: item.rankingReason,
+                  );
+              ref.read(analyticsServiceProvider).logPostShared(
+                    postId: item.post.id,
+                    category: item.post.category.name,
+                  );
+              SharePickerSheet.show(context, item.post);
+            },
+            onSave: (isSaved) async {
+              final repo = ref.read(postRepositoryProvider);
+              if (isSaved) {
+                await repo.unsavePost(item.post.id);
+              } else {
+                await repo.savePost(item.post.id);
+                ref.read(postRepositoryProvider).sendDiscoverEvent(
+                      postId: item.post.id,
+                      eventType: 'save',
+                      impressionToken: item.impressionToken,
+                      rankingReason: item.rankingReason,
+                    );
+              }
+            },
+          );
+        },
+      ),
     );
   }
 
@@ -353,9 +410,9 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen>
     required String impressionToken,
     required String rankingReason,
   }) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
+    showKararSheet<void>(
+      context,
+      scrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => _DiscoverCommentsSheet(
         post: post,
@@ -365,6 +422,150 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen>
     );
   }
 }
+
+// ─── Desktop phone frame ─────────────────────────────────────────────────────
+
+/// Desktop (≥ 1024): the pager sits in a centred phone-sized frame (radius
+/// 30, float shadow) with "Önceki" / "Sonraki" buttons on its right;
+/// ArrowUp / ArrowDown do the same.
+class _DesktopFrame extends StatelessWidget {
+  const _DesktopFrame({
+    required this.child,
+    required this.controller,
+    required this.itemCount,
+  });
+
+  final Widget child;
+  final PageController? controller;
+  final int itemCount;
+
+  static const _arrowSize = 48.0;
+  static const _arrowGap = 16.0;
+
+  int _page() {
+    final ctrl = controller;
+    if (ctrl == null || !ctrl.hasClients) return 0;
+    return (ctrl.page ?? ctrl.initialPage.toDouble()).round();
+  }
+
+  void _go(BuildContext context, int delta) {
+    final ctrl = controller;
+    if (ctrl == null || !ctrl.hasClients) return;
+    final target = _page() + delta;
+    if (target < 0 || target >= itemCount) return;
+    if (KararMotion.reduce(context)) {
+      ctrl.jumpToPage(target);
+    } else if (delta < 0) {
+      ctrl.previousPage(duration: KararMotion.nav, curve: KararMotion.standard);
+    } else {
+      ctrl.nextPage(duration: KararMotion.nav, curve: KararMotion.standard);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+    final hairline = KararShadow.hairlineFor(KararShadowKind.float, brightness);
+    final radius = KararRadius.all(KararRadius.card);
+
+    Widget arrows(int page) => Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            KararCircleButton(
+              icon: Icons.keyboard_arrow_up_rounded,
+              tooltip: 'Önceki',
+              size: _arrowSize,
+              iconSize: 26,
+              onPressed: controller != null && page > 0
+                  ? () => _go(context, -1)
+                  : null,
+            ),
+            const SizedBox(height: KararSpace.s12),
+            KararCircleButton(
+              icon: Icons.keyboard_arrow_down_rounded,
+              tooltip: 'Sonraki',
+              size: _arrowSize,
+              iconSize: 26,
+              onPressed: controller != null && page < itemCount - 1
+                  ? () => _go(context, 1)
+                  : null,
+            ),
+          ],
+        );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = math.max(
+          0.0,
+          math.min(
+            480.0,
+            constraints.maxWidth - 48 - 2 * (_arrowSize + _arrowGap),
+          ),
+        );
+        final height = math.max(0.0, constraints.maxHeight - 48);
+
+        final frame = Container(
+          width: width,
+          height: height,
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: KararColors.dark.canvas,
+            borderRadius: radius,
+            boxShadow: KararShadow.float(brightness),
+          ),
+          foregroundDecoration: hairline == null
+              ? null
+              : BoxDecoration(
+                  borderRadius: radius,
+                  border: Border.all(color: hairline),
+                ),
+          child: MediaQuery.removePadding(
+            context: context,
+            removeTop: true,
+            removeBottom: true,
+            removeLeft: true,
+            removeRight: true,
+            child: child,
+          ),
+        );
+
+        return CallbackShortcuts(
+          bindings: {
+            const SingleActivator(LogicalKeyboardKey.arrowUp): () =>
+                _go(context, -1),
+            const SingleActivator(LogicalKeyboardKey.arrowDown): () =>
+                _go(context, 1),
+          },
+          child: Focus(
+            autofocus: true,
+            child: Center(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Balances the arrow column so the frame stays centred.
+                  const SizedBox(width: _arrowSize + _arrowGap),
+                  frame,
+                  const SizedBox(width: _arrowGap),
+                  SizedBox(
+                    width: _arrowSize,
+                    child: controller == null
+                        ? arrows(0)
+                        : ListenableBuilder(
+                            listenable: controller!,
+                            builder: (context, _) => arrows(_page()),
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ─── One immersive page ──────────────────────────────────────────────────────
 
 class _DiscoverCard extends ConsumerStatefulWidget {
   const _DiscoverCard({
@@ -377,6 +578,7 @@ class _DiscoverCard extends ConsumerStatefulWidget {
     required this.onCommentOpen,
     required this.onShare,
     required this.onSave,
+    required this.onOpenSections,
   });
 
   final DiscoverFeedItem item;
@@ -387,6 +589,7 @@ class _DiscoverCard extends ConsumerStatefulWidget {
   final VoidCallback onCommentOpen;
   final VoidCallback onShare;
   final Future<void> Function(bool isSaved) onSave;
+  final VoidCallback onOpenSections;
 
   @override
   ConsumerState<_DiscoverCard> createState() => _DiscoverCardState();
@@ -396,6 +599,29 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
   bool _isSaved = false;
   bool _isVoting = false;
   bool _expanded = false;
+
+  /// The side that was tapped while the server confirms the vote (Keşfet is
+  /// not optimistic): the rail shows a progress ring on it.
+  VoteType? _pendingVote;
+
+  /// Height of the top overlay row (chips + sections button).
+  static const _topBarHeight = 64.0;
+
+  /// Room for the 3 px focus ring + 3 px gap inside the scrolling block.
+  static const _ringRoom = 6.0;
+
+  /// Extra photo scrim behind the tall Keşfet text block (on top of the
+  /// card scrim from `PostSurface`), so author/meta text stays ≥ 4.5:1 over
+  /// bright photos when the block starts around the middle of the page.
+  static final _textScrim = LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [
+      KararColors.dark.scrim.withValues(alpha: 0),
+      KararColors.dark.scrim,
+    ],
+    stops: const [0.22, 0.62],
+  );
 
   @override
   void initState() {
@@ -414,285 +640,359 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
 
   Future<void> _handleVote(VoteType type) async {
     if (_isVoting) return;
-    setState(() => _isVoting = true);
+    setState(() {
+      _isVoting = true;
+      _pendingVote = type;
+    });
     await widget.onVote(type);
-    if (mounted) setState(() => _isVoting = false);
+    if (mounted) {
+      setState(() {
+        _isVoting = false;
+        _pendingVote = null;
+      });
+    }
+  }
+
+  Future<void> _toggleSave() async {
+    final prev = _isSaved;
+    setState(() => _isSaved = !_isSaved);
+    try {
+      await widget.onSave(prev);
+    } catch (_) {
+      if (mounted) setState(() => _isSaved = prev);
+    }
+  }
+
+  void _openDetail() {
+    final post = widget.item.post;
+    context.push('/posts/${post.id}', extra: post);
   }
 
   @override
   Widget build(BuildContext context) {
     final post = widget.item.post;
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
+    final isPhoto = PostSurface.isPhotoPost(post);
+    final padding = MediaQuery.paddingOf(context);
+    final bottomInset = context.navBottomInset;
 
-    return Material(
-      color: theme.colorScheme.surface,
-      child: Column(
-        children: [
-          // Header sits under the transparent AppBar
-          SafeArea(
-            bottom: false,
-            child: SizedBox(
-              height: kToolbarHeight,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
-                  children: [
-                    _RankingBadge(reason: widget.item.rankingReason),
-                    const Spacer(),
-                    Text(
-                      '${widget.index + 1} / ${widget.total}',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: theme.colorScheme.onSurfaceVariant,
+    return ClipRect(
+      child: PostSurface(
+        post: post,
+        radius: 0,
+        liveBlurHost: isPhoto,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final pageHeight = constraints.maxHeight;
+            final topReserved = padding.top + _topBarHeight;
+
+            // Pick the largest rail that fits between the top bar and the
+            // bottom inset (small/landscape viewports get the smaller rail).
+            final railRoom = pageHeight - topReserved - bottomInset - 24 - 8;
+            final railSize = railRoom >= VoteRailMetrics.fullscreen.height
+                ? VoteRailSize.fullscreen
+                : railRoom >= VoteRailMetrics.card.height
+                    ? VoteRailSize.card
+                    : VoteRailSize.compact;
+            final rail = VoteRailMetrics.of(railSize);
+
+            final blockRoom = math.max(
+              0.0,
+              pageHeight - topReserved - KararSpace.s8 - (bottomInset + 20),
+            );
+            final blockMaxHeight =
+                _expanded ? math.min(blockRoom, pageHeight * 0.55) : blockRoom;
+
+            return SizedBox(
+              width: constraints.maxWidth,
+              height: pageHeight,
+              child: Stack(
+                children: [
+                  if (isPhoto)
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: ExcludeSemantics(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(gradient: _textScrim),
+                          ),
+                        ),
                       ),
                     ),
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: SafeArea(
+                      bottom: false,
+                      child: SizedBox(
+                        height: _topBarHeight,
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 12, 0),
+                          child: _TopOverlay(
+                            rankingReason: widget.item.rankingReason,
+                            index: widget.index,
+                            total: widget.total,
+                            onPhoto: isPhoto,
+                            onNotInterested: widget.onNotInterested,
+                            onOpenSections: widget.onOpenSections,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: Padding(
+                      // The scrollable block adds _ringRoom on each side so
+                      // focus rings are not clipped; text still starts 20 px
+                      // from the edge and ends 24 px before the rail.
+                      padding: EdgeInsets.fromLTRB(
+                        KararSpace.s20 - _ringRoom,
+                        0,
+                        rail.width + 24 - _ringRoom,
+                        bottomInset + 20,
+                      ),
+                      child: Align(
+                        alignment: Alignment.bottomLeft,
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxWidth: 560 + 2 * _ringRoom,
+                            maxHeight: blockMaxHeight,
+                          ),
+                          child: _buildTextBlock(context, post),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    right: 0,
+                    bottom: bottomInset + 24,
+                    child: VoteRail(
+                      size: railSize,
+                      hakliCount: post.voteCountHakli,
+                      haksizCount: post.voteCountHaksiz,
+                      commentCount: post.commentCount,
+                      myVote: post.myVote,
+                      onVote: (type) => _handleVote(type),
+                      pendingVote: _isVoting ? _pendingVote : null,
+                      onComment: widget.onCommentOpen,
+                      onSave: _toggleSave,
+                      isSaved: _isSaved,
+                      onShare: widget.onShare,
+                      liveBlur: isPhoto,
+                      unvoteLabels: true,
+                      hakliKey:
+                          ValueKey('discover_vote_hakli_button_${post.id}'),
+                      haksizKey:
+                          ValueKey('discover_vote_haksiz_button_${post.id}'),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTextBlock(BuildContext context, Post post) {
+    final column = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _AuthorRow(post: post),
+        const SizedBox(height: KararSpace.s10),
+        KararPressable(
+          onTap: _openDetail,
+          semanticLabel: post.title,
+          semanticHint: 'Detayları gör',
+          pressedScale: 0.98,
+          focusRadius: KararRadius.xs,
+          child: Text(
+            post.title,
+            maxLines: 4,
+            overflow: TextOverflow.ellipsis,
+            style: AppTypography.titleXL.copyWith(color: Colors.white),
+          ),
+        ),
+        if (post.content.isNotEmpty) ...[
+          const SizedBox(height: KararSpace.s8),
+          _ExpandableContent(
+            text: post.content,
+            expanded: _expanded,
+            onToggle: () => setState(() => _expanded = !_expanded),
+          ),
+        ],
+        // The tag row is 44 px tall (hit area) around 18 px of text, so its
+        // own slack provides the 8 / 12 px gaps around it.
+        if (post.tags.isNotEmpty)
+          _TagRow(tags: post.tags)
+        else
+          const SizedBox(height: KararSpace.s12),
+        VerdictChip(post: post),
+      ],
+    );
+
+    Widget block = SingleChildScrollView(
+      physics: const ClampingScrollPhysics(),
+      padding: EdgeInsets.fromLTRB(
+        _ringRoom,
+        _expanded ? KararSpace.s24 : 0,
+        _ringRoom,
+        0,
+      ),
+      child: column,
+    );
+    if (_expanded) {
+      // Top fade while the expanded block scrolls.
+      block = ShaderMask(
+        blendMode: BlendMode.dstIn,
+        shaderCallback: (rect) => LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          // Alpha mask only (dstIn): transparent → opaque.
+          colors: const [Colors.transparent, Colors.white],
+          stops: [0, rect.height <= 0 ? 0 : math.min(1, 24 / rect.height)],
+        ).createShader(rect),
+        child: block,
+      );
+    }
+    return block;
+  }
+}
+
+/// Glass chips over the page: ranking badge, page counter, "İlgilenmiyorum"
+/// and the sections toggle.
+class _TopOverlay extends StatelessWidget {
+  const _TopOverlay({
+    required this.rankingReason,
+    required this.index,
+    required this.total,
+    required this.onPhoto,
+    required this.onNotInterested,
+    required this.onOpenSections,
+  });
+
+  final String rankingReason;
+  final int index;
+  final int total;
+  final bool onPhoto;
+  final VoidCallback onNotInterested;
+  final VoidCallback onOpenSections;
+
+  /// Width of an [OnColorChip] (padding L9 R11, 16 px icon + 5 gap,
+  /// 12/800 label) at the current text scale.
+  static double _chipWidth(BuildContext context, String label, bool icon) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: AppTypography.meta.copyWith(
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0,
+        ),
+      ),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1,
+    )..layout();
+    final width = painter.width;
+    painter.dispose();
+    return 9 + (icon ? 16 + 5 : 0) + width + 11 + 1;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ranking = _RankingBadge.describe(rankingReason);
+    final counter = '${index + 1} / $total';
+
+    return Row(
+      children: [
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final needed = _chipWidth(context, ranking.$2, true) +
+                  KararSpace.s8 +
+                  _chipWidth(context, counter, false);
+              final showCounter = needed <= constraints.maxWidth;
+              return Row(
+                children: [
+                  Flexible(
+                    child: _RankingBadge(reason: rankingReason, blur: onPhoto),
+                  ),
+                  if (showCounter) ...[
+                    const SizedBox(width: KararSpace.s8),
+                    OnColorChip(label: counter, blur: onPhoto),
                   ],
-                ),
-              ),
-            ),
+                ],
+              );
+            },
           ),
+        ),
+        const SizedBox(width: KararSpace.s8),
+        OnColorChip(
+          icon: Icons.visibility_off_rounded,
+          label: 'İlgilenmiyorum',
+          blur: onPhoto,
+          onTap: onNotInterested,
+        ),
+        const SizedBox(width: KararSpace.s4),
+        KararCircleButton(
+          icon: Icons.dashboard_rounded,
+          tooltip: 'Bölümler',
+          style: onPhoto ? KararCircleStyle.glass : KararCircleStyle.onColor,
+          onPressed: onOpenSections,
+        ),
+      ],
+    );
+  }
+}
 
-          // Scrollable content — centered on wide viewports
-          Expanded(
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 680),
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Category chip
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: AppColors.primary.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          '${post.category.icon} ${post.category.name}',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: AppColors.primary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
+class _AuthorRow extends StatelessWidget {
+  const _AuthorRow({required this.post});
 
-                      // Title
-                      GestureDetector(
-                        onTap: () =>
-                            context.push('/posts/${post.id}', extra: post),
-                        child: Text(
-                          post.title,
-                          style: theme.textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.bold,
-                            height: 1.3,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
+  final Post post;
 
-                      // Content (expandable)
-                      if (post.content.isNotEmpty) ...[
-                        GestureDetector(
-                          onTap: () => setState(() => _expanded = !_expanded),
-                          child: Text(
-                            post.content,
-                            maxLines: _expanded ? null : 5,
-                            overflow: _expanded
-                                ? TextOverflow.visible
-                                : TextOverflow.ellipsis,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
-                              height: 1.5,
-                            ),
-                          ),
-                        ),
-                        if (!_expanded && post.content.length > 200)
-                          GestureDetector(
-                            onTap: () => setState(() => _expanded = true),
-                            child: const Text(
-                              'Devamını oku',
-                              style: TextStyle(
-                                color: AppColors.primary,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        const SizedBox(height: 10),
-                      ],
+  @override
+  Widget build(BuildContext context) {
+    final name = post.authorName;
+    final anonymous = post.isAnonymous || name == null || name.isEmpty;
+    final handle = anonymous ? '@anonim' : '@$name';
 
-                      // Image — height capped at 30% of viewport height on small screens
-                      if (post.imageUrl != null) ...[
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: Image.network(
-                            post.imageUrl!,
-                            width: double.infinity,
-                            height: (MediaQuery.sizeOf(context).height * 0.30)
-                                .clamp(140.0, 260.0),
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) =>
-                                const SizedBox.shrink(),
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                      ],
-
-                      // Author + time
-                      Row(
-                        children: [
-                          Icon(Icons.person_outline,
-                              size: 14,
-                              color: theme.colorScheme.onSurfaceVariant),
-                          const SizedBox(width: 4),
-                          Text(
-                            post.isAnonymous
-                                ? 'Anonim'
-                                : (post.authorName ?? 'Anonim'),
-                            style: TextStyle(
-                                fontSize: 12,
-                                color: theme.colorScheme.onSurfaceVariant),
-                          ),
-                          const SizedBox(width: 6),
-                          Text('·',
-                              style: TextStyle(
-                                  color: theme.colorScheme.onSurfaceVariant)),
-                          const SizedBox(width: 6),
-                          Text(
-                            post.createdAgo,
-                            style: TextStyle(
-                                fontSize: 12,
-                                color: theme.colorScheme.onSurfaceVariant),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-                  ),
-                ),
-              ),
-            ),
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 32),
+      child: Row(
+        children: [
+          KararAvatar(
+            username: anonymous ? '' : name,
+            radius: 14,
+            anonymous: anonymous,
+            onColor: true,
           ),
-
-          // Bottom bar: vote bar + vote buttons + action row
-          DecoratedBox(
-            decoration: BoxDecoration(
-              border: Border(
-                top: BorderSide(
-                    color: theme.dividerColor.withValues(alpha: 0.12)),
-              ),
-            ),
-            child: SafeArea(
-              top: false,
-              child: Align(
-                alignment: Alignment.topCenter,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 680),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        VoteBar(post: post, isCompact: true),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _VoteButton(
-                                label: 'Haklı',
-                                icon: Icons.check_rounded,
-                                color: isDark
-                                    ? AppColors.darkHakli
-                                    : AppColors.hakli,
-                                isSelected: post.myVote == VoteType.hakli,
-                                isLoading: _isVoting,
-                                onTap: () => _handleVote(VoteType.hakli),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: _VoteButton(
-                                label: 'Haksız',
-                                icon: Icons.close_rounded,
-                                color: isDark
-                                    ? AppColors.darkHaksiz
-                                    : AppColors.haksiz,
-                                isSelected: post.myVote == VoteType.haksiz,
-                                isLoading: _isVoting,
-                                onTap: () => _handleVote(VoteType.haksiz),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        Row(
-                          children: [
-                            _ActionButton(
-                              icon: Icons.chat_bubble_outline_rounded,
-                              label: '${post.commentCount}',
-                              onTap: widget.onCommentOpen,
-                            ),
-                            const SizedBox(width: 2),
-                            _ActionButton(
-                              icon: Icons.share_rounded,
-                              label: '',
-                              onTap: widget.onShare,
-                            ),
-                            const SizedBox(width: 2),
-                            _ActionButton(
-                              icon: _isSaved
-                                  ? Icons.bookmark_rounded
-                                  : Icons.bookmark_outline_rounded,
-                              label: '',
-                              color: _isSaved ? AppColors.primary : null,
-                              onTap: () async {
-                                final prev = _isSaved;
-                                setState(() => _isSaved = !_isSaved);
-                                try {
-                                  await widget.onSave(prev);
-                                } catch (_) {
-                                  if (mounted) setState(() => _isSaved = prev);
-                                }
-                              },
-                            ),
-                            const SizedBox(width: 2),
-                            _ActionButton(
-                              icon: Icons.open_in_new_rounded,
-                              label: '',
-                              onTap: () => context.push('/posts/${post.id}',
-                                  extra: post),
-                            ),
-                            const Spacer(),
-                            TextButton(
-                              onPressed: widget.onNotInterested,
-                              style: TextButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 10, vertical: 4),
-                                minimumSize: Size.zero,
-                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                              ),
-                              child: Text(
-                                'İlgilenmiyorum',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: theme.colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
+          const SizedBox(width: KararSpace.s8),
+          Flexible(
+            child: Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(
+                    text: handle,
+                    style: AppTypography.bodyS.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                ),
+                  TextSpan(
+                    text: ' · ${post.createdAgo}',
+                    style: AppTypography.labelS.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
               ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],
@@ -701,175 +1001,160 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
   }
 }
 
-class _VoteButton extends StatelessWidget {
-  const _VoteButton({
-    required this.label,
-    required this.icon,
-    required this.color,
-    required this.isSelected,
-    required this.isLoading,
-    required this.onTap,
+/// Post body: 3 lines, tap to expand/collapse; "Devamını oku" when it is
+/// actually truncated.
+class _ExpandableContent extends StatelessWidget {
+  const _ExpandableContent({
+    required this.text,
+    required this.expanded,
+    required this.onToggle,
   });
 
-  final String label;
-  final IconData icon;
-  final Color color;
-  final bool isSelected;
-  final bool isLoading;
-  final VoidCallback onTap;
+  final String text;
+  final bool expanded;
+  final VoidCallback onToggle;
+
+  static const _collapsedLines = 3;
 
   @override
   Widget build(BuildContext context) {
-    final button = AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      decoration: BoxDecoration(
-        color: isSelected ? color : color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: isSelected ? color : color.withValues(alpha: 0.3),
-          width: isSelected ? 1.5 : 1,
-        ),
-      ),
-      child: InkWell(
-        onTap: isLoading ? null : onTap,
-        borderRadius: BorderRadius.circular(10),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (isLoading)
-                SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: isSelected ? Colors.white : color,
+    final style = AppTypography.body.copyWith(
+      color: Colors.white,
+      fontWeight: FontWeight.w500,
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final painter = TextPainter(
+          text: TextSpan(text: text, style: style),
+          textDirection: Directionality.of(context),
+          textScaler: MediaQuery.textScalerOf(context),
+          maxLines: _collapsedLines,
+        )..layout(maxWidth: constraints.maxWidth);
+        final truncates = painter.didExceedMaxLines;
+        painter.dispose();
+
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            GestureDetector(
+              onTap: onToggle,
+              child: Text(
+                text,
+                maxLines: expanded ? null : _collapsedLines,
+                overflow:
+                    expanded ? TextOverflow.visible : TextOverflow.ellipsis,
+                style: style,
+              ),
+            ),
+            if (!expanded && truncates)
+              KararPressable(
+                onTap: onToggle,
+                semanticLabel: 'Devamını oku',
+                focusRadius: KararRadius.xs,
+                child: Text(
+                  'Devamını oku',
+                  style: AppTypography.bodyS.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    decoration: TextDecoration.underline,
+                    decorationColor: Colors.white,
                   ),
-                )
-              else
-                Icon(
-                  icon,
-                  size: 16,
-                  color: isSelected ? Colors.white : color,
-                ),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 13,
-                  color: isSelected ? Colors.white : color,
                 ),
               ),
-            ],
-          ),
-        ),
-      ),
+          ],
+        );
+      },
     );
-
-    if (!isSelected) {
-      return button;
-    }
-
-    return button
-        .animate(key: ValueKey(isSelected))
-        .scale(
-          begin: const Offset(0.82, 0.82),
-          end: const Offset(1.0, 1.0),
-          duration: 260.ms,
-          curve: Curves.elasticOut,
-        )
-        .fadeIn(duration: 120.ms);
   }
 }
 
-class _ActionButton extends StatelessWidget {
-  const _ActionButton({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.color,
-  });
+/// Single-line hashtag row: up to three tags, never wrapping — tags that do
+/// not fit are dropped. Each tag is a 44 px target that opens the search.
+class _TagRow extends StatelessWidget {
+  const _TagRow({required this.tags});
 
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  final Color? color;
+  final List<String> tags;
+
+  static const _gap = 10.0;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final iconColor = color ?? theme.colorScheme.onSurfaceVariant;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
+    final style = AppTypography.labelS.copyWith(
+      color: Colors.white,
+      fontWeight: FontWeight.w800,
+    );
+    final scaler = MediaQuery.textScalerOf(context);
+    final direction = Directionality.of(context);
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final fitted = <String>[];
+        var used = 0.0;
+        for (final tag in tags.take(3)) {
+          final painter = TextPainter(
+            text: TextSpan(text: '#$tag', style: style),
+            textDirection: direction,
+            textScaler: scaler,
+            maxLines: 1,
+          )..layout();
+          final width = math.max(painter.width, KararSpace.minTap);
+          painter.dispose();
+          final next = used + (fitted.isEmpty ? 0 : _gap) + width;
+          if (next > constraints.maxWidth) continue;
+          used = next;
+          fitted.add(tag);
+        }
+        if (fitted.isEmpty) return const SizedBox(height: KararSpace.s12);
+
+        return Row(
           children: [
-            Icon(icon, size: 20, color: iconColor),
-            if (label.isNotEmpty) ...[
-              const SizedBox(width: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 13,
-                  color: iconColor,
-                  fontWeight: FontWeight.w600,
+            for (var i = 0; i < fitted.length; i++) ...[
+              if (i > 0) const SizedBox(width: _gap),
+              KararPressable(
+                onTap: () => context.push(
+                    '/search?q=${Uri.encodeComponent('#${fitted[i]}')}'),
+                semanticLabel: '#${fitted[i]}',
+                focusRadius: KararRadius.xs,
+                child: ConstrainedBox(
+                  constraints:
+                      const BoxConstraints(minWidth: KararSpace.minTap),
+                  child: Text(
+                    '#${fitted[i]}',
+                    maxLines: 1,
+                    softWrap: false,
+                    style: style,
+                  ),
                 ),
               ),
             ],
           ],
-        ),
-      ),
+        );
+      },
     );
   }
 }
 
 class _RankingBadge extends StatelessWidget {
-  const _RankingBadge({required this.reason});
+  const _RankingBadge({required this.reason, this.blur = false});
 
   final String reason;
+  final bool blur;
+
+  /// Icon and label for a ranking reason.
+  static (IconData, String) describe(String reason) => switch (reason) {
+        'rising' => (Icons.trending_up_rounded, 'Yükseliyor'),
+        'controversial' => (Icons.balance_rounded, 'Tartışmalı'),
+        'fresh' => (Icons.fiber_new_rounded, 'Yeni'),
+        'serendipity' => (Icons.shuffle_rounded, 'Farklı Bir Şey'),
+        'ucb_explore' => (Icons.explore_rounded, 'Keşif'),
+        _ => (Icons.local_fire_department_rounded, 'Trend'),
+      };
 
   @override
   Widget build(BuildContext context) {
-    final (icon, label, color) = switch (reason) {
-      'rising' => (Icons.trending_up_rounded, 'Yükseliyor', AppColors.hakli),
-      'controversial' => (
-          Icons.balance_rounded,
-          'Tartışmalı',
-          AppColors.primary
-        ),
-      'fresh' => (Icons.fiber_new_rounded, 'Yeni', AppColors.haksiz),
-      'serendipity' => (Icons.shuffle_rounded, 'Farklı Bir Şey', Colors.teal),
-      'ucb_explore' => (Icons.explore_rounded, 'Keşif', Colors.deepPurple),
-      _ => (Icons.local_fire_department_rounded, 'Trend', Colors.orange),
-    };
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: color),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 11,
-              color: color,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
-      ),
-    );
+    final (icon, label) = describe(reason);
+    return OnColorChip(icon: icon, label: label, blur: blur);
   }
 }
 
@@ -888,7 +1173,7 @@ class _DiscoverCommentsSheet extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final theme = Theme.of(context);
+    final kc = context.kc;
 
     return DraggableScrollableSheet(
       initialChildSize: 0.7,
@@ -896,50 +1181,21 @@ class _DiscoverCommentsSheet extends ConsumerWidget {
       maxChildSize: 0.95,
       expand: false,
       builder: (context, scrollController) {
-        return Container(
+        return DecoratedBox(
           decoration: BoxDecoration(
-            color: theme.colorScheme.surface,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            color: kc.sheet,
+            borderRadius: const BorderRadius.vertical(
+              top: Radius.circular(KararRadius.card),
+            ),
           ),
           child: Column(
             children: [
-              // Handle
-              const SizedBox(height: 12),
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: theme.dividerColor,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
+              KararSheetHeader(
+                title: 'Yorumlar',
+                count: '${post.commentCount}',
+                onClose: () => Navigator.of(context).pop(),
               ),
-              const SizedBox(height: 12),
-
-              // Header
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
-                  children: [
-                    Text(
-                      'Yorumlar',
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      '(${post.commentCount})',
-                      style: TextStyle(
-                        color: theme.colorScheme.onSurfaceVariant,
-                        fontSize: 14,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Divider(height: 16),
+              Divider(height: 1, thickness: 1, color: kc.outlineVariant),
 
               // Comment list
               Expanded(
@@ -1002,7 +1258,7 @@ class _CommentsBody extends ConsumerWidget {
     if (detailState.comments.isEmpty) {
       return const EmptyState(
         message: 'Henüz yorum yok. İlk yorumu sen yap.',
-        icon: Icons.chat_bubble_outline,
+        icon: Icons.chat_bubble_outline_rounded,
       );
     }
 
@@ -1038,6 +1294,7 @@ class _CommentsBody extends ConsumerWidget {
   }
 }
 
+/// Composer pinned under the comments sheet (spec §6.2 composer visuals).
 class _DiscoverCommentInput extends ConsumerStatefulWidget {
   const _DiscoverCommentInput({
     required this.postId,
@@ -1058,9 +1315,22 @@ class _DiscoverCommentInputState extends ConsumerState<_DiscoverCommentInput> {
   final _ctrl = TextEditingController();
   final _focusNode = FocusNode();
   var _loading = false;
+  var _hasText = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl.addListener(_onTextChanged);
+  }
+
+  void _onTextChanged() {
+    final hasText = _ctrl.text.trim().isNotEmpty;
+    if (hasText != _hasText) setState(() => _hasText = hasText);
+  }
 
   @override
   void dispose() {
+    _ctrl.removeListener(_onTextChanged);
     _ctrl.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -1093,7 +1363,7 @@ class _DiscoverCommentInputState extends ConsumerState<_DiscoverCommentInput> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final kc = context.kc;
     final replyingTo = ref.watch(
       postDetailProvider(widget.postId).select((s) => s.replyingToComment),
     );
@@ -1105,91 +1375,129 @@ class _DiscoverCommentInputState extends ConsumerState<_DiscoverCommentInput> {
       },
     );
 
-    return SafeArea(
-      child: Padding(
-        padding: EdgeInsets.only(
-          left: 12,
-          right: 12,
-          bottom: MediaQuery.of(context).viewInsets.bottom + 8,
-          top: 8,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (replyingTo != null)
-              Container(
-                margin: const EdgeInsets.only(bottom: 6),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.reply_rounded,
-                        size: 14, color: AppColors.primary),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        '@${replyingTo.authorName ?? 'kullanıcı'} yanıtlanıyor',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: AppColors.primary,
-                          fontWeight: FontWeight.w500,
+    OutlineInputBorder pill([BorderSide side = BorderSide.none]) =>
+        OutlineInputBorder(
+          borderRadius: KararRadius.all(KararRadius.surface),
+          borderSide: side,
+        );
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: kc.sheet,
+        border: Border(top: BorderSide(color: kc.outlineVariant)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            12,
+            10,
+            12,
+            MediaQuery.viewInsetsOf(context).bottom + 12,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (replyingTo != null)
+                Container(
+                  margin: const EdgeInsets.only(bottom: KararSpace.s8),
+                  padding: const EdgeInsets.only(left: KararSpace.s12),
+                  decoration: BoxDecoration(
+                    color: kc.primaryContainer,
+                    borderRadius: KararRadius.all(KararRadius.avatar),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.reply_rounded,
+                        size: 14,
+                        color: kc.onPrimaryContainer,
+                      ),
+                      const SizedBox(width: KararSpace.s6),
+                      Expanded(
+                        child: Text(
+                          '@${replyingTo.authorName ?? 'kullanıcı'} yanıtlanıyor',
+                          style: AppTypography.meta.copyWith(
+                            color: kc.onPrimaryContainer,
+                            fontWeight: FontWeight.w700,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        overflow: TextOverflow.ellipsis,
                       ),
-                    ),
-                    GestureDetector(
-                      onTap: () => ref
-                          .read(postDetailProvider(widget.postId).notifier)
-                          .cancelReply(),
-                      child: Icon(Icons.close_rounded,
-                          size: 16, color: theme.colorScheme.onSurfaceVariant),
-                    ),
-                  ],
-                ),
-              ),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _ctrl,
-                    focusNode: _focusNode,
-                    maxLines: null,
-                    textInputAction: TextInputAction.send,
-                    onSubmitted: (_) => _submit(),
-                    decoration: InputDecoration(
-                      hintText:
-                          replyingTo != null ? 'Yanıt yaz…' : 'Yorum yaz…',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(20),
-                        borderSide: BorderSide.none,
+                      IconButton(
+                        onPressed: () => ref
+                            .read(postDetailProvider(widget.postId).notifier)
+                            .cancelReply(),
+                        tooltip: 'Yanıtlamayı iptal et',
+                        icon: const Icon(Icons.close_rounded, size: 18),
+                        color: kc.onPrimaryContainer,
                       ),
-                      filled: true,
-                      fillColor: theme.colorScheme.surfaceContainerHighest
-                          .withValues(alpha: 0.5),
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 10),
-                    ),
+                    ],
                   ),
                 ),
-                const SizedBox(width: 8),
-                _loading
-                    ? const SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : IconButton(
-                        onPressed: _submit,
-                        icon: const Icon(Icons.send_rounded),
-                        color: AppColors.primary,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _ctrl,
+                      focusNode: _focusNode,
+                      minLines: 1,
+                      maxLines: 4,
+                      textInputAction: TextInputAction.send,
+                      textCapitalization: TextCapitalization.sentences,
+                      onSubmitted: (_) => _submit(),
+                      decoration: InputDecoration(
+                        hintText:
+                            replyingTo != null ? 'Yanıt yaz…' : 'Yorum yaz…',
+                        filled: true,
+                        fillColor: kc.muted,
+                        constraints: const BoxConstraints(minHeight: 48),
+                        border: pill(),
+                        enabledBorder: pill(),
+                        focusedBorder:
+                            pill(BorderSide(color: kc.primary, width: 1.5)),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 13,
+                        ),
                       ),
-              ],
-            ),
-          ],
+                    ),
+                  ),
+                  const SizedBox(width: KararSpace.s10),
+                  if (_loading)
+                    SizedBox(
+                      width: 44,
+                      height: 48,
+                      child: Center(
+                        child: SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: kc.primary,
+                          ),
+                        ),
+                      ),
+                    )
+                  else
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 2),
+                      child: KararCircleButton(
+                        icon: Icons.arrow_upward_rounded,
+                        onPressed: _hasText ? _submit : null,
+                        tooltip: replyingTo != null
+                            ? 'Yanıt gönder'
+                            : 'Yorum gönder',
+                        style: KararCircleStyle.primary,
+                        size: 44,
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1203,6 +1511,7 @@ class _DiscoverSectionsView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final kc = context.kc;
     final sectionsAsync = ref.watch(discoverProvider);
     return sectionsAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -1213,25 +1522,29 @@ class _DiscoverSectionsView extends ConsumerWidget {
         ),
       ),
       data: (data) {
-        final sections = <(String, IconData, Color, String, List<Post>)>[
+        final sections =
+            <(String, IconData, Color, Color, String, List<Post>)>[
           (
             'Yükselenler',
             Icons.trending_up_rounded,
-            AppColors.hakli,
+            kc.hakliSoft,
+            kc.hakliText,
             'Hızla oy alıyor',
             data.rising,
           ),
           (
             'İkiye Bölenler',
             Icons.balance_rounded,
-            AppColors.primary,
+            kc.primaryContainer,
+            kc.primaryText,
             'Topluluk ikiye bölündü',
             data.controversial,
           ),
           (
             'Yeni Karar Bekleyenler',
             Icons.fiber_new_rounded,
-            AppColors.haksiz,
+            kc.warnSoft,
+            kc.warnText,
             'Az oylı, yeni tartışmalar',
             data.fresh,
           ),
@@ -1239,7 +1552,8 @@ class _DiscoverSectionsView extends ConsumerWidget {
             (
               '${data.city!}\'da Trend',
               Icons.location_on_rounded,
-              Colors.orange,
+              kc.muted,
+              kc.text1,
               'Şehrinde öne çıkıyor',
               data.cityTrending,
             ),
@@ -1247,13 +1561,14 @@ class _DiscoverSectionsView extends ConsumerWidget {
             (
               'Farklı Bir Şey',
               Icons.shuffle_rounded,
-              Colors.teal,
+              kc.primaryContainer,
+              kc.onPrimaryContainer,
               'Henüz keşfetmediğin kategorilerden',
               data.serendipity,
             ),
         ];
 
-        final allEmpty = sections.every((s) => s.$5.isEmpty);
+        final allEmpty = sections.every((s) => s.$6.isEmpty);
         if (allEmpty) {
           return Center(
             child: EmptyState(
@@ -1266,17 +1581,25 @@ class _DiscoverSectionsView extends ConsumerWidget {
         }
 
         final items = <Widget>[];
-        for (final (label, icon, color, subtitle, posts) in sections) {
+        for (final (label, icon, background, foreground, subtitle, posts)
+            in sections) {
           if (posts.isEmpty) continue;
           items.add(_SectionHeader(
             label: label,
             icon: icon,
-            color: color,
+            background: background,
+            foreground: foreground,
             subtitle: subtitle,
           ));
           for (final post in posts.take(5)) {
             items.add(Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              padding: const EdgeInsets.symmetric(
+                horizontal: KararSpace.gutter,
+                vertical: KararSpace.s6,
+              ),
+              // TODO(owner A): pass `variant: PostCardVariant.compact` (spec
+              // §6.3 sections view) once the compact variant lands in
+              // post_card.dart.
               child: PostCard(
                 post: post,
                 onTap: () => context.push('/posts/${post.id}', extra: post),
@@ -1285,14 +1608,13 @@ class _DiscoverSectionsView extends ConsumerWidget {
           }
         }
 
-        return Align(
-          alignment: Alignment.topCenter,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 680),
-            child: ListView(
-              padding: const EdgeInsets.only(bottom: 24),
-              children: items,
+        return CenteredContent(
+          child: ListView(
+            padding: EdgeInsets.only(
+              top: KararSpace.s4,
+              bottom: context.navBottomInset + KararSpace.s24,
             ),
+            children: items,
           ),
         );
       },
@@ -1304,49 +1626,59 @@ class _SectionHeader extends StatelessWidget {
   const _SectionHeader({
     required this.label,
     required this.icon,
-    required this.color,
+    required this.background,
+    required this.foreground,
     required this.subtitle,
   });
 
   final String label;
   final IconData icon;
-  final Color color;
+  final Color background;
+  final Color foreground;
   final String subtitle;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final kc = context.kc;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 4),
+      padding: const EdgeInsets.fromLTRB(
+        KararSpace.gutter,
+        KararSpace.s24,
+        KararSpace.gutter,
+        KararSpace.s8,
+      ),
       child: Row(
         children: [
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(8),
+          ExcludeSemantics(
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: background,
+                borderRadius: KararRadius.all(KararRadius.sm),
+              ),
+              child: Icon(icon, size: 20, color: foreground),
             ),
-            child: Icon(icon, size: 18, color: color),
           ),
-          const SizedBox(width: 10),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: theme.colorScheme.onSurface,
-                ),
+          const SizedBox(width: KararSpace.s12),
+          Expanded(
+            child: Semantics(
+              header: true,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: AppTypography.tab.copyWith(color: kc.text1),
+                  ),
+                  const SizedBox(height: KararSpace.s2),
+                  Text(
+                    subtitle,
+                    style: AppTypography.meta.copyWith(color: kc.text2),
+                  ),
+                ],
               ),
-              Text(
-                subtitle,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
+            ),
           ),
         ],
       ),
@@ -1356,81 +1688,113 @@ class _SectionHeader extends StatelessWidget {
 
 // ─── Loading skeleton ─────────────────────────────────────────────────────────
 
+/// Full-bleed dark shimmer page: top chips, rail placeholders, text bars.
 class _DiscoverLoadingSkeleton extends StatelessWidget {
   const _DiscoverLoadingSkeleton();
 
   @override
   Widget build(BuildContext context) {
-    return const Column(
+    const dark = KararColors.dark;
+    final bottomInset = context.navBottomInset;
+    const rail = VoteRailMetrics.fullscreen;
+
+    Widget bone(double height, double width, {double radius = 8}) =>
+        Container(
+          height: height,
+          width: width,
+          decoration: BoxDecoration(
+            color: dark.surface,
+            borderRadius: KararRadius.all(radius),
+          ),
+        );
+
+    Widget bones = Stack(
       children: [
-        SafeArea(
-          bottom: false,
-          child: SizedBox(
-            height: kToolbarHeight,
-            child: Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16),
+        Positioned(
+          top: 0,
+          left: 16,
+          right: 12,
+          child: SafeArea(
+            bottom: false,
+            child: SizedBox(
+              height: 64,
               child: Row(
                 children: [
-                  Skeleton(height: 22, width: 90, borderRadius: 12),
-                  Spacer(),
-                  Skeleton(height: 14, width: 40),
+                  bone(30, 104, radius: 15),
+                  const SizedBox(width: KararSpace.s8),
+                  bone(30, 56, radius: 15),
+                  const Spacer(),
+                  bone(30, 128, radius: 15),
+                  const SizedBox(width: KararSpace.s8),
+                  bone(44, 44, radius: 22),
                 ],
               ),
             ),
           ),
         ),
-        Expanded(
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(20, 12, 20, 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Skeleton(height: 22, width: 100, borderRadius: 20),
-                SizedBox(height: 14),
-                Skeleton(height: 26, width: double.infinity),
-                SizedBox(height: 8),
-                Skeleton(height: 26, width: 220),
-                SizedBox(height: 16),
-                Skeleton(height: 15, width: double.infinity),
-                SizedBox(height: 6),
-                Skeleton(height: 15, width: double.infinity),
-                SizedBox(height: 6),
-                Skeleton(height: 15, width: 190),
-              ],
-            ),
+        Positioned(
+          left: KararSpace.s20,
+          right: rail.width + 24,
+          bottom: bottomInset + 20,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  bone(28, 28, radius: 14),
+                  const SizedBox(width: KararSpace.s8),
+                  bone(14, 120),
+                ],
+              ),
+              const SizedBox(height: 14),
+              bone(24, double.infinity),
+              const SizedBox(height: KararSpace.s8),
+              bone(24, 200),
+              const SizedBox(height: 14),
+              bone(14, double.infinity),
+              const SizedBox(height: KararSpace.s6),
+              bone(14, 220),
+              const SizedBox(height: KararSpace.s16),
+              bone(34, double.infinity, radius: 17),
+            ],
           ),
         ),
-        SafeArea(
-          top: false,
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(16, 8, 16, 10),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Skeleton(height: 10, width: double.infinity, borderRadius: 5),
-                SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(child: Skeleton(height: 44, borderRadius: 10)),
-                    SizedBox(width: 8),
-                    Expanded(child: Skeleton(height: 44, borderRadius: 10)),
-                  ],
-                ),
-                SizedBox(height: 6),
-                Row(
-                  children: [
-                    Skeleton(height: 32, width: 60, borderRadius: 8),
-                    SizedBox(width: 8),
-                    Skeleton(height: 32, width: 40, borderRadius: 8),
-                    SizedBox(width: 8),
-                    Skeleton(height: 32, width: 40, borderRadius: 8),
-                  ],
-                ),
-              ],
-            ),
+        Positioned(
+          right: (rail.width - rail.voteCapsule.width) / 2,
+          bottom: bottomInset + 24 + 34,
+          child: Column(
+            children: [
+              bone(rail.voteCapsule.height, rail.voteCapsule.width,
+                  radius: rail.voteCapsule.width / 2),
+              SizedBox(height: rail.gap),
+              bone(rail.voteCapsule.height, rail.voteCapsule.width,
+                  radius: rail.voteCapsule.width / 2),
+              SizedBox(height: rail.dividerBlock),
+              bone(rail.commentCapsule.height, rail.commentCapsule.width,
+                  radius: rail.commentCapsule.width / 2),
+              SizedBox(height: rail.gap),
+              bone(rail.circle, rail.circle, radius: rail.circle / 2),
+              SizedBox(height: rail.gap),
+              bone(rail.circle, rail.circle, radius: rail.circle / 2),
+            ],
           ),
         ),
       ],
+    );
+
+    if (!KararMotion.reduce(context)) {
+      bones = Shimmer.fromColors(
+        baseColor: dark.surface,
+        highlightColor: dark.elevated,
+        period: const Duration(milliseconds: 1400),
+        child: bones,
+      );
+    }
+
+    return ColoredBox(
+      color: dark.canvas,
+      child: SizedBox.expand(child: bones),
     );
   }
 }

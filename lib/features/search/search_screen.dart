@@ -8,8 +8,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../feed/post_card.dart';
 import '../feed/categories_provider.dart';
 import '../feed/discover_provider.dart';
-import '../../core/theme/app_colors.dart';
+import '../../core/layout/breakpoints.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/category_style.dart';
+import '../../core/theme/karar_tokens.dart';
+import '../../core/utils/count_format.dart';
+import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/karar_avatar.dart';
+import '../../shared/widgets/karar_button.dart';
+import '../../shared/widgets/karar_chip.dart';
+import '../../shared/widgets/karar_circle_button.dart';
+import '../../shared/widgets/karar_sheet.dart';
+import '../../shared/widgets/karar_surface.dart';
 import '../../shared/widgets/karma_badge.dart';
 import '../../shared/widgets/skeleton.dart';
 import '../../shared/widgets/centered_content.dart';
@@ -104,9 +114,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
   }
 
   void _showFilters() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
+    showKararSheet<void>(
+      context,
+      scrollControlled: true,
       builder: (_) => const _SearchFiltersSheet(),
     );
   }
@@ -125,50 +135,71 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
     final postState = ref.watch(searchProvider);
     final userState = ref.watch(userSearchProvider);
     final hasQuery = _controller.text.isNotEmpty;
+    final showFilter = hasQuery && _tabController.index == 0;
+    final filtersActive = postState.categoryId != null ||
+        postState.minVotes != null ||
+        postState.dateRange != null ||
+        postState.sort != 'relevance';
 
     return Scaffold(
       appBar: AppBar(
-        titleSpacing: 0,
+        titleSpacing:
+            (ModalRoute.of(context)?.impliesAppBarDismissal ?? false) ? 0 : 16,
+        centerTitle: false,
         title: Padding(
-          padding: const EdgeInsets.only(right: 16),
-          child: TextField(
+          padding: EdgeInsets.only(right: showFilter ? 4 : 8),
+          child: _SearchField(
             controller: _controller,
-            autofocus: true,
-            decoration: InputDecoration(
-              hintText: 'Karar\'da ara...',
-              border: InputBorder.none,
-              suffixIcon: _controller.text.isNotEmpty
-                  ? IconButton(
-                      icon: const Icon(Icons.clear),
-                      onPressed: () {
-                        _controller.clear();
-                        ref.read(searchProvider.notifier).clear();
-                        ref.read(userSearchProvider.notifier).clear();
-                        setState(() {});
-                      },
-                    )
-                  : null,
-            ),
             onChanged: _onChanged,
             onSubmitted: _submit,
+            onClear: () {
+              _controller.clear();
+              ref.read(searchProvider.notifier).clear();
+              ref.read(userSearchProvider.notifier).clear();
+              setState(() {});
+            },
           ),
         ),
         actions: [
-          if (hasQuery && _tabController.index == 0)
-            IconButton(
-              tooltip: 'Filtrele',
-              icon: const Icon(Icons.tune),
-              onPressed: _showFilters,
+          if (showFilter)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: KararCircleButton(
+                icon: Icons.tune_rounded,
+                tooltip: 'Filtrele',
+                style: KararCircleStyle.muted,
+                onPressed: _showFilters,
+                selected: filtersActive,
+                badge: filtersActive ? const _ActiveDot() : null,
+              ),
             ),
         ],
         bottom: hasQuery
-            ? TabBar(
-                controller: _tabController,
-                onTap: (_) => setState(() {}),
-                tabs: const [
-                  Tab(text: 'Gönderiler'),
-                  Tab(text: 'Kullanıcılar'),
-                ],
+            ? PreferredSize(
+                preferredSize: const Size.fromHeight(64),
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 680),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 2, 16, 10),
+                      child: KararSurface(
+                        color: context.kc.muted,
+                        radius: KararRadius.pill,
+                        padding: const EdgeInsets.all(4),
+                        shadow: KararShadowKind.none,
+                        child: TabBar(
+                          controller: _tabController,
+                          onTap: (_) => setState(() {}),
+                          tabs: const [
+                            Tab(text: 'Gönderiler', height: 40),
+                            Tab(text: 'Kullanıcılar', height: 40),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               )
             : null,
       ),
@@ -191,10 +222,13 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
     );
   }
 
+  EdgeInsets _listPadding(BuildContext context) =>
+      EdgeInsets.fromLTRB(16, 8, 16, context.navBottomInset + 24);
+
   Widget _buildPostResults(SearchState state) {
     if (state.isLoading) {
       return ListView.separated(
-        padding: const EdgeInsets.all(16),
+        padding: _listPadding(context),
         itemCount: 4,
         separatorBuilder: (_, __) => const SizedBox(height: 12),
         itemBuilder: (_, __) => const PostCardSkeleton(),
@@ -202,24 +236,24 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
     }
 
     if (state.error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(state.error!, textAlign: TextAlign.center),
-        ),
-      );
+      return _MessageView(message: state.error!);
     }
 
     if (state.results.isEmpty) {
-      return const Center(child: Text('Sonuç bulunamadı.'));
+      return const EmptyState(
+        message: 'Sonuç bulunamadı.',
+        icon: Icons.search_off_rounded,
+      );
     }
 
     return ListView.separated(
-      padding: const EdgeInsets.all(16),
+      padding: _listPadding(context),
       itemCount: state.results.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      separatorBuilder: (_, __) => const SizedBox(height: KararSpace.feedGap),
       itemBuilder: (context, index) {
         final post = state.results[index];
+        // TODO(owner A): switch to `variant: PostCardVariant.compact` once
+        // the compact post card lands (spec §5.4 / §6.7).
         return PostCard(
           post: post,
           searchQuery: state.query,
@@ -233,39 +267,147 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
   Widget _buildUserResults(UserSearchState state) {
     if (state.isLoading) {
       return ListView.separated(
-        padding: const EdgeInsets.all(16),
+        padding: _listPadding(context),
         itemCount: 5,
-        separatorBuilder: (_, __) => const Divider(height: 1),
+        separatorBuilder: (_, __) => const SizedBox(height: 4),
         itemBuilder: (_, __) => const _UserResultSkeleton(),
       );
     }
 
     if (state.error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(state.error!, textAlign: TextAlign.center),
-        ),
-      );
+      return _MessageView(message: state.error!);
     }
 
     if (state.results.isEmpty && state.query.length >= 3) {
-      return const Center(child: Text('Kullanıcı bulunamadı.'));
+      return const EmptyState(
+        message: 'Kullanıcı bulunamadı.',
+        icon: Icons.person_search_rounded,
+      );
     }
 
     if (state.results.isEmpty) {
-      return const Center(
-          child: Text('En az 3 karakter yazarak aramaya başla.'));
+      return const _MessageView(
+        message: 'En az 3 karakter yazarak aramaya başla.',
+      );
     }
 
-    return ListView.separated(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+    return ListView.builder(
+      padding: _listPadding(context),
       itemCount: state.results.length,
-      separatorBuilder: (_, __) => const Divider(height: 1, indent: 72),
       itemBuilder: (context, index) {
         final user = state.results[index];
         return _UserResultTile(user: user);
       },
+    );
+  }
+}
+
+/// Search pill used as the app bar title: 52 px tall, radius 26, surface
+/// fill with a soft shadow (dark: elevated #1F1C2A).
+class _SearchField extends StatelessWidget {
+  const _SearchField({
+    required this.controller,
+    required this.onChanged,
+    required this.onSubmitted,
+    required this.onClear,
+  });
+
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+  final ValueChanged<String> onSubmitted;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final kc = context.kc;
+    final brightness = Theme.of(context).brightness;
+    final pill = KararRadius.all(26);
+    final fill = context.isDark ? kc.elevated : kc.surface;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: pill,
+        boxShadow: KararShadow.soft(brightness),
+      ),
+      child: TextField(
+        controller: controller,
+        autofocus: true,
+        textInputAction: TextInputAction.search,
+        style: AppTypography.body.copyWith(color: kc.text1),
+        decoration: InputDecoration(
+          hintText: 'Karar\'da ara...',
+          filled: true,
+          fillColor: fill,
+          isDense: true,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 4, vertical: 15),
+          prefixIcon: Icon(Icons.search, color: kc.text2),
+          suffixIcon: controller.text.isNotEmpty
+              ? IconButton(
+                  tooltip: 'Temizle',
+                  icon: const Icon(Icons.close_rounded),
+                  color: kc.text2,
+                  onPressed: onClear,
+                )
+              : null,
+          border: OutlineInputBorder(
+            borderRadius: pill,
+            borderSide: BorderSide.none,
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: pill,
+            borderSide: context.isDark
+                ? BorderSide(color: kc.hairline)
+                : BorderSide.none,
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: pill,
+            borderSide: BorderSide(color: kc.primary, width: 2),
+          ),
+        ),
+        onChanged: onChanged,
+        onSubmitted: onSubmitted,
+      ),
+    );
+  }
+}
+
+/// 8 px primary dot on the filter button when filters are active.
+class _ActiveDot extends StatelessWidget {
+  const _ActiveDot();
+
+  @override
+  Widget build(BuildContext context) {
+    final kc = context.kc;
+    return Container(
+      width: 10,
+      height: 10,
+      decoration: BoxDecoration(
+        color: kc.primary,
+        shape: BoxShape.circle,
+        border: Border.all(color: kc.muted, width: 1),
+      ),
+    );
+  }
+}
+
+/// Centred secondary message (errors, hints).
+class _MessageView extends StatelessWidget {
+  const _MessageView({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Text(
+          message,
+          textAlign: TextAlign.center,
+          style: AppTypography.bodyS.copyWith(color: context.kc.text3),
+        ),
+      ),
     );
   }
 }
@@ -279,127 +421,156 @@ class _SearchFiltersSheet extends ConsumerWidget {
     final notifier = ref.read(searchProvider.notifier);
     final categoriesAsync = ref.watch(categoriesProvider);
     final categories = categoriesAsync.valueOrNull ?? [];
+    final kc = context.kc;
+    final sectionStyle = AppTypography.bodyStrong.copyWith(color: kc.text1);
 
     return DraggableScrollableSheet(
       initialChildSize: 0.7,
       maxChildSize: 0.9,
       minChildSize: 0.4,
       expand: false,
-      builder: (context, scrollController) => SingleChildScrollView(
-        controller: scrollController,
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Arama Filtreleri',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                TextButton(
-                  onPressed: () {
-                    notifier.clear();
-                    Navigator.pop(context);
-                  },
-                  child: const Text('Sıfırla'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            Text('Kategori', style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: 8),
-            if (categories.isEmpty)
-              const Skeleton(height: 40, width: double.infinity)
-            else
-              Wrap(
-                spacing: 8,
-                children: categories.map((c) {
-                  return ChoiceChip(
-                    label: Text(c.name),
-                    selected: state.categoryId == (c.id == 0 ? null : c.id),
-                    onSelected: (selected) {
-                      notifier.setCategory(
-                          selected ? (c.id == 0 ? null : c.id) : null);
-                    },
-                  );
-                }).toList(),
-              ),
-            const SizedBox(height: 24),
-            Text('Sıralama', style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              children: [
-                _FilterChip(
-                  label: 'İlgiye Göre',
-                  selected: state.sort == 'relevance',
-                  onSelected: (_) => notifier.setSort('relevance'),
-                ),
-                _FilterChip(
-                  label: 'En Yeni',
-                  selected: state.sort == 'new',
-                  onSelected: (_) => notifier.setSort('new'),
-                ),
-                _FilterChip(
-                  label: 'Trend',
-                  selected: state.sort == 'trend',
-                  onSelected: (_) => notifier.setSort('trend'),
-                ),
-                _FilterChip(
-                  label: 'En Çok Oy',
-                  selected: state.sort == 'votes',
-                  onSelected: (_) => notifier.setSort('votes'),
-                ),
-                _FilterChip(
-                  label: 'En Çok Yorum',
-                  selected: state.sort == 'comments',
-                  onSelected: (_) => notifier.setSort('comments'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
-            Text('Minimum Oy Sayısı',
-                style: Theme.of(context).textTheme.titleSmall),
-            Slider(
-              value: (state.minVotes ?? 0).toDouble(),
-              min: 0,
-              max: 500,
-              divisions: 10,
-              label: state.minVotes?.toString() ?? 'Tümü',
-              onChanged: (v) => notifier.setMinVotes(v == 0 ? null : v.toInt()),
-            ),
-            const SizedBox(height: 24),
-            Text('Tarih Aralığı',
-                style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: 8),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(state.dateRange == null
-                  ? 'Tüm Zamanlar'
-                  : '${state.dateRange!.start.day}/${state.dateRange!.start.month} - ${state.dateRange!.end.day}/${state.dateRange!.end.month}'),
-              trailing: const Icon(Icons.calendar_today, size: 20),
-              onTap: () async {
-                final range = await showDateRangePicker(
-                  context: context,
-                  firstDate: DateTime(2024),
-                  lastDate: DateTime.now(),
-                  initialDateRange: state.dateRange,
-                );
-                if (range != null) notifier.setDateRange(range);
+      builder: (context, scrollController) => Column(
+        children: [
+          KararSheetHeader(
+            title: 'Arama Filtreleri',
+            onClose: () => Navigator.pop(context),
+            trailing: TextButton(
+              onPressed: () {
+                notifier.clear();
+                Navigator.pop(context);
               },
+              child: const Text('Sıfırla'),
             ),
-            const SizedBox(height: 32),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Sonuçları Göster'),
+          ),
+          Expanded(
+            child: SingleChildScrollView(
+              controller: scrollController,
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Kategori', style: sectionStyle),
+                  const SizedBox(height: 10),
+                  if (categories.isEmpty)
+                    const Skeleton(height: 40, width: double.infinity)
+                  else
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      children: categories.map((c) {
+                        final selected =
+                            state.categoryId == (c.id == 0 ? null : c.id);
+                        return KararChip(
+                          label: c.name,
+                          icon: CategoryStyle.resolve(id: c.id, name: c.name)
+                              .icon,
+                          selected: selected,
+                          tone: KararChipTone.category(
+                            CategoryStyle.resolve(id: c.id, name: c.name),
+                          ),
+                          onTap: () {
+                            final next = !selected;
+                            notifier.setCategory(
+                                next ? (c.id == 0 ? null : c.id) : null);
+                          },
+                        );
+                      }).toList(),
+                    ),
+                  const SizedBox(height: 24),
+                  Text('Sıralama', style: sectionStyle),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: [
+                      _FilterChip(
+                        label: 'İlgiye Göre',
+                        selected: state.sort == 'relevance',
+                        onSelected: (_) => notifier.setSort('relevance'),
+                      ),
+                      _FilterChip(
+                        label: 'En Yeni',
+                        selected: state.sort == 'new',
+                        onSelected: (_) => notifier.setSort('new'),
+                      ),
+                      _FilterChip(
+                        label: 'Trend',
+                        selected: state.sort == 'trend',
+                        onSelected: (_) => notifier.setSort('trend'),
+                      ),
+                      _FilterChip(
+                        label: 'En Çok Oy',
+                        selected: state.sort == 'votes',
+                        onSelected: (_) => notifier.setSort('votes'),
+                      ),
+                      _FilterChip(
+                        label: 'En Çok Yorum',
+                        selected: state.sort == 'comments',
+                        onSelected: (_) => notifier.setSort('comments'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  Text('Minimum Oy Sayısı', style: sectionStyle),
+                  Slider(
+                    value: (state.minVotes ?? 0).toDouble(),
+                    min: 0,
+                    max: 500,
+                    divisions: 10,
+                    label: state.minVotes?.toString() ?? 'Tümü',
+                    onChanged: (v) =>
+                        notifier.setMinVotes(v == 0 ? null : v.toInt()),
+                  ),
+                  const SizedBox(height: 16),
+                  Text('Tarih Aralığı', style: sectionStyle),
+                  const SizedBox(height: 8),
+                  KararSurface(
+                    color: kc.muted,
+                    radius: KararRadius.input,
+                    padding: EdgeInsets.zero,
+                    shadow: KararShadowKind.none,
+                    onTap: () async {
+                      final range = await showDateRangePicker(
+                        context: context,
+                        firstDate: DateTime(2024),
+                        lastDate: DateTime.now(),
+                        initialDateRange: state.dateRange,
+                      );
+                      if (range != null) notifier.setDateRange(range);
+                    },
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(minHeight: 52),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                state.dateRange == null
+                                    ? 'Tüm Zamanlar'
+                                    : '${state.dateRange!.start.day}/${state.dateRange!.start.month} - ${state.dateRange!.end.day}/${state.dateRange!.end.month}',
+                                style: AppTypography.bodyStrong
+                                    .copyWith(color: kc.text1),
+                              ),
+                            ),
+                            Icon(Icons.calendar_today_rounded,
+                                size: 20, color: kc.text2),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 28),
+                  KararButton(
+                    label: 'Sonuçları Göster',
+                    size: KararButtonSize.large,
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -418,11 +589,10 @@ class _FilterChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FilterChip(
-      label: Text(label),
+    return KararChip(
+      label: label,
       selected: selected,
-      onSelected: onSelected,
-      showCheckmark: false,
+      onTap: () => onSelected(!selected),
     );
   }
 }
@@ -433,37 +603,52 @@ class _UserResultTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      leading: KararAvatar(username: user.username, radius: 22, fontSize: 18),
-      title: Row(
-        children: [
-          Flexible(
-            child: Text(
-              '@${user.username}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context)
-                  .textTheme
-                  .bodyMedium
-                  ?.copyWith(fontWeight: FontWeight.w700),
-            ),
-          ),
-          const SizedBox(width: 6),
-          KarmaBadge(karma: user.karma),
-          const SizedBox(width: 4),
-          Flexible(
-            child: Text(
-              '${user.karma} karma',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ),
-        ],
-      ),
-      subtitle: Text('${user.postCount} gönderi'),
+    final kc = context.kc;
+    return InkWell(
+      borderRadius: KararRadius.all(KararRadius.input),
       onTap: () => context.push('/users/${user.username}'),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 64),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+          child: Row(
+            children: [
+              KararAvatar(username: user.username, radius: 22, fontSize: 18),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            '@${user.username}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTypography.bodyStrong
+                                .copyWith(color: kc.text1),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        KarmaBadge(karma: user.karma),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${user.postCount} gönderi · ${formatCompactCount(user.karma)} karma',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTypography.meta.copyWith(color: kc.text3),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: kc.text3),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -474,7 +659,7 @@ class _UserResultSkeleton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const Padding(
-      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 10),
       child: Row(
         children: [
           Skeleton(height: 44, width: 44, borderRadius: 22),
@@ -511,94 +696,85 @@ class _EmptyQueryView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final trendTopicsAsync = ref.watch(trendTopicsProvider);
+    final kc = context.kc;
 
     return CustomScrollView(
       slivers: [
         if (history.isNotEmpty) ...[
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+              padding: const EdgeInsets.fromLTRB(20, 12, 8, 4),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    'Son Aramalar',
-                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          fontWeight: FontWeight.w600,
+                  Expanded(
+                    child: Semantics(
+                      header: true,
+                      child: Text(
+                        'Son Aramalar',
+                        style: AppTypography.labelS.copyWith(
+                          fontWeight: FontWeight.w800,
+                          color: kc.text3,
                         ),
+                      ),
+                    ),
                   ),
                   TextButton(
                     onPressed: onClear,
-                    style: TextButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
                     child: const Text('Temizle'),
                   ),
                 ],
               ),
             ),
           ),
-          SliverList(
-            delegate: SliverChildBuilderDelegate(
-              (context, i) {
-                final query = history[i];
-                return ListTile(
-                  leading: const Icon(Icons.history, size: 20),
-                  title: Text(
-                    query,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.close, size: 18),
-                    onPressed: () => onRemove(query),
-                    tooltip: 'Kaldır',
-                  ),
-                  onTap: () => onSelect(query),
-                );
-              },
-              childCount: history.length,
+          SliverToBoxAdapter(
+            child: KararSurface(
+              margin: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.all(4),
+              child: Column(
+                children: [
+                  for (var i = 0; i < history.length; i++) ...[
+                    if (i > 0)
+                      Divider(
+                        height: 1,
+                        indent: 52,
+                        endIndent: 12,
+                        color: kc.outlineVariant,
+                      ),
+                    _HistoryRow(
+                      query: history[i],
+                      onTap: () => onSelect(history[i]),
+                      onRemove: () => onRemove(history[i]),
+                    ),
+                  ],
+                ],
+              ),
             ),
           ),
         ],
-        const SliverToBoxAdapter(
+        SliverToBoxAdapter(
           child: Padding(
-            padding: EdgeInsets.fromLTRB(16, 24, 16, 8),
-            child: Text(
-              'Trend Konular',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            padding: const EdgeInsets.fromLTRB(20, 24, 20, 8),
+            child: Semantics(
+              header: true,
+              child: Text(
+                'Trend Konular',
+                style: AppTypography.headline.copyWith(color: kc.text1),
+              ),
             ),
           ),
         ),
         trendTopicsAsync.when(
           data: (topics) => SliverPadding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
             sliver: SliverList(
               delegate: SliverChildBuilderDelegate(
-                (context, i) {
-                  final topic = topics[i];
-                  return ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: AppColors.primary.withValues(alpha: 0.1),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(Icons.trending_up,
-                          size: 16, color: AppColors.primary),
-                    ),
-                    title: Text(
-                      '#${topic.name}',
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    subtitle: Text('${topic.postCount} gönderi'),
-                    onTap: () => onSelect('#${topic.name}'),
-                  );
-                },
+                (context, i) => _TrendRow(
+                  rank: i,
+                  name: topics[i].name,
+                  postCount: topics[i].postCount,
+                  growthPercent: topics[i].growthPercent,
+                  onTap: () => onSelect('#${topics[i].name}'),
+                ),
                 childCount: topics.length,
               ),
             ),
@@ -610,27 +786,174 @@ class _EmptyQueryView extends ConsumerWidget {
             ),
           ),
           error: (_, __) => const SliverToBoxAdapter(
-            child: Padding(
-              padding: EdgeInsets.all(32),
-              child: Center(child: Text('Trendler yüklenemedi.')),
-            ),
+            child: _MessageView(message: 'Trendler yüklenemedi.'),
           ),
         ),
         if (history.isEmpty && !trendTopicsAsync.isLoading)
-          const SliverFillRemaining(
+          SliverFillRemaining(
             hasScrollBody: false,
             child: Center(
               child: Padding(
-                padding: EdgeInsets.all(32),
+                padding: EdgeInsets.fromLTRB(
+                    32, 32, 32, 32 + context.navBottomInset),
                 child: Text(
                   'En az 3 karakter yazarak aramaya başla.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: AppColors.textTertiary),
+                  style: AppTypography.bodyS.copyWith(color: kc.text3),
                 ),
               ),
             ),
+          )
+        else
+          SliverToBoxAdapter(
+            child: SizedBox(height: context.navBottomInset + 24),
           ),
       ],
+    );
+  }
+}
+
+class _HistoryRow extends StatelessWidget {
+  const _HistoryRow({
+    required this.query,
+    required this.onTap,
+    required this.onRemove,
+  });
+
+  final String query;
+  final VoidCallback onTap;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final kc = context.kc;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: KararRadius.all(KararRadius.tile),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 52),
+        child: Padding(
+          padding: const EdgeInsets.only(left: 14),
+          child: Row(
+            children: [
+              Icon(Icons.history_rounded, size: 20, color: kc.text2),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(
+                  query,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTypography.bodyStrong.copyWith(color: kc.text1),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close_rounded, size: 18),
+                color: kc.text3,
+                onPressed: onRemove,
+                tooltip: 'Kaldır',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Trend topic row: 44 px rank tile with a cycling category gradient and a
+/// white "#", topic name, post count and an optional growth chip.
+class _TrendRow extends StatelessWidget {
+  const _TrendRow({
+    required this.rank,
+    required this.name,
+    required this.postCount,
+    required this.growthPercent,
+    required this.onTap,
+  });
+
+  final int rank;
+  final String name;
+  final int postCount;
+  final int? growthPercent;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final kc = context.kc;
+    final growth = growthPercent;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: KararRadius.all(KararRadius.input),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 64),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            children: [
+              ExcludeSemantics(
+                child: Container(
+                  width: 44,
+                  height: 44,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    gradient: CategoryStyle.cycle(rank).gradient,
+                    borderRadius: KararRadius.all(KararRadius.iconTile),
+                  ),
+                  child: Text(
+                    '#',
+                    textScaler: TextScaler.noScaling,
+                    style: AppTypography.headline.copyWith(
+                      fontSize: 18,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '#$name',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTypography.bodyStrong.copyWith(
+                        fontSize: 16,
+                        color: kc.text1,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '$postCount gönderi',
+                      style: AppTypography.meta.copyWith(color: kc.text3),
+                    ),
+                  ],
+                ),
+              ),
+              if (growth != null && growth > 0) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: kc.hakliSoft,
+                    borderRadius: KararRadius.all(8),
+                  ),
+                  child: Text(
+                    '+%$growth',
+                    style: AppTypography.meta.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: kc.hakliText,
+                      fontFeatures: AppTypography.tabular,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

@@ -2,21 +2,47 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/layout/breakpoints.dart';
 import '../../core/providers.dart';
+import '../../shared/models/post.dart';
 import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_indicator.dart';
 import '../../shared/widgets/centered_content.dart';
-import '../feed/post_card.dart';
+import 'widgets/verdict_tile.dart';
 
-class SavedPostsScreen extends ConsumerStatefulWidget {
+class SavedPostsScreen extends StatelessWidget {
   const SavedPostsScreen({super.key});
 
   @override
-  ConsumerState<SavedPostsScreen> createState() => _SavedPostsScreenState();
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Kaydedilenler'),
+        centerTitle: true,
+      ),
+      body: const CenteredContent(
+        child: SavedPostsGrid(),
+      ),
+    );
+  }
 }
 
-class _SavedPostsScreenState extends ConsumerState<SavedPostsScreen> {
+/// Saved posts as a grid of [VerdictTile]s (loads `fetchSavedPosts`).
+///
+/// With [sliver] the widget builds a sliver for an enclosing
+/// `CustomScrollView` (profile "Kaydedilenler" tab); otherwise it is a
+/// self-contained scroll view (the `/profile/saved` route).
+class SavedPostsGrid extends ConsumerStatefulWidget {
+  const SavedPostsGrid({super.key, this.sliver = false});
+
+  final bool sliver;
+
+  @override
+  ConsumerState<SavedPostsGrid> createState() => _SavedPostsGridState();
+}
+
+class _SavedPostsGridState extends ConsumerState<SavedPostsGrid> {
   @override
   void initState() {
     super.initState();
@@ -24,7 +50,7 @@ class _SavedPostsScreenState extends ConsumerState<SavedPostsScreen> {
   }
 
   bool _isLoading = true;
-  List<dynamic> _posts = [];
+  List<Post> _posts = [];
   String? _error;
 
   Future<void> _load() async {
@@ -48,39 +74,59 @@ class _SavedPostsScreenState extends ConsumerState<SavedPostsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Kaydedilenler'),
-        centerTitle: true,
-      ),
-      body: CenteredContent(
-        child: _buildBody(),
-      ),
+    final sliver = _buildSliver(context);
+    if (widget.sliver) return sliver;
+    return CustomScrollView(
+      slivers: [
+        sliver,
+        SliverToBoxAdapter(
+          child: SizedBox(height: context.navBottomInset + 24),
+        ),
+      ],
     );
   }
 
-  Widget _buildBody() {
-    if (_isLoading) return const LoadingIndicator();
-    if (_error != null) return ErrorView(message: _error!, onRetry: _load);
+  Widget _buildSliver(BuildContext context) {
+    if (_isLoading) {
+      return const SliverFillRemaining(
+        hasScrollBody: false,
+        child: Padding(
+          padding: EdgeInsets.all(32),
+          child: LoadingIndicator(),
+        ),
+      );
+    }
+    if (_error != null) {
+      return SliverFillRemaining(
+        hasScrollBody: false,
+        child: ErrorView(message: _error!, onRetry: _load),
+      );
+    }
     if (_posts.isEmpty) {
-      return const EmptyState(
-        message: 'Henüz bir şey kaydetmedin.',
-        icon: Icons.bookmark_border,
+      return const SliverFillRemaining(
+        hasScrollBody: false,
+        child: EmptyState(
+          message: 'Henüz bir şey kaydetmedin.',
+          icon: Icons.bookmark_border_rounded,
+        ),
       );
     }
 
-    return ListView.separated(
+    return SliverPadding(
       padding: const EdgeInsets.all(16),
-      itemCount: _posts.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 10),
-      itemBuilder: (context, index) {
-        final post = _posts[index];
-        return PostCard(
-          post: post,
-          onTap: () => context.push('/posts/${post.id}', extra: post),
-        );
-      },
+      sliver: SliverGrid(
+        gridDelegate: VerdictTile.gridDelegate(context),
+        delegate: SliverChildBuilderDelegate(
+          (context, index) {
+            final post = _posts[index];
+            return VerdictTile(
+              post: post,
+              onTap: () => context.push('/posts/${post.id}', extra: post),
+            );
+          },
+          childCount: _posts.length,
+        ),
+      ),
     );
   }
 }
-

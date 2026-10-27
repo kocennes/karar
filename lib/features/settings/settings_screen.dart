@@ -14,8 +14,13 @@ import '../../core/settings/preferences_provider.dart';
 import '../../core/theme/font_size_provider.dart';
 import '../../core/theme/theme_provider.dart';
 import '../../core/history/history_provider.dart';
+import '../../core/layout/breakpoints.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/karar_tokens.dart';
 import '../feed/categories_provider.dart';
 import '../../shared/widgets/centered_content.dart';
+import '../../shared/widgets/karar_sheet.dart';
+import 'widgets/settings_group.dart';
 
 enum SettingsInitialSection { top, notifications }
 
@@ -57,6 +62,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final themeMode = ref.watch(themeProvider);
     final fontSize = ref.watch(fontSizeProvider);
     final prefs = ref.watch(userPreferencesProvider);
+    final kc = context.kc;
 
     return Scaffold(
       appBar: AppBar(
@@ -65,20 +71,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ),
       body: CenteredContent(
         child: ListView(
+          padding: EdgeInsets.only(bottom: context.navBottomInset + 24),
           children: [
             // ── Görünüm ─────────────────────────────────────────────────────────
             const _SectionHeader('Görünüm'),
-            _SettingsTile(
-              icon: Icons.contrast,
-              title: 'Tema',
-              subtitle: _themeName(themeMode),
-              onTap: () => _showThemePicker(context, ref, themeMode),
-            ),
-            _SettingsTile(
-              icon: Icons.format_size,
-              title: 'Yazı Boyutu',
-              subtitle: fontSize.label,
-              onTap: () => _showFontSizePicker(context, ref, fontSize),
+            SettingsGroup(
+              children: [
+                _SettingsTile(
+                  icon: Icons.contrast_rounded,
+                  title: 'Tema',
+                  subtitle: _themeName(themeMode),
+                  onTap: () => _showThemePicker(context, ref, themeMode),
+                ),
+                _SettingsTile(
+                  icon: Icons.format_size_rounded,
+                  title: 'Yazı Boyutu',
+                  subtitle: fontSize.label,
+                  onTap: () => _showFontSizePicker(context, ref, fontSize),
+                ),
+              ],
             ),
 
             // ── Bildirimler ──────────────────────────────────────────────────────
@@ -86,264 +97,281 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               key: _notificationsSectionKey,
               child: const _SectionHeader('Bildirimler'),
             ),
-            _SettingsTile(
-              icon: Icons.notifications_outlined,
-              title: 'Push bildirimleri',
-              subtitle: 'Tüm push bildirimlerini aç/kapat',
-              trailing: Switch(
-                value: prefs.pushEnabled,
-                onChanged: (v) => _setPushEnabled(context, ref, v),
-              ),
-            ),
-            _SettingsTile(
-              icon: Icons.volume_up_outlined,
-              title: 'Bildirim sesi',
-              subtitle: 'Ses ve kanal ayarını cihazdan yönet',
-              trailing: Switch(
-                value: prefs.soundEnabled,
-                onChanged: prefs.pushEnabled
-                    ? (v) => ref
-                        .read(userPreferencesProvider.notifier)
-                        .update((s) => s.copyWith(soundEnabled: v))
-                    : null,
-              ),
-              onTap: () => ref.read(notificationServiceProvider).openSettings(),
-            ),
-            _SettingsTile(
-              icon: Icons.emoji_events_outlined,
-              title: 'Topluluk kararı',
-              subtitle: 'Postun oy milestonelerine ulaşınca',
-              trailing: Switch(
-                value: prefs.verdictMilestone,
-                onChanged: prefs.pushEnabled
-                    ? (v) => ref
-                        .read(userPreferencesProvider.notifier)
-                        .update((s) => s.copyWith(verdictMilestone: v))
-                    : null,
-              ),
-            ),
-            _SettingsTile(
-              icon: Icons.chat_bubble_outline,
-              title: 'Yeni yorum',
-              subtitle: 'Postuna yeni yorum gelince',
-              trailing: Switch(
-                value: prefs.newComment,
-                onChanged: prefs.pushEnabled
-                    ? (v) => ref
-                        .read(userPreferencesProvider.notifier)
-                        .update((s) => s.copyWith(newComment: v))
-                    : null,
-              ),
-            ),
-            _SettingsTile(
-              icon: Icons.reply_outlined,
-              title: 'Yorum yanıtı',
-              subtitle: 'Yorumuna yanıt gelince',
-              trailing: Switch(
-                value: prefs.commentReply,
-                onChanged: prefs.pushEnabled
-                    ? (v) => ref
-                        .read(userPreferencesProvider.notifier)
-                        .update((s) => s.copyWith(commentReply: v))
-                    : null,
-              ),
-            ),
-            _SettingsTile(
-              icon: Icons.alternate_email_outlined,
-              title: 'Bahsedilme',
-              subtitle: 'Yorumunda @etiketlenince',
-              trailing: Switch(
-                value: prefs.notifyOnMention,
-                onChanged: prefs.pushEnabled
-                    ? (v) => ref
-                        .read(userPreferencesProvider.notifier)
-                        .update((s) => s.copyWith(notifyOnMention: v))
-                    : null,
-              ),
-            ),
-            _SettingsTile(
-              icon: Icons.verified_user_outlined,
-              title: 'Moderasyon',
-              subtitle: 'Post onaylandı/kaldırıldı',
-              trailing: Switch(
-                value: prefs.postModeration,
-                onChanged: prefs.pushEnabled
-                    ? (v) => ref
-                        .read(userPreferencesProvider.notifier)
-                        .update((s) => s.copyWith(postModeration: v))
-                    : null,
-              ),
-            ),
-            _SettingsTile(
-              icon: Icons.trending_up_outlined,
-              title: 'Viral uyarısı',
-              subtitle: 'Postun öne çıkınca',
-              trailing: Switch(
-                value: prefs.notifyOnTrend,
-                onChanged: prefs.pushEnabled
-                    ? (v) => ref
-                        .read(userPreferencesProvider.notifier)
-                        .update((s) => s.copyWith(notifyOnTrend: v))
-                    : null,
-              ),
-            ),
-            _SettingsTile(
-              icon: Icons.summarize_outlined,
-              title: 'Haftalık özet',
-              subtitle: 'Kaçırdığın içerikler her hafta',
-              trailing: Switch(
-                value: prefs.notifyOnDigest,
-                onChanged: prefs.pushEnabled
-                    ? (v) => ref
-                        .read(userPreferencesProvider.notifier)
-                        .update((s) => s.copyWith(notifyOnDigest: v))
-                    : null,
-              ),
-            ),
-            _SettingsTile(
-              icon: Icons.notifications_paused_outlined,
-              title: 'Sessiz saatler',
-              subtitle: prefs.silentHoursEnabled
-                  ? '${prefs.silentStart} – ${prefs.silentEnd}'
-                  : 'Kapalı',
-              trailing: Switch(
-                value: prefs.silentHoursEnabled,
-                onChanged: (v) => ref
-                    .read(userPreferencesProvider.notifier)
-                    .update((s) => s.copyWith(silentHoursEnabled: v)),
-              ),
-              onTap: () => _showSilentHoursPicker(context, ref, prefs),
-            ),
             FutureBuilder<bool>(
               future: ref.read(notificationServiceProvider).isDenied(),
               builder: (context, snapshot) {
                 if (snapshot.data == true) {
                   final notifications = ref.read(notificationServiceProvider);
-                  return _SettingsTile(
-                    icon: Icons.notifications_off_outlined,
-                    title: 'Bildirimler kapalı',
-                    subtitle: notifications.deniedPermissionHelpText,
-                    titleColor: Theme.of(context).colorScheme.error,
-                    trailing: notifications.canOpenPlatformNotificationSettings
-                        ? TextButton(
-                            onPressed: () => notifications.openSettings(),
-                            child: const Text('Ayarlara Git'),
-                          )
-                        : null,
-                    onTap: notifications.canOpenPlatformNotificationSettings
-                        ? () => notifications.openSettings()
-                        : null,
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: SettingsGroup(
+                      children: [
+                        _SettingsTile(
+                          icon: Icons.notifications_off_rounded,
+                          title: 'Bildirimler kapalı',
+                          subtitle: notifications.deniedPermissionHelpText,
+                          destructive: true,
+                          trailing:
+                              notifications.canOpenPlatformNotificationSettings
+                                  ? TextButton(
+                                      onPressed: () =>
+                                          notifications.openSettings(),
+                                      child: const Text('Ayarlara Git'),
+                                    )
+                                  : null,
+                          onTap:
+                              notifications.canOpenPlatformNotificationSettings
+                                  ? () => notifications.openSettings()
+                                  : null,
+                        ),
+                      ],
+                    ),
                   );
                 }
                 return const SizedBox.shrink();
               },
             ),
-            _SettingsTile(
-              icon: Icons.history,
-              title: 'Arama geçmişi',
-              subtitle: 'Son aramalarını temizle',
-              onTap: () => _clearSearchHistory(context, ref),
+            SettingsGroup(
+              children: [
+                _SettingsTile(
+                  icon: Icons.notifications_rounded,
+                  title: 'Push bildirimleri',
+                  subtitle: 'Tüm push bildirimlerini aç/kapat',
+                  trailing: Switch(
+                    value: prefs.pushEnabled,
+                    onChanged: (v) => _setPushEnabled(context, ref, v),
+                  ),
+                ),
+                _SettingsTile(
+                  icon: Icons.volume_up_rounded,
+                  title: 'Bildirim sesi',
+                  subtitle: 'Ses ve kanal ayarını cihazdan yönet',
+                  trailing: Switch(
+                    value: prefs.soundEnabled,
+                    onChanged: prefs.pushEnabled
+                        ? (v) => ref
+                            .read(userPreferencesProvider.notifier)
+                            .update((s) => s.copyWith(soundEnabled: v))
+                        : null,
+                  ),
+                  onTap: () =>
+                      ref.read(notificationServiceProvider).openSettings(),
+                ),
+                _SettingsTile(
+                  icon: Icons.emoji_events_rounded,
+                  title: 'Topluluk kararı',
+                  subtitle: 'Postun oy milestonelerine ulaşınca',
+                  trailing: Switch(
+                    value: prefs.verdictMilestone,
+                    onChanged: prefs.pushEnabled
+                        ? (v) => ref
+                            .read(userPreferencesProvider.notifier)
+                            .update((s) => s.copyWith(verdictMilestone: v))
+                        : null,
+                  ),
+                ),
+                _SettingsTile(
+                  icon: Icons.chat_bubble_rounded,
+                  title: 'Yeni yorum',
+                  subtitle: 'Postuna yeni yorum gelince',
+                  trailing: Switch(
+                    value: prefs.newComment,
+                    onChanged: prefs.pushEnabled
+                        ? (v) => ref
+                            .read(userPreferencesProvider.notifier)
+                            .update((s) => s.copyWith(newComment: v))
+                        : null,
+                  ),
+                ),
+                _SettingsTile(
+                  icon: Icons.reply_rounded,
+                  title: 'Yorum yanıtı',
+                  subtitle: 'Yorumuna yanıt gelince',
+                  trailing: Switch(
+                    value: prefs.commentReply,
+                    onChanged: prefs.pushEnabled
+                        ? (v) => ref
+                            .read(userPreferencesProvider.notifier)
+                            .update((s) => s.copyWith(commentReply: v))
+                        : null,
+                  ),
+                ),
+                _SettingsTile(
+                  icon: Icons.alternate_email_rounded,
+                  title: 'Bahsedilme',
+                  subtitle: 'Yorumunda @etiketlenince',
+                  trailing: Switch(
+                    value: prefs.notifyOnMention,
+                    onChanged: prefs.pushEnabled
+                        ? (v) => ref
+                            .read(userPreferencesProvider.notifier)
+                            .update((s) => s.copyWith(notifyOnMention: v))
+                        : null,
+                  ),
+                ),
+                _SettingsTile(
+                  icon: Icons.verified_user_rounded,
+                  title: 'Moderasyon',
+                  subtitle: 'Post onaylandı/kaldırıldı',
+                  trailing: Switch(
+                    value: prefs.postModeration,
+                    onChanged: prefs.pushEnabled
+                        ? (v) => ref
+                            .read(userPreferencesProvider.notifier)
+                            .update((s) => s.copyWith(postModeration: v))
+                        : null,
+                  ),
+                ),
+                _SettingsTile(
+                  icon: Icons.trending_up_rounded,
+                  title: 'Viral uyarısı',
+                  subtitle: 'Postun öne çıkınca',
+                  trailing: Switch(
+                    value: prefs.notifyOnTrend,
+                    onChanged: prefs.pushEnabled
+                        ? (v) => ref
+                            .read(userPreferencesProvider.notifier)
+                            .update((s) => s.copyWith(notifyOnTrend: v))
+                        : null,
+                  ),
+                ),
+                _SettingsTile(
+                  icon: Icons.summarize_rounded,
+                  title: 'Haftalık özet',
+                  subtitle: 'Kaçırdığın içerikler her hafta',
+                  trailing: Switch(
+                    value: prefs.notifyOnDigest,
+                    onChanged: prefs.pushEnabled
+                        ? (v) => ref
+                            .read(userPreferencesProvider.notifier)
+                            .update((s) => s.copyWith(notifyOnDigest: v))
+                        : null,
+                  ),
+                ),
+                _SettingsTile(
+                  icon: Icons.notifications_paused_rounded,
+                  title: 'Sessiz saatler',
+                  subtitle: prefs.silentHoursEnabled
+                      ? '${prefs.silentStart} – ${prefs.silentEnd}'
+                      : 'Kapalı',
+                  trailing: Switch(
+                    value: prefs.silentHoursEnabled,
+                    onChanged: (v) => ref
+                        .read(userPreferencesProvider.notifier)
+                        .update((s) => s.copyWith(silentHoursEnabled: v)),
+                  ),
+                  onTap: () => _showSilentHoursPicker(context, ref, prefs),
+                ),
+              ],
             ),
-            Consumer(
-              builder: (context, ref, _) {
-                final viewedCount = ref.watch(historyProvider).length;
-                return _SettingsTile(
-                  icon: Icons.visibility_outlined,
-                  title: 'Görüntüleme geçmişi',
-                  subtitle: viewedCount > 0
-                      ? 'Görüntülediğin $viewedCount gönderi soluk gösteriliyor.'
-                      : 'Geçmiş boş.',
-                  onTap: viewedCount > 0
-                      ? () => _clearViewHistory(context, ref)
-                      : null,
-                );
-              },
-            ),
-            _SettingsTile(
-              icon: Icons.category_outlined,
-              title: 'Takip edilen kategoriler',
-              subtitle: 'Kategori takibini sıfırla',
-              onTap: () => _clearFollowedCategories(context, ref),
-            ),
-            _SettingsTile(
-              icon: Icons.email_outlined,
-              title: 'E-posta bildirimleri',
-              subtitle: 'Haftalık özet e-postası',
-              trailing: Switch(
-                value: prefs.emailNewsletter,
-                onChanged: (v) => ref
-                    .read(userPreferencesProvider.notifier)
-                    .update((s) => s.copyWith(emailNewsletter: v)),
-              ),
+            const SizedBox(height: 12),
+            SettingsGroup(
+              children: [
+                _SettingsTile(
+                  icon: Icons.history_rounded,
+                  title: 'Arama geçmişi',
+                  subtitle: 'Son aramalarını temizle',
+                  onTap: () => _clearSearchHistory(context, ref),
+                ),
+                Consumer(
+                  builder: (context, ref, _) {
+                    final viewedCount = ref.watch(historyProvider).length;
+                    return _SettingsTile(
+                      icon: Icons.visibility_rounded,
+                      title: 'Görüntüleme geçmişi',
+                      subtitle: viewedCount > 0
+                          ? 'Görüntülediğin $viewedCount gönderi soluk gösteriliyor.'
+                          : 'Geçmiş boş.',
+                      onTap: viewedCount > 0
+                          ? () => _clearViewHistory(context, ref)
+                          : null,
+                    );
+                  },
+                ),
+                _SettingsTile(
+                  icon: Icons.category_rounded,
+                  title: 'Takip edilen kategoriler',
+                  subtitle: 'Kategori takibini sıfırla',
+                  onTap: () => _clearFollowedCategories(context, ref),
+                ),
+                _SettingsTile(
+                  icon: Icons.email_rounded,
+                  title: 'E-posta bildirimleri',
+                  subtitle: 'Haftalık özet e-postası',
+                  trailing: Switch(
+                    value: prefs.emailNewsletter,
+                    onChanged: (v) => ref
+                        .read(userPreferencesProvider.notifier)
+                        .update((s) => s.copyWith(emailNewsletter: v)),
+                  ),
+                ),
+              ],
             ),
 
             // ── Gizlilik ────────────────────────────────────────────────────────
             const _SectionHeader('Gizlilik'),
-            _SettingsTile(
-              icon: Icons.shield_outlined,
-              title: 'Gizlilik Özeti',
-              subtitle: 'Ne topluyoruz, neden ve ne kadar süre?',
-              onTap: () => context.push('/legal/privacy-summary'),
+            SettingsGroup(
+              children: [
+                _SettingsTile(
+                  icon: Icons.shield_rounded,
+                  title: 'Gizlilik Özeti',
+                  subtitle: 'Ne topluyoruz, neden ve ne kadar süre?',
+                  onTap: () => context.push('/legal/privacy-summary'),
+                ),
+                _SettingsTile(
+                  icon: Icons.how_to_vote_rounded,
+                  title: 'Oy gizliliği',
+                  subtitle: 'Oy verdiğim postları profilimde göster',
+                  trailing: Switch(
+                    value: prefs.showVotesOnProfile,
+                    onChanged: (v) => ref
+                        .read(userPreferencesProvider.notifier)
+                        .update((s) => s.copyWith(showVotesOnProfile: v)),
+                  ),
+                ),
+                _SettingsTile(
+                  icon: Icons.visibility_rounded,
+                  title: 'Profil görünürlüğü',
+                  subtitle: 'Karma\'mı herkese göster',
+                  trailing: Switch(
+                    value: prefs.showKarmaToOthers,
+                    onChanged: (v) => ref
+                        .read(userPreferencesProvider.notifier)
+                        .update((s) => s.copyWith(showKarmaToOthers: v)),
+                  ),
+                ),
+                _SettingsTile(
+                  icon: Icons.analytics_rounded,
+                  title: 'Analitik',
+                  subtitle: 'Uygulama kullanım verilerini anonim olarak paylaş',
+                  trailing: Switch(
+                    value: prefs.analyticsEnabled,
+                    onChanged: (v) => ref
+                        .read(userPreferencesProvider.notifier)
+                        .update((s) => s.copyWith(analyticsEnabled: v)),
+                  ),
+                ),
+                _SettingsTile(
+                  icon: Icons.ads_click_rounded,
+                  title: 'Reklam Tercihleri',
+                  subtitle: 'Kişiselleştirilmiş reklam ayarlarını yönet',
+                  onTap: () => AdService.instance.showPrivacyOptionsForm(),
+                ),
+                _SettingsTile(
+                  icon: Icons.download_rounded,
+                  title: 'Verilerimi indir',
+                  subtitle: 'Hesap verilerini e-postayla al (KVKK)',
+                  onTap: () => _requestDataExport(context, ref),
+                ),
+                if (user != null)
+                  _SettingsTile(
+                    icon: Icons.block_rounded,
+                    title: 'Engellenen kullanıcılar',
+                    subtitle: 'Engellediğin hesapları yönet',
+                    onTap: () => context.push('/settings/blocked-users'),
+                  ),
+              ],
             ),
-            _SettingsTile(
-              icon: Icons.how_to_vote_outlined,
-              title: 'Oy gizliliği',
-              subtitle: 'Oy verdiğim postları profilimde göster',
-              trailing: Switch(
-                value: prefs.showVotesOnProfile,
-                onChanged: (v) => ref
-                    .read(userPreferencesProvider.notifier)
-                    .update((s) => s.copyWith(showVotesOnProfile: v)),
-              ),
-            ),
-            _SettingsTile(
-              icon: Icons.visibility_outlined,
-              title: 'Profil görünürlüğü',
-              subtitle: 'Karma\'mı herkese göster',
-              trailing: Switch(
-                value: prefs.showKarmaToOthers,
-                onChanged: (v) => ref
-                    .read(userPreferencesProvider.notifier)
-                    .update((s) => s.copyWith(showKarmaToOthers: v)),
-              ),
-            ),
-            _SettingsTile(
-              icon: Icons.analytics_outlined,
-              title: 'Analitik',
-              subtitle: 'Uygulama kullanım verilerini anonim olarak paylaş',
-              trailing: Switch(
-                value: prefs.analyticsEnabled,
-                onChanged: (v) => ref
-                    .read(userPreferencesProvider.notifier)
-                    .update((s) => s.copyWith(analyticsEnabled: v)),
-              ),
-            ),
-            _SettingsTile(
-              icon: Icons.ads_click_outlined,
-              title: 'Reklam Tercihleri',
-              subtitle: 'Kişiselleştirilmiş reklam ayarlarını yönet',
-              onTap: () => AdService.instance.showPrivacyOptionsForm(),
-            ),
-            if (user != null)
-              _SettingsTile(
-                icon: Icons.child_care_outlined,
-                title: '18 yaş altıyım',
-                subtitle: 'Hesabımı 18 yaş kuralı nedeniyle kapat',
-                onTap: () => _confirmUnderageLogout(context, ref, user),
-              ),
-            _SettingsTile(
-              icon: Icons.download_outlined,
-              title: 'Verilerimi indir',
-              subtitle: 'Hesap verilerini e-postayla al (KVKK)',
-              onTap: () => _requestDataExport(context, ref),
-            ),
-            if (user != null)
-              _SettingsTile(
-                icon: Icons.block_outlined,
-                title: 'Engellenen kullanıcılar',
-                subtitle: 'Engellediğin hesapları yönet',
-                onTap: () => context.push('/settings/blocked-users'),
-              ),
 
             // ── Hesap ───────────────────────────────────────────────────────────
             if (user != null) ...[
@@ -365,136 +393,164 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   );
                 },
               ),
-              if (user.authProvider != 'google') ...[
-                _SettingsTile(
-                  icon: Icons.lock_outline,
-                  title: 'Şifre değiştir',
-                  onTap: () => context.push('/settings/change-password'),
-                ),
-                _SettingsTile(
-                  icon: Icons.email_outlined,
-                  title: 'E-posta değiştir',
-                  onTap: () => context.push('/settings/change-email'),
-                ),
-              ],
-              _SettingsTile(
-                icon: Icons.shield_outlined,
-                title: 'İki faktörlü doğrulama',
-                subtitle: user.is2faEnabled
-                    ? 'Aktif'
-                    : 'Hesabını ekstra güvence altına al',
-                onTap: user.is2faEnabled
-                    ? () => _disable2fa(context, ref)
-                    : () => context.push('/settings/2fa-setup'),
-              ),
-              _SettingsTile(
-                icon: Icons.devices_outlined,
-                title: 'Aktif oturumlar',
-                subtitle: 'Giriş yaptığın cihazları yönet',
-                onTap: () => context.push('/settings/sessions'),
-              ),
-              _SettingsTile(
-                icon: Icons.delete_forever_outlined,
-                title: 'Hesabı sil',
-                titleColor: Theme.of(context).colorScheme.error,
-                iconColor: Theme.of(context).colorScheme.error,
-                onTap: () => _confirmDeleteAccount(context, ref, user),
+              SettingsGroup(
+                children: [
+                  if (user.authProvider != 'google') ...[
+                    _SettingsTile(
+                      icon: Icons.lock_rounded,
+                      title: 'Şifre değiştir',
+                      onTap: () => context.push('/settings/change-password'),
+                    ),
+                    _SettingsTile(
+                      icon: Icons.email_rounded,
+                      title: 'E-posta değiştir',
+                      onTap: () => context.push('/settings/change-email'),
+                    ),
+                  ],
+                  _SettingsTile(
+                    icon: Icons.shield_rounded,
+                    title: 'İki faktörlü doğrulama',
+                    subtitle: user.is2faEnabled
+                        ? 'Aktif'
+                        : 'Hesabını ekstra güvence altına al',
+                    onTap: user.is2faEnabled
+                        ? () => _disable2fa(context, ref)
+                        : () => context.push('/settings/2fa-setup'),
+                  ),
+                  _SettingsTile(
+                    icon: Icons.devices_rounded,
+                    title: 'Aktif oturumlar',
+                    subtitle: 'Giriş yaptığın cihazları yönet',
+                    onTap: () => context.push('/settings/sessions'),
+                  ),
+                ],
               ),
             ],
 
             // ── Yasal ───────────────────────────────────────────────────────────
             const _SectionHeader('Yasal'),
-            _SettingsTile(
-              icon: Icons.description_outlined,
-              title: 'Kullanım Koşulları',
-              onTap: () => context.push('/legal/terms'),
+            SettingsGroup(
+              children: [
+                _SettingsTile(
+                  icon: Icons.description_rounded,
+                  title: 'Kullanım Koşulları',
+                  onTap: () => context.push('/legal/terms'),
+                ),
+                _SettingsTile(
+                  icon: Icons.privacy_tip_rounded,
+                  title: 'Gizlilik Politikası',
+                  onTap: () => context.push('/legal/privacy'),
+                ),
+                _SettingsTile(
+                  icon: Icons.gavel_rounded,
+                  title: 'Topluluk Kuralları',
+                  onTap: () => context.push('/legal/community'),
+                ),
+                _SettingsTile(
+                  icon: Icons.policy_rounded,
+                  title: 'İçerik Politikası',
+                  subtitle: 'Politika değişiklikleri ve geçmişi',
+                  onTap: () => context.push('/legal/content-policy'),
+                ),
+                _SettingsTile(
+                  icon: Icons.shield_rounded,
+                  title: 'Moderasyon Şeffaflığı',
+                  subtitle: 'Kaldırma oranları ve topluluk güveni raporu',
+                  onTap: () => context.push('/legal/moderation-transparency'),
+                ),
+                _SettingsTile(
+                  icon: Icons.contact_mail_rounded,
+                  title: 'İletişim ve Yer Sağlayıcı Bilgileri',
+                  subtitle: '5651 bildirim adresleri ve destek',
+                  onTap: () => context.push('/legal/contact'),
+                ),
+                _SettingsTile(
+                  icon: Icons.copyright_rounded,
+                  title: 'Telif / FSEK Şikayeti',
+                  subtitle: '72 saat yanıt hedefli kaldırma formu',
+                  onTap: () => context.push('/legal/copyright'),
+                ),
+                if (user != null)
+                  _SettingsTile(
+                    icon: Icons.shield_moon_rounded,
+                    title: 'Moderasyon Geçmişim',
+                    subtitle: 'Kaldırılan içerikler, uyarılar ve itirazlar',
+                    onTap: () => context.push('/settings/moderation-history'),
+                  ),
+              ],
             ),
-            _SettingsTile(
-              icon: Icons.privacy_tip_outlined,
-              title: 'Gizlilik Politikası',
-              onTap: () => context.push('/legal/privacy'),
-            ),
-            _SettingsTile(
-              icon: Icons.gavel_outlined,
-              title: 'Topluluk Kuralları',
-              onTap: () => context.push('/legal/community'),
-            ),
-            _SettingsTile(
-              icon: Icons.policy_outlined,
-              title: 'İçerik Politikası',
-              subtitle: 'Politika değişiklikleri ve geçmişi',
-              onTap: () => context.push('/legal/content-policy'),
-            ),
-            _SettingsTile(
-              icon: Icons.shield_outlined,
-              title: 'Moderasyon Şeffaflığı',
-              subtitle: 'Kaldırma oranları ve topluluk güveni raporu',
-              onTap: () => context.push('/legal/moderation-transparency'),
-            ),
-            _SettingsTile(
-              icon: Icons.contact_mail_outlined,
-              title: 'İletişim ve Yer Sağlayıcı Bilgileri',
-              subtitle: '5651 bildirim adresleri ve destek',
-              onTap: () => context.push('/legal/contact'),
-            ),
-            _SettingsTile(
-              icon: Icons.copyright_outlined,
-              title: 'Telif / FSEK Şikayeti',
-              subtitle: '72 saat yanıt hedefli kaldırma formu',
-              onTap: () => context.push('/legal/copyright'),
-            ),
-            if (user != null)
-              _SettingsTile(
-                icon: Icons.shield_moon_outlined,
-                title: 'Moderasyon Geçmişim',
-                subtitle: 'Kaldırılan içerikler, uyarılar ve itirazlar',
-                onTap: () => context.push('/settings/moderation-history'),
-              ),
 
             // ── Destek ──────────────────────────────────────────────────────────
             const _SectionHeader('Destek'),
-            const _SettingsTile(
-              icon: Icons.star_outline,
-              title: 'Uygulamayı değerlendir',
-              onTap: _rateApp,
+            SettingsGroup(
+              children: [
+                const _SettingsTile(
+                  icon: Icons.star_rounded,
+                  title: 'Uygulamayı değerlendir',
+                  onTap: _rateApp,
+                ),
+                _SettingsTile(
+                  icon: Icons.help_rounded,
+                  title: 'Sık Sorulan Sorular',
+                  subtitle: 'Merak ettiklerini buradan öğren',
+                  onTap: () => context.push('/legal/faq'),
+                ),
+                _SettingsTile(
+                  icon: Icons.bug_report_rounded,
+                  title: 'Hata bildir',
+                  onTap: () => context.push('/settings/feedback'),
+                ),
+                _SettingsTile(
+                  icon: Icons.mail_rounded,
+                  title: 'İletişim',
+                  subtitle: 'destek@karar.app',
+                  onTap: () async {
+                    final uri = Uri(scheme: 'mailto', path: 'destek@karar.app');
+                    if (await canLaunchUrl(uri)) await launchUrl(uri);
+                  },
+                ),
+                _SettingsTile(
+                  icon: Icons.language_rounded,
+                  title: 'Dil',
+                  subtitle: 'Türkçe',
+                  onTap: () => _showLanguagePicker(context),
+                ),
+                _SettingsTile(
+                  icon: Icons.cleaning_services_rounded,
+                  title: 'Önbelleği temizle',
+                  subtitle: 'Yerel görselleri ve geçici verileri sil',
+                  onTap: () => _clearCache(context),
+                ),
+              ],
             ),
-            _SettingsTile(
-              icon: Icons.help_outline,
-              title: 'Sık Sorulan Sorular',
-              subtitle: 'Merak ettiklerini buradan öğren',
-              onTap: () => context.push('/legal/faq'),
-            ),
-            _SettingsTile(
-              icon: Icons.bug_report_outlined,
-              title: 'Hata bildir',
-              onTap: () => context.push('/settings/feedback'),
-            ),
-            _SettingsTile(
-              icon: Icons.mail_outline,
-              title: 'İletişim',
-              subtitle: 'destek@karar.app',
-              onTap: () async {
-                final uri = Uri(scheme: 'mailto', path: 'destek@karar.app');
-                if (await canLaunchUrl(uri)) await launchUrl(uri);
-              },
-            ),
-            _SettingsTile(
-              icon: Icons.language_outlined,
-              title: 'Dil',
-              subtitle: 'Türkçe',
-              onTap: () => _showLanguagePicker(context),
-            ),
-            _SettingsTile(
-              icon: Icons.delete_outline,
-              title: 'Önbelleği temizle',
-              subtitle: 'Yerel görselleri ve geçici verileri sil',
-              onTap: () => _clearCache(context),
-            ),
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
+
+            // ── Hesabı kapat / sil (danger group, last) ────────────────────────
+            if (user != null) ...[
+              const SizedBox(height: KararSpace.sectionGap),
+              SettingsGroup(
+                children: [
+                  _SettingsTile(
+                    icon: Icons.child_care_rounded,
+                    title: '18 yaş altıyım',
+                    subtitle: 'Hesabımı 18 yaş kuralı nedeniyle kapat',
+                    destructive: true,
+                    onTap: () => _confirmUnderageLogout(context, ref, user),
+                  ),
+                  _SettingsTile(
+                    icon: Icons.delete_forever_rounded,
+                    title: 'Hesabı sil',
+                    destructive: true,
+                    onTap: () => _confirmDeleteAccount(context, ref, user),
+                  ),
+                ],
+              ),
+            ],
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 24),
               child: Text(
                 'Karar v1.0.0 (build 45)',
                 textAlign: TextAlign.center,
+                style: AppTypography.meta.copyWith(color: kc.text3),
               ),
             ),
           ],
@@ -545,8 +601,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   void _showFontSizePicker(
       BuildContext context, WidgetRef ref, AppFontSize current) {
-    showModalBottomSheet<void>(
-      context: context,
+    showKararSheet<void>(
+      context,
       builder: (ctx) => SafeArea(
         child: RadioGroup<AppFontSize>(
           groupValue: current,
@@ -556,22 +612,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           },
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const SizedBox(height: 12),
-              Text(
-                'Yazı Boyutu Seç',
-                style: Theme.of(ctx)
-                    .textTheme
-                    .titleMedium
-                    ?.copyWith(fontWeight: FontWeight.w700),
+              KararSheetHeader(
+                title: 'Yazı Boyutu Seç',
+                onClose: () => Navigator.pop(ctx),
               ),
-              const Divider(),
               for (final fs in AppFontSize.values)
                 RadioListTile<AppFontSize>(
                   title: Text(fs.label),
                   value: fs,
                 ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
             ],
           ),
         ),
@@ -581,8 +633,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   void _showThemePicker(
       BuildContext context, WidgetRef ref, ThemeMode current) {
-    showModalBottomSheet<void>(
-      context: context,
+    showKararSheet<void>(
+      context,
       builder: (ctx) => SafeArea(
         child: RadioGroup<ThemeMode>(
           groupValue: current,
@@ -592,23 +644,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           },
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const SizedBox(height: 12),
-              Text(
-                'Tema Seç',
-                style: Theme.of(ctx)
-                    .textTheme
-                    .titleMedium
-                    ?.copyWith(fontWeight: FontWeight.w700),
+              KararSheetHeader(
+                title: 'Tema Seç',
+                onClose: () => Navigator.pop(ctx),
               ),
-              const Divider(),
               for (final mode in ThemeMode.values)
                 RadioListTile<ThemeMode>(
                   title: Text(_themeName(mode)),
                   secondary: Icon(_themeIcon(mode)),
                   value: mode,
                 ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
             ],
           ),
         ),
@@ -623,9 +671,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       };
 
   static IconData _themeIcon(ThemeMode mode) => switch (mode) {
-        ThemeMode.light => Icons.light_mode_outlined,
-        ThemeMode.dark => Icons.dark_mode_outlined,
-        ThemeMode.system => Icons.brightness_auto_outlined,
+        ThemeMode.light => Icons.light_mode_rounded,
+        ThemeMode.dark => Icons.dark_mode_rounded,
+        ThemeMode.system => Icons.brightness_auto_rounded,
       };
 
   Future<void> _setPushEnabled(
@@ -648,7 +696,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: const Text(
-          'Bildirimler kapali. Istersen cihaz ayarlarindan tekrar acabilirsin.',
+          'Bildirimler kapalı. İstersen cihaz ayarlarından tekrar açabilirsin.',
         ),
         action: SnackBarAction(
           label: 'Ayarlar',
@@ -660,58 +708,52 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Future<void> _showReduceOrDisableSheet(
       BuildContext context, WidgetRef ref) async {
-    final result = await showModalBottomSheet<_PushAction>(
-      context: context,
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+    final result = await showKararSheet<_PushAction>(
+      context,
+      builder: (ctx) {
+        final kc = ctx.kc;
+        return SafeArea(
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                'Bildirimleri azalt mı, yoksa tamamen kapat mı?',
-                style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+              KararSheetHeader(
+                title: 'Bildirimleri azalt mı, yoksa tamamen kapat mı?',
+                onClose: () => Navigator.pop(ctx, _PushAction.cancel),
               ),
-              const SizedBox(height: 4),
-              Text(
-                'Bildirimleri tamamen kapatırsan yorum, yanıt ve önemli güncellemeleri kaçırabilirsin.',
-                style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
-                    ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                child: Text(
+                  'Bildirimleri tamamen kapatırsan yorum, yanıt ve önemli güncellemeleri kaçırabilirsin.',
+                  style: AppTypography.bodyS.copyWith(color: kc.text2),
+                ),
               ),
-              const SizedBox(height: 16),
               ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(Icons.notifications_paused_outlined,
-                    color: Theme.of(ctx).colorScheme.primary),
+                leading: Icon(Icons.notifications_paused_rounded,
+                    color: kc.primary),
                 title: const Text('Daha az bildirim al'),
                 subtitle: const Text(
                     'Sadece yorumlar ve bahsedilmeler — trend ve özet bildirimleri kapanır'),
                 onTap: () => Navigator.pop(ctx, _PushAction.reduce),
               ),
               ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(Icons.notifications_off_outlined,
-                    color: Theme.of(ctx).colorScheme.error),
+                leading:
+                    Icon(Icons.notifications_off_rounded, color: kc.haksizFill),
                 title: Text('Bildirimleri tamamen kapat',
-                    style: TextStyle(color: Theme.of(ctx).colorScheme.error)),
+                    style: TextStyle(color: kc.haksizText)),
                 subtitle: const Text('Hiçbir push bildirimi almayacaksın'),
                 onTap: () => Navigator.pop(ctx, _PushAction.disable),
               ),
               ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.close_outlined),
+                leading: const Icon(Icons.close_rounded),
                 title: const Text('Vazgeç'),
                 onTap: () => Navigator.pop(ctx, _PushAction.cancel),
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 8),
             ],
           ),
-        ),
-      ),
+        );
+      },
     );
 
     if (!context.mounted) return;
@@ -754,34 +796,30 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   void _showLanguagePicker(BuildContext context) {
-    showModalBottomSheet<void>(
-      context: context,
+    showKararSheet<void>(
+      context,
       builder: (ctx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const SizedBox(height: 12),
-            Text(
-              'Dil Seç',
-              style: Theme.of(ctx)
-                  .textTheme
-                  .titleMedium
-                  ?.copyWith(fontWeight: FontWeight.w700),
+            KararSheetHeader(
+              title: 'Dil Seç',
+              onClose: () => Navigator.pop(ctx),
             ),
-            const Divider(),
             ListTile(
               title: const Text('Türkçe'),
-              trailing: const Icon(Icons.check),
+              trailing: Icon(Icons.check_rounded, color: ctx.kc.primary),
               onTap: () => Navigator.pop(ctx),
             ),
             ListTile(
               title: const Text('English'),
               subtitle: const Text('Yakında / Coming Soon'),
               enabled: false,
-              trailing: const Icon(Icons.lock_clock_outlined, size: 16),
+              trailing: const Icon(Icons.lock_clock_rounded, size: 18),
               onTap: () {},
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
           ],
         ),
       ),
@@ -943,6 +981,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             child: const Text('Vazgeç'),
           ),
           FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: ctx.kc.haksizFill,
+              foregroundColor: Colors.white,
+            ),
             onPressed: () async {
               Navigator.pop(ctx);
               try {
@@ -1066,7 +1108,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     padding: const EdgeInsets.only(top: 12),
                     child: Text(
                       errorText!,
-                      style: TextStyle(color: Theme.of(ctx).colorScheme.error),
+                      style: TextStyle(color: ctx.kc.haksizText),
                     ),
                   ),
               ],
@@ -1076,18 +1118,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 onPressed: isDeleting ? null : () => Navigator.pop(ctx),
                 child: const Text('Vazgeç'),
               ),
-              FilledButton.tonalIcon(
+              FilledButton.icon(
                 onPressed: isDeleting ? null : submit,
                 style: FilledButton.styleFrom(
-                  backgroundColor: Theme.of(ctx).colorScheme.errorContainer,
-                  foregroundColor: Theme.of(ctx).colorScheme.onErrorContainer,
+                  backgroundColor: ctx.kc.haksizFill,
+                  foregroundColor: Colors.white,
                 ),
                 icon: isDeleting
                     ? const SizedBox(
                         width: 18,
                         height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.delete_forever_outlined),
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white))
+                    : const Icon(Icons.delete_forever_rounded),
                 label: const Text('Hesabı sil'),
               ),
             ],
@@ -1103,21 +1146,10 @@ class _SectionHeader extends StatelessWidget {
   final String title;
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 4),
-      child: Text(
-        title.toUpperCase(),
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: Theme.of(context).colorScheme.primary,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 1.2,
-            ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => SettingsSectionHeader(title);
 }
 
+/// A settings row (see [SettingsRow]); keeps the original call shape.
 class _SettingsTile extends StatelessWidget {
   const _SettingsTile({
     required this.icon,
@@ -1125,8 +1157,7 @@ class _SettingsTile extends StatelessWidget {
     this.subtitle,
     this.onTap,
     this.trailing,
-    this.titleColor,
-    this.iconColor,
+    this.destructive = false,
   });
 
   final IconData icon;
@@ -1134,19 +1165,17 @@ class _SettingsTile extends StatelessWidget {
   final String? subtitle;
   final VoidCallback? onTap;
   final Widget? trailing;
-  final Color? titleColor;
-  final Color? iconColor;
+  final bool destructive;
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      leading: Icon(icon,
-          color: iconColor ?? Theme.of(context).colorScheme.onSurfaceVariant),
-      title: Text(title, style: TextStyle(color: titleColor)),
-      subtitle: subtitle != null ? Text(subtitle!) : null,
-      trailing:
-          trailing ?? (onTap != null ? const Icon(Icons.chevron_right) : null),
+    return SettingsRow(
+      icon: icon,
+      title: title,
+      subtitle: subtitle,
       onTap: onTap,
+      trailing: trailing,
+      destructive: destructive,
     );
   }
 }
@@ -1166,60 +1195,59 @@ class _PendingEmailBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+    final kc = context.kc;
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       decoration: BoxDecoration(
-        color: colorScheme.primaryContainer,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colorScheme.primary.withValues(alpha: 0.3)),
+        color: kc.primaryContainer,
+        borderRadius: KararRadius.all(KararRadius.tile),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.fromLTRB(16, 14, 12, 10),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Icon(Icons.mark_email_unread_outlined,
-                    size: 18, color: colorScheme.primary),
+                Icon(Icons.mark_email_unread_rounded,
+                    size: 20, color: kc.onPrimaryContainer),
                 const SizedBox(width: 8),
-                Text(
-                  'Bekleyen e-posta değişikliği',
-                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        color: colorScheme.primary,
-                        fontWeight: FontWeight.bold,
-                      ),
+                Expanded(
+                  child: Text(
+                    'Bekleyen e-posta değişikliği',
+                    style: AppTypography.bodyStrong.copyWith(
+                      color: kc.onPrimaryContainer,
+                    ),
+                  ),
                 ),
               ],
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 6),
             Text(
               pendingEmail,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: colorScheme.onPrimaryContainer,
-                  ),
+              style: AppTypography.bodyS.copyWith(
+                color: kc.onPrimaryContainer,
+                fontWeight: FontWeight.w700,
+              ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
             const SizedBox(height: 2),
             Text(
               'Yeni adresine doğrulama kodu gönderdik.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color:
-                        colorScheme.onPrimaryContainer.withValues(alpha: 0.7),
-                  ),
+              style: AppTypography.bodyS.copyWith(
+                color: kc.onPrimaryContainer,
+              ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             Row(
               children: [
-                FilledButton.tonal(
+                FilledButton(
                   onPressed: onVerify,
                   style: FilledButton.styleFrom(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    minimumSize: const Size(64, 44),
+                    padding: const EdgeInsets.symmetric(horizontal: 18),
+                    textStyle: AppTypography.label,
                   ),
                   child: const Text('Kodu Doğrula'),
                 ),
@@ -1227,11 +1255,7 @@ class _PendingEmailBanner extends StatelessWidget {
                 TextButton(
                   onPressed: onCancel,
                   style: TextButton.styleFrom(
-                    foregroundColor: colorScheme.error,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    foregroundColor: kc.haksizText,
                   ),
                   child: const Text('İptal'),
                 ),

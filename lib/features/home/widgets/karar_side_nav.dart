@@ -3,13 +3,20 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/providers.dart';
-import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_typography.dart';
+import '../../../core/theme/karar_tokens.dart';
+import '../../../core/theme/motion.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/widgets/karar_avatar.dart';
 import '../../../shared/widgets/karar_logo.dart';
+import '../../../shared/widgets/karar_pressable.dart';
+import '../../../shared/widgets/karma_badge.dart';
 
-/// Branch indices used by the shell.
-/// Feed=0, Create=1, Notifications=2, Profile=3, Search=4, Discover=5
+/// Desktop side navigation (spec §5.2): canvas background, no divider,
+/// 248 px expanded (≥ 1263 px) / 80 px collapsed.
+///
+/// Branch indices used by the shell:
+/// Feed=0, Create=1, Notifications=2, Profile=3, Search=4, Discover=5.
 class KararSideNav extends ConsumerWidget {
   const KararSideNav({
     super.key,
@@ -24,86 +31,111 @@ class KararSideNav extends ConsumerWidget {
   final int unreadCount;
   final bool collapsed;
 
-  static const double expandedWidth = 244.0;
-  static const double collapsedWidth = 72.0;
+  static const double expandedWidth = 248.0;
+  static const double collapsedWidth = 80.0;
+
+  /// Below this rendered width the labels are hidden (also while the width
+  /// animates between the two states, so nothing overflows).
+  static const double _labelThreshold = 168.0;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(currentUserProvider);
-    final colorScheme = Theme.of(context).colorScheme;
+    final kc = context.kc;
 
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      curve: Curves.easeInOut,
+      duration: KararMotion.d(context, KararMotion.nav),
+      curve: KararMotion.standard,
       width: collapsed ? collapsedWidth : expandedWidth,
-      color: colorScheme.surface,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _LogoArea(
-              collapsed: collapsed,
-              onTap: () => onSelectIndex(0),
-            ),
-            const SizedBox(height: 4),
-            _SideNavTile(
-              icon: Icons.home_outlined,
-              selectedIcon: Icons.home,
-              label: 'Ana Sayfa',
-              isSelected: currentIndex == 0,
-              collapsed: collapsed,
-              onTap: () => onSelectIndex(0),
-            ),
-            _SideNavTile(
-              icon: Icons.search,
-              selectedIcon: Icons.search,
-              label: 'Arama',
-              isSelected: currentIndex == 4,
-              collapsed: collapsed,
-              onTap: () => onSelectIndex(4),
-            ),
-            _SideNavTile(
-              icon: Icons.explore_outlined,
-              selectedIcon: Icons.explore,
-              label: 'Keşfet',
-              isSelected: currentIndex == 5,
-              collapsed: collapsed,
-              onTap: () => onSelectIndex(5),
-            ),
-            _SideNavTile(
-              icon: Icons.notifications_none,
-              selectedIcon: Icons.notifications,
-              label: 'Bildirimler',
-              isSelected: currentIndex == 2,
-              collapsed: collapsed,
-              onTap: () => onSelectIndex(2),
-              badge: unreadCount,
-            ),
-            _SideNavTile(
-              icon: Icons.add_circle_outline,
-              selectedIcon: Icons.add_circle,
-              label: 'Oluştur',
-              isSelected: currentIndex == 1,
-              collapsed: collapsed,
-              onTap: () => onSelectIndex(1),
-            ),
-            const Spacer(),
-            _SideNavTile(
-              icon: Icons.person_outline,
-              selectedIcon: Icons.person,
-              label: user?.username ?? 'Profil',
-              isSelected: currentIndex == 3,
-              collapsed: collapsed,
-              onTap: () => onSelectIndex(3),
-              customIcon: user != null
-                  ? KararAvatar(username: user.username, radius: 13)
-                  : null,
-            ),
-            _MoreTile(collapsed: collapsed),
-            const SizedBox(height: 8),
-          ],
-        ),
+      color: kc.canvas,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < _labelThreshold;
+          return CustomScrollView(
+            slivers: [
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 18,
+                    horizontal: 12,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _LogoArea(
+                        compact: compact,
+                        onTap: () => onSelectIndex(0),
+                      ),
+                      const SizedBox(height: 8),
+                      _SideNavItem(
+                        icon: Icons.home_outlined,
+                        selectedIcon: Icons.home_rounded,
+                        label: 'Ana Sayfa',
+                        isSelected: currentIndex == 0,
+                        compact: compact,
+                        onTap: () => onSelectIndex(0),
+                      ),
+                      const SizedBox(height: 4),
+                      _SideNavItem(
+                        icon: Icons.search_rounded,
+                        selectedIcon: Icons.search_rounded,
+                        label: 'Arama',
+                        isSelected: currentIndex == 4,
+                        compact: compact,
+                        onTap: () => onSelectIndex(4),
+                      ),
+                      const SizedBox(height: 4),
+                      _SideNavItem(
+                        icon: Icons.explore_outlined,
+                        selectedIcon: Icons.explore_rounded,
+                        label: 'Keşfet',
+                        isSelected: currentIndex == 5,
+                        compact: compact,
+                        onTap: () => onSelectIndex(5),
+                      ),
+                      const SizedBox(height: 4),
+                      _SideNavItem(
+                        icon: Icons.notifications_none_rounded,
+                        selectedIcon: Icons.notifications_rounded,
+                        label: 'Bildirimler',
+                        isSelected: currentIndex == 2,
+                        compact: compact,
+                        onTap: () => onSelectIndex(2),
+                        badge: unreadCount,
+                      ),
+                      const SizedBox(height: 14),
+                      _CreateButton(
+                        compact: compact,
+                        isSelected: currentIndex == 1,
+                        onTap: () => onSelectIndex(1),
+                      ),
+                      const Spacer(),
+                      const SizedBox(height: 16),
+                      _SideNavItem(
+                        icon: Icons.person_outline_rounded,
+                        selectedIcon: Icons.person_rounded,
+                        label: user?.username ?? 'Profil',
+                        isSelected: currentIndex == 3,
+                        compact: compact,
+                        onTap: () => onSelectIndex(3),
+                        customIcon: user != null
+                            ? KararAvatar(username: user.username, radius: 15)
+                            : null,
+                        trailing: user != null
+                            ? KarmaBadge(karma: user.karma, size: 14)
+                            : null,
+                        strongLabel: user != null,
+                      ),
+                      const SizedBox(height: 4),
+                      _MoreTile(compact: compact),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -112,92 +144,30 @@ class KararSideNav extends ConsumerWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _LogoArea extends StatelessWidget {
-  const _LogoArea({required this.collapsed, required this.onTap});
+  const _LogoArea({required this.compact, required this.onTap});
 
-  final bool collapsed;
+  final bool compact;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-        collapsed ? 16 : 20,
-        20,
-        collapsed ? 16 : 20,
-        8,
-      ),
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        child: GestureDetector(
-          onTap: onTap,
-          child: collapsed
-              ? _iconOnly(context)
-              : const KararLogo(size: LogoSize.medium),
-        ),
-      ),
-    );
-  }
-
-  Widget _iconOnly(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final boxColor = isDark
-        ? AppColors.darkSurfaceContainerHighest
-        : AppColors.surfaceContainerHighest;
-    final boxBorder = isDark ? AppColors.darkBorder : AppColors.border;
-    final iconColor =
-        isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
-    final hakliColor = isDark ? AppColors.darkHakli : AppColors.hakli;
-    final haksizColor = isDark ? AppColors.darkHaksiz : AppColors.haksiz;
-
-    const box = 38.0;
-    const badge = 13.0;
-
     return SizedBox(
-      width: box + badge * 0.6,
-      height: box + badge * 0.6,
-      child: Stack(
-        children: [
-          Positioned(
-            bottom: 0,
-            right: 0,
-            child: Container(
-              width: box,
-              height: box,
-              decoration: BoxDecoration(
-                color: boxColor,
-                borderRadius: BorderRadius.circular(box * 0.28),
-                border: Border.all(color: boxBorder),
-              ),
-              child: Center(
-                child: Icon(Icons.balance_rounded, size: 19, color: iconColor),
-              ),
-            ),
+      height: 72,
+      child: Align(
+        alignment: compact ? Alignment.center : Alignment.centerLeft,
+        child: Padding(
+          padding: EdgeInsets.only(left: compact ? 0 : 6),
+          child: KararPressable(
+            onTap: onTap,
+            semanticLabel: 'Ana Sayfa',
+            tooltip: compact ? 'Ana Sayfa' : null,
+            pressedScale: 0.97,
+            focusRadius: 20,
+            child: compact
+                ? const KararLogo(size: LogoSize.medium, showWordmark: false)
+                : const KararLogo(size: LogoSize.medium),
           ),
-          Positioned(
-            top: 0,
-            left: 0,
-            child: Container(
-              width: badge,
-              height: badge,
-              decoration:
-                  BoxDecoration(color: hakliColor, shape: BoxShape.circle),
-              child: Center(
-                  child: Icon(Icons.check, size: 7, color: Colors.white)),
-            ),
-          ),
-          Positioned(
-            bottom: 0,
-            right: 0,
-            child: Container(
-              width: badge,
-              height: badge,
-              decoration:
-                  BoxDecoration(color: haksizColor, shape: BoxShape.circle),
-              child: Center(
-                  child: Icon(Icons.close, size: 7, color: Colors.white)),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -205,122 +175,270 @@ class _LogoArea extends StatelessWidget {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _SideNavTile extends StatefulWidget {
-  const _SideNavTile({
+/// Side-nav row: 52 tall, radius 18, H padding 14, icon 24 + 14 + label
+/// 15/600 text2. Hover: muted 70 %. Active: primaryContainer, filled
+/// `primary` icon, 15/800 `primaryText` label. Compact: icon only + tooltip.
+class _SideNavItem extends StatefulWidget {
+  const _SideNavItem({
     required this.icon,
     required this.selectedIcon,
     required this.label,
     required this.isSelected,
-    required this.collapsed,
+    required this.compact,
     required this.onTap,
     this.badge = 0,
     this.customIcon,
+    this.trailing,
+    this.strongLabel = false,
   });
 
   final IconData icon;
   final IconData selectedIcon;
   final String label;
   final bool isSelected;
-  final bool collapsed;
+  final bool compact;
   final VoidCallback onTap;
   final int badge;
   final Widget? customIcon;
+  final Widget? trailing;
+
+  /// Profile row: the username is 15/700 text1 (not the 600 text2 label).
+  final bool strongLabel;
 
   @override
-  State<_SideNavTile> createState() => _SideNavTileState();
+  State<_SideNavItem> createState() => _SideNavItemState();
 }
 
-class _SideNavTileState extends State<_SideNavTile> {
+class _SideNavItemState extends State<_SideNavItem> {
   bool _hovered = false;
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+    final kc = context.kc;
+    final selected = widget.isSelected;
 
-    final bgColor = widget.isSelected
-        ? colorScheme.onSurface.withValues(alpha: 0.12)
+    final bgColor = selected
+        ? kc.primaryContainer
         : _hovered
-            ? colorScheme.onSurface.withValues(alpha: 0.08)
-            : Colors.transparent;
+            ? kc.muted.withValues(alpha: 0.7)
+            : kc.muted.withValues(alpha: 0);
 
     Widget iconChild = widget.customIcon ??
         Icon(
-          widget.isSelected ? widget.selectedIcon : widget.icon,
-          size: 26,
-          color: colorScheme.onSurface,
+          selected ? widget.selectedIcon : widget.icon,
+          size: 24,
+          color: selected ? kc.primary : kc.text2,
         );
 
-    if (widget.badge > 0) {
-      iconChild = Badge.count(
-        count: widget.badge.clamp(0, 99),
-        child: iconChild,
+    final badgeCount = widget.badge.clamp(0, 99);
+    if (widget.badge > 0 && widget.compact) {
+      iconChild = Stack(
+        clipBehavior: Clip.none,
+        children: [
+          iconChild,
+          Positioned(
+            top: -6,
+            right: -10,
+            child: _CountBadge(
+              count: badgeCount,
+              ringColor: selected ? kc.primaryContainer : kc.canvas,
+            ),
+          ),
+        ],
       );
     }
 
-    final tile = AnimatedContainer(
-      duration: const Duration(milliseconds: 100),
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+    final labelStyle = (selected
+            ? AppTypography.bodyStrong.copyWith(fontWeight: FontWeight.w800)
+            : AppTypography.bodyStrong.copyWith(
+                fontWeight:
+                    widget.strongLabel ? FontWeight.w700 : FontWeight.w600,
+              ))
+        .copyWith(
+      color: selected
+          ? kc.primaryText
+          : widget.strongLabel
+              ? kc.text1
+              : kc.text2,
+    );
+
+    final content = AnimatedContainer(
+      duration: KararMotion.d(context, KararMotion.fast),
+      curve: KararMotion.standard,
+      width: double.infinity,
+      constraints: const BoxConstraints(minHeight: 52),
+      padding: EdgeInsets.symmetric(horizontal: widget.compact ? 0 : 14),
       decoration: BoxDecoration(
         color: bgColor,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: KararRadius.all(KararRadius.navItem),
       ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: widget.onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-          child: Row(
-            children: [
-              iconChild,
-              if (!widget.collapsed) ...[
-                const SizedBox(width: 16),
+      child: widget.compact
+          ? Center(child: iconChild)
+          : Row(
+              children: [
+                iconChild,
+                const SizedBox(width: 14),
                 Expanded(
                   child: Text(
                     widget.label,
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: widget.isSelected
-                          ? FontWeight.bold
-                          : FontWeight.normal,
-                      color: colorScheme.onSurface,
-                    ),
+                    style: labelStyle,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                if (widget.trailing != null) ...[
+                  const SizedBox(width: 6),
+                  widget.trailing!,
+                ],
+                if (widget.badge > 0) ...[
+                  const SizedBox(width: 8),
+                  _CountBadge(count: badgeCount),
+                ],
               ],
-            ],
+            ),
+    );
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: KararPressable(
+        onTap: widget.onTap,
+        semanticLabel: widget.label,
+        semanticValue: widget.badge > 0 ? '$badgeCount' : null,
+        selected: selected,
+        tooltip: widget.compact ? widget.label : null,
+        pressedScale: 0.98,
+        focusRadius: KararRadius.navItem,
+        child: content,
+      ),
+    );
+  }
+}
+
+/// `haksizFill` count pill with white 11/800 digits; optional ring in the
+/// row colour when it overlaps the icon (compact mode).
+class _CountBadge extends StatelessWidget {
+  const _CountBadge({required this.count, this.ringColor});
+
+  final int count;
+  final Color? ringColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final kc = context.kc;
+    return ExcludeSemantics(
+      child: Container(
+        constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
+        padding: const EdgeInsets.symmetric(horizontal: 5),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: kc.haksizFill,
+          borderRadius: KararRadius.all(KararRadius.pill),
+          border: ringColor == null
+              ? null
+              : Border.all(color: ringColor!, width: 2),
+        ),
+        child: Text(
+          '$count',
+          textScaler: TextScaler.noScaling,
+          style: AppTypography.micro.copyWith(
+            color: Colors.white,
+            height: 1,
+            letterSpacing: 0,
+            fontFeatures: AppTypography.tabular,
           ),
         ),
       ),
     );
+  }
+}
 
-    Widget child = MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      cursor: SystemMouseCursors.click,
-      child: tile,
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// "Oluştur" CTA: ink pill (52 tall, radius 26, float shadow); compact: a
+/// 52 px ink circle. A 2 px `primary` ring marks the active create branch.
+class _CreateButton extends StatelessWidget {
+  const _CreateButton({
+    required this.compact,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  final bool compact;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final kc = context.kc;
+    final brightness = Theme.of(context).brightness;
+    final decoration = BoxDecoration(
+      color: kc.ink,
+      borderRadius: KararRadius.all(26),
+      boxShadow: KararShadow.float(brightness),
+      border: isSelected
+          ? Border.all(
+              color: kc.primary,
+              width: 2,
+              strokeAlign: BorderSide.strokeAlignOutside,
+            )
+          : null,
     );
 
-    if (widget.collapsed) {
-      return Tooltip(
-        message: widget.label,
-        preferBelow: false,
-        waitDuration: const Duration(milliseconds: 400),
-        child: child,
-      );
-    }
+    final child = compact
+        ? Container(
+            width: 52,
+            height: 52,
+            decoration: decoration,
+            alignment: Alignment.center,
+            child: Icon(Icons.add_rounded, size: 24, color: kc.onInk),
+          )
+        : Container(
+            width: double.infinity,
+            constraints: const BoxConstraints(minHeight: 52),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+            decoration: decoration,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.add_rounded, size: 22, color: kc.onInk),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    'Oluştur',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTypography.bodyStrong.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: kc.onInk,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
 
-    return child;
+    return Align(
+      alignment: Alignment.center,
+      child: KararPressable(
+        onTap: onTap,
+        semanticLabel: 'Oluştur',
+        selected: isSelected,
+        tooltip: compact ? 'Oluştur' : null,
+        pressedScale: 0.96,
+        focusRadius: 26,
+        child: child,
+      ),
+    );
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _MoreTile extends ConsumerStatefulWidget {
-  const _MoreTile({required this.collapsed});
+  const _MoreTile({required this.compact});
 
-  final bool collapsed;
+  final bool compact;
 
   @override
   ConsumerState<_MoreTile> createState() => _MoreTileState();
@@ -331,40 +449,43 @@ class _MoreTileState extends ConsumerState<_MoreTile> {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+    final kc = context.kc;
     final themeMode = ref.watch(themeProvider);
     final user = ref.watch(currentUserProvider);
 
     final bgColor = _hovered
-        ? colorScheme.onSurface.withValues(alpha: 0.08)
-        : Colors.transparent;
+        ? kc.muted.withValues(alpha: 0.7)
+        : kc.muted.withValues(alpha: 0);
 
     final tileContent = AnimatedContainer(
-      duration: const Duration(milliseconds: 100),
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      duration: KararMotion.d(context, KararMotion.fast),
+      curve: KararMotion.standard,
+      width: double.infinity,
+      constraints: const BoxConstraints(minHeight: 52),
+      padding: EdgeInsets.symmetric(horizontal: widget.compact ? 0 : 14),
       decoration: BoxDecoration(
         color: bgColor,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: KararRadius.all(KararRadius.navItem),
       ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-        child: Row(
-          children: [
-            const Icon(Icons.menu_rounded, size: 26),
-            if (!widget.collapsed) ...[
-              const SizedBox(width: 16),
-              const Expanded(
-                child: Text(
-                  'Daha fazla',
-                  style: TextStyle(fontSize: 15),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+      child: widget.compact
+          ? Center(child: Icon(Icons.menu_rounded, size: 24, color: kc.text2))
+          : Row(
+              children: [
+                Icon(Icons.menu_rounded, size: 24, color: kc.text2),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Text(
+                    'Daha fazla',
+                    style: AppTypography.bodyStrong.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: kc.text2,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-              ),
-            ],
-          ],
-        ),
-      ),
+              ],
+            ),
     );
 
     Widget child = MouseRegion(
@@ -377,9 +498,9 @@ class _MoreTileState extends ConsumerState<_MoreTile> {
         offset: const Offset(8, -12),
         onSelected: (value) => _handleAction(context, value),
         itemBuilder: (_) => [
-          PopupMenuItem(
+          const PopupMenuItem(
             value: 'settings',
-            child: _PopupItem(icon: Icons.settings_outlined, label: 'Ayarlar'),
+            child: _PopupItem(icon: Icons.settings_rounded, label: 'Ayarlar'),
           ),
           PopupMenuItem(
             value: 'theme',
@@ -390,27 +511,34 @@ class _MoreTileState extends ConsumerState<_MoreTile> {
           ),
           const PopupMenuDivider(),
           if (user != null)
-            PopupMenuItem(
+            const PopupMenuItem(
               value: 'logout',
-              child: _PopupItem(icon: Icons.logout, label: 'Çıkış Yap'),
+              child: _PopupItem(icon: Icons.logout_rounded, label: 'Çıkış Yap'),
             )
           else ...[
-            PopupMenuItem(
+            const PopupMenuItem(
               value: 'login',
-              child: _PopupItem(icon: Icons.login, label: 'Giriş Yap'),
+              child: _PopupItem(icon: Icons.login_rounded, label: 'Giriş Yap'),
             ),
-            PopupMenuItem(
+            const PopupMenuItem(
               value: 'register',
               child: _PopupItem(
-                  icon: Icons.person_add_outlined, label: 'Kayıt Ol'),
+                icon: Icons.person_add_alt_rounded,
+                label: 'Kayıt Ol',
+              ),
             ),
           ],
         ],
-        child: tileContent,
+        child: Semantics(
+          button: true,
+          label: 'Daha fazla',
+          excludeSemantics: true,
+          child: tileContent,
+        ),
       ),
     );
 
-    if (widget.collapsed) {
+    if (widget.compact) {
       return Tooltip(
         message: 'Daha fazla',
         preferBelow: false,
@@ -451,9 +579,9 @@ class _MoreTileState extends ConsumerState<_MoreTile> {
   }
 
   static IconData _themeIcon(ThemeMode mode) => switch (mode) {
-        ThemeMode.light => Icons.light_mode_outlined,
-        ThemeMode.dark => Icons.dark_mode_outlined,
-        ThemeMode.system => Icons.brightness_auto_outlined,
+        ThemeMode.light => Icons.light_mode_rounded,
+        ThemeMode.dark => Icons.dark_mode_rounded,
+        ThemeMode.system => Icons.brightness_auto_rounded,
       };
 
   static String _themeName(ThemeMode mode) => switch (mode) {
@@ -473,9 +601,10 @@ class _PopupItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
     return Row(
       children: [
-        Icon(icon, size: 20),
+        Icon(icon, size: 20, color: kc.text2),
         const SizedBox(width: 12),
         Text(label),
       ],

@@ -4,8 +4,10 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/api/api_exception.dart';
 import '../../core/providers.dart';
+import '../../core/theme/karar_tokens.dart';
 import '../../shared/widgets/centered_content.dart';
 import '../../shared/widgets/karar_logo.dart';
+import 'widgets/auth_layout.dart';
 
 class ChangeEmailScreen extends ConsumerStatefulWidget {
   const ChangeEmailScreen({super.key});
@@ -238,7 +240,6 @@ class _RequestStep extends StatelessWidget {
           decoration: const InputDecoration(
             labelText: 'Yeni e-posta',
             prefixIcon: Icon(Icons.email_outlined),
-            border: OutlineInputBorder(),
           ),
         ),
         const SizedBox(height: 16),
@@ -251,7 +252,6 @@ class _RequestStep extends StatelessWidget {
           decoration: InputDecoration(
             labelText: 'Mevcut şifre',
             prefixIcon: const Icon(Icons.lock_outline),
-            border: const OutlineInputBorder(),
             suffixIcon: IconButton(
               icon: Icon(
                 obscurePassword
@@ -337,7 +337,6 @@ class _ConfirmStep extends StatelessWidget {
           decoration: const InputDecoration(
             labelText: 'Doğrulama kodu',
             prefixIcon: Icon(Icons.pin_outlined),
-            border: OutlineInputBorder(),
             hintText: '000000',
           ),
         ),
@@ -384,7 +383,13 @@ class _DoneStep extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const SizedBox(height: 40),
-        const Icon(Icons.check_circle_rounded, size: 80, color: Colors.green),
+        Center(
+          child: AuthDisc(
+            icon: Icons.check_circle_rounded,
+            background: context.kc.hakliSoft,
+            foreground: context.kc.hakliText,
+          ),
+        ),
         const SizedBox(height: 24),
         Text(
           'E-posta güncellendi!',

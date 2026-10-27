@@ -3,11 +3,22 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/auth/auth_service.dart';
+import '../../core/layout/breakpoints.dart';
 import '../../core/providers.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/karar_tokens.dart';
+import '../../core/utils/count_format.dart';
 import '../../core/utils/date_formatter.dart';
-import '../../shared/widgets/karar_avatar.dart';
-import '../../shared/widgets/karma_badge.dart';
 import '../../shared/widgets/centered_content.dart';
+import '../../shared/widgets/karar_avatar.dart';
+import '../../shared/widgets/karar_button.dart';
+import '../../shared/widgets/karar_circle_button.dart';
+import '../../shared/widgets/karar_text_tabs.dart';
+import '../settings/widgets/settings_group.dart';
+import 'my_comments_screen.dart';
+import 'my_posts_screen.dart';
+import 'saved_posts_screen.dart';
+import 'widgets/profile_header.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
@@ -19,149 +30,128 @@ class ProfileScreen extends ConsumerWidget {
   }
 }
 
-class _LoggedInProfile extends ConsumerWidget {
+/// Tab-root app bar title (left aligned, `screenTitle`).
+class _ProfileTitle extends StatelessWidget {
+  const _ProfileTitle();
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      'Profil',
+      style: AppTypography.screenTitle.copyWith(color: context.kc.text1),
+    );
+  }
+}
+
+class _LoggedInProfile extends ConsumerStatefulWidget {
   const _LoggedInProfile({required this.user});
   final AuthUser user;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_LoggedInProfile> createState() => _LoggedInProfileState();
+}
+
+class _LoggedInProfileState extends ConsumerState<_LoggedInProfile> {
+  static const _tabs = ['Gönderiler', 'Yorumlar', 'Kaydedilenler'];
+  int _tab = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final user = widget.user;
+    final authMethod = user.authProvider == 'google' ? 'Google' : 'E-posta';
+    final metaLine = user.joinedAt != null
+        ? '${DateFormatter.full(user.joinedAt!)} tarihinden beri üye · $authMethod'
+        : authMethod;
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Profil'),
-        centerTitle: true,
+        title: const _ProfileTitle(),
+        centerTitle: false,
         actions: [
           IconButton(
-            tooltip: 'Profili Düzenle',
-            icon: const Icon(Icons.edit_outlined),
-            onPressed: () => context.push('/profile/edit', extra: user),
-          ),
-          IconButton(
             tooltip: 'Ayarlar',
-            icon: const Icon(Icons.settings_outlined),
+            icon: const Icon(Icons.settings_rounded),
             onPressed: () => context.push('/settings'),
           ),
           IconButton(
             tooltip: 'Çıkış yap',
-            icon: const Icon(Icons.logout),
+            icon: const Icon(Icons.logout_rounded),
             onPressed: () => _confirmLogout(context, ref),
           ),
         ],
       ),
       body: CenteredContent(
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Row(
+        child: CustomScrollView(
+          slivers: [
+            SliverToBoxAdapter(
+              child: ProfileHeader(
+                user: user,
+                metaLine: metaLine,
+                stats: [
+                  ProfileStat(
+                    value: formatCompactCount(user.karma),
+                    label: 'Karma',
+                    onTap: () => context.push('/profile/karma'),
+                  ),
+                  ProfileStat(
+                    value: formatCompactCount(user.postCount),
+                    label: 'Gönderi',
+                    onTap: () => context.push('/profile/posts'),
+                  ),
+                  ProfileStat(
+                    value: formatCompactCount(user.commentCount),
+                    label: 'Yorum',
+                    onTap: () => context.push('/profile/comments'),
+                  ),
+                ],
+                actions: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    KararAvatar(
-                      username: user.username,
-                      radius: 28,
-                      fontSize: 22,
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  user.username,
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .titleLarge
-                                      ?.copyWith(fontWeight: FontWeight.w800),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              KarmaBadge(karma: user.karma, showDetail: true),
-                            ],
-                          ),
-                          Text(
-                            user.email,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style:
-                                Theme.of(context).textTheme.bodySmall?.copyWith(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onSurfaceVariant,
-                                    ),
-                          ),
-                          if ((user.bio ?? '').isNotEmpty) ...[
-                            const SizedBox(height: 6),
-                            Text(
-                              user.bio!,
-                              maxLines: 3,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.bodyMedium,
-                            ),
-                          ],
-                        ],
+                    Flexible(
+                      child: KararButton(
+                        label: 'Profili Düzenle',
+                        icon: Icons.edit_rounded,
+                        expand: false,
+                        onPressed: () =>
+                            context.push('/profile/edit', extra: user),
                       ),
+                    ),
+                    const SizedBox(width: 12),
+                    KararCircleButton(
+                      icon: Icons.insights_rounded,
+                      tooltip: 'Haftalık Vicdan Karnesi',
+                      style: KararCircleStyle.muted,
+                      size: 48,
+                      onPressed: () => context.push('/profile/weekly'),
                     ),
                   ],
                 ),
               ),
             ),
-            const SizedBox(height: 12),
-            _MetricTile(
-              icon: Icons.auto_awesome_outlined,
-              title: 'Karma',
-              value: '${user.karma}',
-              onTap: () => context.push('/profile/karma'),
-              trailing: const Icon(Icons.chevron_right),
-            ),
-            const SizedBox(height: 4),
-            _MetricTile(
-              icon: Icons.calendar_view_week_outlined,
-              title: 'Haftalık Vicdan Karnesi',
-              value: '',
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => context.push('/profile/weekly'),
-            ),
-            const SizedBox(height: 12),
-            _MetricTile(
-              icon: Icons.article_outlined,
-              title: 'Gönderilerim',
-              value: '${user.postCount}',
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => context.push('/profile/posts'),
-            ),
-            const SizedBox(height: 4),
-            _MetricTile(
-              icon: Icons.bookmark_border_outlined,
-              title: 'Kaydedilenler',
-              value: '',
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => context.push('/profile/saved'),
-            ),
-            const SizedBox(height: 4),
-            _MetricTile(
-              icon: Icons.chat_bubble_outline,
-              title: 'Yorumlarım',
-              value: '${user.commentCount}',
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => context.push('/profile/comments'),
-            ),
-            const SizedBox(height: 4),
-            if (user.joinedAt != null) ...[
-              _MetricTile(
-                icon: Icons.calendar_today_outlined,
-                title: 'Üyelik',
-                value: DateFormatter.full(user.joinedAt!),
+            SliverToBoxAdapter(
+              child: KararTextTabs(
+                labels: _tabs,
+                index: _tab,
+                padding: const EdgeInsets.fromLTRB(24, 22, 24, 4),
+                onChanged: (i) => setState(() => _tab = i),
               ),
-              const SizedBox(height: 4),
-            ],
-            _MetricTile(
-              icon: Icons.verified_user_outlined,
-              title: 'Giriş yöntemi',
-              value: user.authProvider == 'google' ? 'Google' : 'E-posta',
+            ),
+            switch (_tab) {
+              1 => const MyCommentsList(
+                  key: ValueKey('profile_tab_comments'),
+                  sliver: true,
+                ),
+              2 => const SavedPostsGrid(
+                  key: ValueKey('profile_tab_saved'),
+                  sliver: true,
+                ),
+              _ => const MyPostsGrid(
+                  key: ValueKey('profile_tab_posts'),
+                  sliver: true,
+                ),
+            },
+            SliverToBoxAdapter(
+              child: SizedBox(height: context.navBottomInset + 24),
             ),
           ],
         ),
@@ -201,117 +191,85 @@ class _GuestProfile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Profil'),
-        centerTitle: true,
+        title: const _ProfileTitle(),
+        centerTitle: false,
       ),
       body: CenteredContent(
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: EdgeInsets.fromLTRB(0, 8, 0, context.navBottomInset + 24),
           children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Misafir olarak kullanıyorsun',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w800,
-                          ),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Karma ve bildirim takibi için hesap aç. Oy vermeye ve yorum yapmaya hemen başlayabilirsin.',
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: FilledButton(
-                            onPressed: () => context.push('/auth/register'),
-                            child: const Text('Hesap aç'),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () => context.push('/auth/login'),
-                            child: const Text('Giriş yap'),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+            const Center(
+              child: KararAvatar(username: '', radius: 48, anonymous: true),
+            ),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(
+                'Misafir olarak kullanıyorsun',
+                textAlign: TextAlign.center,
+                style: AppTypography.headline.copyWith(
+                  fontSize: 22,
+                  height: 28 / 22,
+                  color: kc.text1,
                 ),
               ),
             ),
-            const SizedBox(height: 12),
-            const _MetricTile(
-              icon: Icons.how_to_vote_outlined,
-              title: 'Verdiğin oylar',
-              value: '0',
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: Text(
+                'Karma ve bildirim takibi için hesap aç. Oy vermeye ve yorum yapmaya hemen başlayabilirsin.',
+                textAlign: TextAlign.center,
+                style: AppTypography.body.copyWith(color: kc.text2),
+              ),
             ),
-            const _MetricTile(
-              icon: Icons.chat_bubble_outline,
-              title: 'Yorumların',
-              value: '0',
+            const SizedBox(height: 20),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: KararButton(
+                      label: 'Hesap aç',
+                      onPressed: () => context.push('/auth/register'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: KararButton(
+                      label: 'Giriş yap',
+                      variant: KararButtonVariant.outlined,
+                      onPressed: () => context.push('/auth/login'),
+                    ),
+                  ),
+                ],
+              ),
             ),
-            const _MetricTile(
-              icon: Icons.auto_awesome_outlined,
-              title: 'Karma',
-              value: 'Hesap açınca aktif',
+            const SizedBox(height: 28),
+            const SettingsGroup(
+              children: [
+                SettingsRow(
+                  icon: Icons.how_to_vote_rounded,
+                  title: 'Verdiğin oylar',
+                  value: '0',
+                ),
+                SettingsRow(
+                  icon: Icons.chat_bubble_outline_rounded,
+                  title: 'Yorumların',
+                  value: '0',
+                ),
+                SettingsRow(
+                  icon: Icons.auto_awesome_rounded,
+                  title: 'Karma',
+                  value: 'Hesap açınca aktif',
+                ),
+              ],
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _MetricTile extends StatelessWidget {
-  const _MetricTile({
-    required this.icon,
-    required this.title,
-    required this.value,
-    this.trailing,
-    this.onTap,
-  });
-
-  final IconData icon;
-  final String title;
-  final String value;
-  final Widget? trailing;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: ListTile(
-        leading: Icon(icon),
-        title: Text(
-          title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        trailing: trailing ??
-            (value.isNotEmpty
-                ? ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 160),
-                    child: Text(
-                      value,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.end,
-                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                            fontWeight: FontWeight.w800,
-                          ),
-                    ),
-                  )
-                : null),
-        onTap: onTap,
       ),
     );
   }

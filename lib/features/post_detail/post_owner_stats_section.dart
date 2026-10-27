@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/karar_tokens.dart';
+import '../../core/utils/count_format.dart';
 import '../../shared/models/post.dart';
+import '../../shared/widgets/karar_surface.dart';
 import '../../shared/widgets/skeleton.dart';
 import 'post_stats_provider.dart';
 
@@ -23,6 +26,9 @@ class PostOwnerStatsSection extends ConsumerWidget {
   }
 }
 
+/// Owner-only stats card (spec §6.1.11): title + "(sadece sen görürsün)",
+/// muted stat tiles (value 22/800 + label) and the vote timeline in brand
+/// purple.
 class _StatsContent extends StatelessWidget {
   const _StatsContent({required this.stats});
 
@@ -30,97 +36,107 @@ class _StatsContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: Theme.of(context).dividerColor.withValues(alpha: 0.3),
-        ),
+    final kc = context.kc;
+    final tiles = [
+      _StatTile(
+        icon: Icons.visibility_outlined,
+        value: formatCompactCount(stats.viewCount),
+        label: 'görüntülenme',
       ),
+      _StatTile(
+        icon: Icons.how_to_vote_outlined,
+        value: '%${stats.voteRate}',
+        label: 'oy kullandı',
+      ),
+      _StatTile(
+        icon: Icons.schedule_rounded,
+        value: '${stats.avgReadingSeconds}sn',
+        label: 'okuma',
+      ),
+    ];
+
+    return KararSurface(
+      padding: const EdgeInsets.all(18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(Icons.bar_chart_rounded, size: 16, color: AppColors.primary),
+              Icon(Icons.bar_chart_rounded, size: 20, color: kc.primary),
               const SizedBox(width: 8),
               Expanded(
-                child: Text(
-                  'Gönderi İstatistikleri  (sadece sen görürsün)',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: AppColors.primary,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.3,
-                      ),
+                child: Semantics(
+                  header: true,
+                  child: Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(
+                          text: 'Gönderi İstatistikleri',
+                          style: AppTypography.bodyStrong.copyWith(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                            color: kc.text1,
+                          ),
+                        ),
+                        const TextSpan(text: '  '),
+                        TextSpan(
+                          text: '(sadece sen görürsün)',
+                          style: AppTypography.meta.copyWith(color: kc.text3),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 14),
-          Row(
-            children: [
-              Expanded(
-                child: _StatItem(
-                  icon: '👁️',
-                  label: '${_formatNumber(stats.viewCount)} görüntülenme',
-                ),
-              ),
-              Expanded(
-                child: _StatItem(
-                  icon: '📊',
-                  label: '%${stats.voteRate} oy kullandı',
-                ),
-              ),
-              Expanded(
-                child: _StatItem(
-                  icon: '⏱️',
-                  label: '${stats.avgReadingSeconds}sn okuma',
-                ),
-              ),
-            ],
+          LayoutBuilder(
+            builder: (context, constraints) {
+              const spacing = 8.0;
+              final columns = constraints.maxWidth >= 330 ? 3 : 2;
+              final tileWidth =
+                  (constraints.maxWidth - spacing * (columns - 1)) / columns;
+              return Wrap(
+                spacing: spacing,
+                runSpacing: spacing,
+                children: [
+                  for (final tile in tiles)
+                    SizedBox(width: tileWidth, child: tile),
+                ],
+              );
+            },
           ),
           if (stats.voteTimeline.isNotEmpty) ...[
-            const SizedBox(height: 16),
+            const SizedBox(height: 18),
             Text(
               'Oy Zaman Çizelgesi',
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: AppColors.textSecondary,
-                    fontWeight: FontWeight.w600,
-                  ),
+              style: AppTypography.labelS.copyWith(color: kc.text2),
             ),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 56,
-              child: CustomPaint(
-                size: const Size(double.infinity, 56),
-                painter: _TimelinePainter(
-                  data: stats.voteTimeline,
-                  color: AppColors.primary,
+            const SizedBox(height: 10),
+            ExcludeSemantics(
+              child: SizedBox(
+                height: 56,
+                child: CustomPaint(
+                  size: const Size(double.infinity, 56),
+                  painter: _TimelinePainter(
+                    data: stats.voteTimeline,
+                    color: kc.primary,
+                  ),
                 ),
               ),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 6),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
                   '0s',
-                  style: Theme.of(context)
-                      .textTheme
-                      .labelSmall
-                      ?.copyWith(color: AppColors.textTertiary),
+                  style: AppTypography.meta.copyWith(color: kc.text3),
                 ),
                 Text(
                   '${stats.voteTimeline.length}s',
-                  style: Theme.of(context)
-                      .textTheme
-                      .labelSmall
-                      ?.copyWith(color: AppColors.textTertiary),
+                  style: AppTypography.meta.copyWith(color: kc.text3),
                 ),
               ],
             ),
@@ -129,39 +145,60 @@ class _StatsContent extends StatelessWidget {
       ),
     );
   }
-
-  String _formatNumber(int n) {
-    if (n >= 1000) {
-      return '${(n / 1000).toStringAsFixed(1)}B';
-    }
-    return '$n';
-  }
 }
 
-class _StatItem extends StatelessWidget {
-  const _StatItem({required this.icon, required this.label});
+class _StatTile extends StatelessWidget {
+  const _StatTile({
+    required this.icon,
+    required this.value,
+    required this.label,
+  });
 
-  final String icon;
+  final IconData icon;
+  final String value;
   final String label;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Text(icon, style: const TextStyle(fontSize: 14)),
-        const SizedBox(width: 5),
-        Expanded(
-          child: Text(
-            label,
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textSecondary,
+    final kc = context.kc;
+    return Semantics(
+      container: true,
+      label: '$value $label',
+      child: ExcludeSemantics(
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+          decoration: BoxDecoration(
+            color: kc.muted,
+            borderRadius: KararRadius.all(KararRadius.tile),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(icon, size: 18, color: kc.text2),
+              const SizedBox(height: 6),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: AlignmentDirectional.centerStart,
+                child: Text(
+                  value,
+                  maxLines: 1,
+                  style: AppTypography.cardTitle.copyWith(
+                    color: kc.text1,
+                    fontFeatures: AppTypography.tabular,
+                  ),
                 ),
-            overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                label,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: AppTypography.meta.copyWith(color: kc.text2),
+              ),
+            ],
           ),
         ),
-      ],
+      ),
     );
   }
 }
@@ -182,7 +219,7 @@ class _TimelinePainter extends CustomPainter {
     final barWidth = (size.width / data.length) * 0.65;
     final gap = (size.width / data.length) * 0.35;
     final paint = Paint()
-      ..color = color.withValues(alpha: 0.8)
+      ..color = color
       ..style = PaintingStyle.fill;
 
     for (var i = 0; i < data.length; i++) {
@@ -193,7 +230,7 @@ class _TimelinePainter extends CustomPainter {
 
       final rRect = RRect.fromRectAndRadius(
         Rect.fromLTWH(x, y, barWidth, barHeight),
-        const Radius.circular(3),
+        Radius.circular(barWidth.clamp(0, 8) / 2),
       );
       canvas.drawRRect(rRect, paint);
     }
@@ -201,7 +238,7 @@ class _TimelinePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _TimelinePainter oldDelegate) =>
-      oldDelegate.data != data;
+      oldDelegate.data != data || oldDelegate.color != color;
 }
 
 class _StatsSkeleton extends StatelessWidget {
@@ -209,6 +246,10 @@ class _StatsSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Skeleton(height: 120, width: double.infinity, borderRadius: 12);
+    return const Skeleton(
+      height: 160,
+      width: double.infinity,
+      borderRadius: KararRadius.surface,
+    );
   }
 }

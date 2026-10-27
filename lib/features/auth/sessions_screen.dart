@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/auth/auth_service.dart';
+import '../../core/layout/breakpoints.dart';
 import '../../core/providers.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/karar_tokens.dart';
+import '../settings/widgets/settings_group.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_indicator.dart';
 import '../../core/utils/date_formatter.dart';
@@ -83,37 +87,47 @@ class _SessionsScreenState extends ConsumerState<SessionsScreen> {
       return const Center(child: Text('Aktif oturum bulunamadı.'));
     }
 
-    return ListView.separated(
-      padding: const EdgeInsets.symmetric(vertical: 16),
-      itemCount: _sessions!.length,
-      separatorBuilder: (_, __) => const Divider(),
-      itemBuilder: (context, index) {
-        final session = _sessions![index];
-        return ListTile(
-          leading: Icon(
-            session.platform.toLowerCase().contains('android')
-                ? Icons.android
-                : session.platform.toLowerCase().contains('ios')
-                    ? Icons.apple
-                    : Icons.devices,
-          ),
-          title: Text(session.platform),
-          subtitle: Text(
-            'Son görülme: ${DateFormatter.full(session.lastSeenAt)}',
-            style: const TextStyle(fontSize: 12),
-          ),
-          trailing: session.isCurrent
-              ? const Chip(
-                  label: Text('Şu anki cihaz', style: TextStyle(fontSize: 10)),
-                  visualDensity: VisualDensity.compact,
-                )
-              : IconButton(
-                  icon: const Icon(Icons.logout, color: Colors.red),
-                  onPressed: () => _confirmRevoke(session),
-                  tooltip: 'Oturumu kapat',
-                ),
-        );
-      },
+    final kc = context.kc;
+    return ListView(
+      padding: EdgeInsets.fromLTRB(0, 16, 0, context.navBottomInset + 24),
+      children: [
+        SettingsGroup(
+          children: [
+            for (final session in _sessions!)
+              SettingsRow(
+                icon: session.platform.toLowerCase().contains('android')
+                    ? Icons.android_rounded
+                    : session.platform.toLowerCase().contains('ios')
+                        ? Icons.phone_iphone_rounded
+                        : Icons.devices_rounded,
+                title: session.platform,
+                subtitle:
+                    'Son görülme: ${DateFormatter.full(session.lastSeenAt)}',
+                trailing: session.isCurrent
+                    ? Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: kc.primaryContainer,
+                          borderRadius: KararRadius.all(KararRadius.pill),
+                        ),
+                        child: Text(
+                          'Şu anki cihaz',
+                          style: AppTypography.micro.copyWith(
+                            color: kc.onPrimaryContainer,
+                            letterSpacing: 0,
+                          ),
+                        ),
+                      )
+                    : IconButton(
+                        icon: Icon(Icons.logout_rounded, color: kc.haksizText),
+                        onPressed: () => _confirmRevoke(session),
+                        tooltip: 'Oturumu kapat',
+                      ),
+              ),
+          ],
+        ),
+      ],
     );
   }
 

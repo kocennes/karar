@@ -3,21 +3,50 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/api/api_exception.dart';
+import '../../core/layout/breakpoints.dart';
 import '../../core/providers.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/karar_tokens.dart';
 import '../../shared/models/post.dart';
 import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/error_view.dart';
+import '../../shared/widgets/karar_surface.dart';
 import '../../shared/widgets/loading_indicator.dart';
 import '../../shared/widgets/centered_content.dart';
 
-class MyCommentsScreen extends ConsumerStatefulWidget {
+class MyCommentsScreen extends StatelessWidget {
   const MyCommentsScreen({super.key});
 
   @override
-  ConsumerState<MyCommentsScreen> createState() => _MyCommentsScreenState();
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Yorumlarım'),
+        centerTitle: true,
+      ),
+      body: const CenteredContent(
+        child: MyCommentsList(),
+      ),
+    );
+  }
 }
 
-class _MyCommentsScreenState extends ConsumerState<MyCommentsScreen> {
+/// The signed-in user's comments (loads `fetchMyComments`), one
+/// [ProfileCommentCard] per comment.
+///
+/// With [sliver] the widget builds a sliver for an enclosing
+/// `CustomScrollView` (profile "Yorumlar" tab); otherwise it is a
+/// self-contained, pull-to-refresh list (the `/profile/comments` route).
+class MyCommentsList extends ConsumerStatefulWidget {
+  const MyCommentsList({super.key, this.sliver = false});
+
+  final bool sliver;
+
+  @override
+  ConsumerState<MyCommentsList> createState() => _MyCommentsListState();
+}
+
+class _MyCommentsListState extends ConsumerState<MyCommentsList> {
   List<MyComment> _comments = [];
   bool _isLoading = true;
   String? _error;
@@ -61,128 +90,173 @@ class _MyCommentsScreenState extends ConsumerState<MyCommentsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Yorumlarım'),
-        centerTitle: true,
-      ),
-      body: CenteredContent(
-        child: _buildBody(),
-      ),
+    final sliver = _buildSliver(context);
+    if (widget.sliver) return sliver;
+    final scrollView = CustomScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      slivers: [
+        sliver,
+        SliverToBoxAdapter(
+          child: SizedBox(height: context.navBottomInset + 24),
+        ),
+      ],
     );
+    if (_isLoading || _error != null || _comments.isEmpty) return scrollView;
+    return RefreshIndicator(onRefresh: _load, child: scrollView);
   }
 
-  Widget _buildBody() {
-    if (_isLoading) return const LoadingIndicator();
-    if (_error != null) return ErrorView(message: _error!, onRetry: _load);
+  Widget _buildSliver(BuildContext context) {
+    if (_isLoading) {
+      return const SliverFillRemaining(
+        hasScrollBody: false,
+        child: Padding(
+          padding: EdgeInsets.all(32),
+          child: LoadingIndicator(),
+        ),
+      );
+    }
+    if (_error != null) {
+      return SliverFillRemaining(
+        hasScrollBody: false,
+        child: ErrorView(message: _error!, onRetry: _load),
+      );
+    }
     if (_comments.isEmpty) {
-      return const EmptyState(
-        message: 'Henüz yorum yapmadın.',
-        icon: Icons.chat_bubble_outline,
+      return const SliverFillRemaining(
+        hasScrollBody: false,
+        child: EmptyState(
+          message: 'Henüz yorum yapmadın.',
+          icon: Icons.chat_bubble_outline_rounded,
+        ),
       );
     }
 
-    return RefreshIndicator(
-      onRefresh: _load,
-      child: ListView.separated(
-        padding: const EdgeInsets.all(16),
+    return SliverPadding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      sliver: SliverList.separated(
         itemCount: _comments.length,
-        separatorBuilder: (_, __) => const Divider(height: 1),
+        separatorBuilder: (_, __) => const SizedBox(height: 12),
         itemBuilder: (context, index) =>
-            _CommentItem(comment: _comments[index]),
+            ProfileCommentCard(comment: _comments[index]),
       ),
     );
   }
 }
 
+/// A comment in a profile list (spec §6.5 `/profile/comments`):
+/// `KararSurface(radius 20)` with the post title (13/700 primaryText,
+/// one line + chevron), the comment body and a meta row (votes, time,
+/// "düzenlendi"). Tapping opens the post.
+class ProfileCommentCard extends StatelessWidget {
+  const ProfileCommentCard({
+    super.key,
+    required this.comment,
+    this.maxBodyLines = 3,
+  });
 
-class _CommentItem extends StatelessWidget {
-  const _CommentItem({required this.comment});
   final MyComment comment;
+
+  /// Null shows the whole comment.
+  final int? maxBodyLines;
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
+    final kc = context.kc;
+    final metaStyle = AppTypography.meta.copyWith(
+      color: kc.text3,
+      fontFeatures: AppTypography.tabular,
+    );
 
-    return InkWell(
+    return KararSurface(
+      radius: KararRadius.tile,
+      padding: const EdgeInsets.fromLTRB(16, 12, 12, 14),
       onTap: () => context.push('/posts/${comment.postId}'),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 4),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                if (comment.isPinned) ...[
-                  Icon(Icons.push_pin, size: 14, color: colorScheme.primary),
-                  const SizedBox(width: 4),
-                ],
-                Expanded(
-                  child: Text(
-                    comment.postTitle,
-                    style: textTheme.labelSmall?.copyWith(
-                      color: colorScheme.primary,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                const Icon(Icons.chevron_right, size: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              if (comment.isPinned) ...[
+                Icon(Icons.push_pin_rounded, size: 14, color: kc.primaryText),
+                const SizedBox(width: 4),
               ],
-            ),
-            const SizedBox(height: 6),
-            Text(
+              Expanded(
+                child: Text(
+                  comment.postTitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTypography.labelS.copyWith(color: kc.primaryText),
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(Icons.chevron_right_rounded, size: 18, color: kc.text3),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: Text(
               comment.content,
-              style: textTheme.bodyMedium,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
+              maxLines: maxBodyLines,
+              overflow:
+                  maxBodyLines == null ? null : TextOverflow.ellipsis,
+              style: AppTypography.body.copyWith(color: kc.text1),
             ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Icon(Icons.thumb_up_outlined,
-                    size: 14, color: colorScheme.onSurfaceVariant),
-                const SizedBox(width: 4),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 12,
+            runSpacing: 4,
+            children: [
+              _MetaCount(
+                icon: Icons.thumb_up_alt_outlined,
+                value: comment.upvoteCount,
+                style: metaStyle,
+                color: kc.text2,
+              ),
+              _MetaCount(
+                icon: Icons.thumb_down_alt_outlined,
+                value: comment.downvoteCount,
+                style: metaStyle,
+                color: kc.text2,
+              ),
+              Text(comment.createdAgo, style: metaStyle),
+              if (comment.isEdited)
                 Text(
-                  '${comment.upvoteCount}',
-                  style: textTheme.labelSmall,
+                  'düzenlendi',
+                  style: metaStyle.copyWith(fontStyle: FontStyle.italic),
                 ),
-                const SizedBox(width: 12),
-                Icon(Icons.thumb_down_outlined,
-                    size: 14, color: colorScheme.onSurfaceVariant),
-                const SizedBox(width: 4),
-                Text(
-                  '${comment.downvoteCount}',
-                  style: textTheme.labelSmall,
-                ),
-                const SizedBox(width: 16),
-                Flexible(
-                  child: Text(
-                    comment.createdAgo,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: textTheme.labelSmall?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-                if (comment.isEdited) ...[
-                  const SizedBox(width: 8),
-                  Text(
-                    'düzenlendi',
-                    style: textTheme.labelSmall?.copyWith(
-                      fontStyle: FontStyle.italic,
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ],
-        ),
+            ],
+          ),
+        ],
       ),
+    );
+  }
+}
+
+class _MetaCount extends StatelessWidget {
+  const _MetaCount({
+    required this.icon,
+    required this.value,
+    required this.style,
+    required this.color,
+  });
+
+  final IconData icon;
+  final int value;
+  final TextStyle style;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 15, color: color),
+        const SizedBox(width: 4),
+        Text('$value', style: style.copyWith(color: color)),
+      ],
     );
   }
 }

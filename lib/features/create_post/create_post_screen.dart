@@ -1,12 +1,24 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/layout/breakpoints.dart';
 import '../../core/providers.dart';
 import '../../core/storage/post_draft_service.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/category_style.dart';
+import '../../core/theme/karar_tokens.dart';
+import '../../shared/models/post.dart';
 import '../../shared/widgets/centered_content.dart';
+import '../../shared/widgets/karar_avatar.dart';
+import '../../shared/widgets/karar_button.dart';
+import '../../shared/widgets/karar_chip.dart';
+import '../../shared/widgets/karar_circle_button.dart';
+import '../../shared/widgets/karar_surface.dart';
 import '../../shared/widgets/login_nudge.dart';
-import '../../shared/widgets/rate_limit_ui.dart';
+import '../../shared/widgets/on_color_chip.dart';
+import '../../shared/widgets/post_surface.dart';
 import '../feed/categories_provider.dart';
 import 'create_post_provider.dart';
 import 'drop_zone_widget.dart';
@@ -179,10 +191,13 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
   }
 
   void _showError(String message) {
+    // Error snackbars use the Haksız fill with white text in both themes
+    // (the dark `colorScheme.error` is a light coral that fails with white).
+    final kc = context.kc;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message),
-        backgroundColor: Theme.of(context).colorScheme.error,
+        content: Text(message, style: const TextStyle(color: Colors.white)),
+        backgroundColor: kc.haksizFill,
         action: message.contains('paylaşılamadı')
             ? SnackBarAction(
                 label: 'Tekrar Dene',
@@ -194,6 +209,13 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
     );
   }
 
+  void _selectCategory(Category category) {
+    ref.read(createPostProvider.notifier).selectCategory(category.id);
+    ref.read(analyticsServiceProvider).logCreatePostCategorySelected(
+          category: category.name,
+        );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(createPostProvider);
@@ -201,6 +223,18 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
     final allCategories = categoriesAsync.valueOrNull ?? [];
     // Filter out "Hepsi" category (usually id 0)
     final postCategories = allCategories.where((c) => c.id != 0).toList();
+    final currentUser = ref.watch(currentUserProvider);
+    final kc = context.kc;
+
+    Category? selectedCategory;
+    for (final c in postCategories) {
+      if (c.id == state.selectedCategoryId) selectedCategory = c;
+    }
+    final composeStyle = selectedCategory != null
+        ? CategoryStyle.of(selectedCategory)
+        : state.selectedCategoryId != null
+            ? CategoryStyle.resolve(id: state.selectedCategoryId)
+            : CategoryStyle.violet;
 
     return PopScope(
       canPop: false,
@@ -229,7 +263,7 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
               TextButton(
                 onPressed: () => Navigator.pop(ctx, 'discard'),
                 style: TextButton.styleFrom(
-                  foregroundColor: Theme.of(ctx).colorScheme.error,
+                  foregroundColor: ctx.kc.haksizText,
                 ),
                 child: const Text('Sil, çık'),
               ),
@@ -251,9 +285,15 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
         }
       },
       child: Scaffold(
-        appBar: AppBar(title: const Text('Durumunu anlat')),
+        appBar: AppBar(
+          centerTitle: false,
+          title: Text(
+            'Durumunu anlat',
+            style: AppTypography.screenTitle.copyWith(color: kc.text1),
+          ),
+        ),
         body: state.isDailyPostLimit
-            ? DailyPostLimitView(
+            ? _DailyLimitView(
                 onDone: () {
                   ref.read(createPostProvider.notifier).clearError();
                   context.go('/');
@@ -261,233 +301,572 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
               )
             : CenteredContent(
                 child: ListView(
-                  padding: const EdgeInsets.all(16),
+                  padding: EdgeInsets.fromLTRB(
+                    0,
+                    8,
+                    0,
+                    context.navBottomInset + 24,
+                  ),
                   children: [
                     // Category picker
-                    if (postCategories.isNotEmpty)
+                    if (postCategories.isNotEmpty) ...[
                       SizedBox(
                         height: 48,
                         child: ListView.separated(
                           scrollDirection: Axis.horizontal,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: KararSpace.gutter,
+                          ),
                           itemCount: postCategories.length,
-                          separatorBuilder: (_, __) => const SizedBox(width: 8),
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(width: KararSpace.s8),
                           itemBuilder: (context, index) {
                             final category = postCategories[index];
-                            return ChoiceChip(
-                              label: Text(category.name),
-                              selected: state.selectedCategoryId == category.id,
-                              onSelected: (_) {
-                              ref
-                                  .read(createPostProvider.notifier)
-                                  .selectCategory(category.id);
-                              ref
-                                  .read(analyticsServiceProvider)
-                                  .logCreatePostCategorySelected(
-                                    category: category.name,
-                                  );
-                            },
+                            final style = CategoryStyle.of(category);
+                            final selected =
+                                state.selectedCategoryId == category.id;
+                            return Center(
+                              child: KararChip(
+                                label: category.name,
+                                icon: selected ? style.icon : style.iconOutlined,
+                                selected: selected,
+                                tone: KararChipTone.category(style),
+                                onTap: () => _selectCategory(category),
+                              ),
                             );
                           },
                         ),
                       ),
-                    const SizedBox(height: 16),
+                      const SizedBox(height: KararSpace.s12),
+                    ],
 
-                    // Title
-                    TextField(
-                      controller: _titleController,
-                      maxLength: 120,
-                      decoration:
-                          const InputDecoration(hintText: 'Ne oldu kısaca?'),
+                    _Gutter(
+                      child: _ComposeCard(
+                        controller: _titleController,
+                        style: composeStyle,
+                        categoryName: selectedCategory?.name,
+                        username: currentUser?.username,
+                        anonymous: currentUser == null || state.isAnonymous,
+                      ),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: KararSpace.s16),
 
                     // Content
-                    TextField(
-                      controller: _contentController,
-                      maxLength: 1500,
-                      minLines: 8,
-                      maxLines: 14,
-                      onChanged: (text) {
-                        setState(() {});
-                        if (!_contentStartedLogged && text.isNotEmpty) {
-                          _contentStartedLogged = true;
+                    _Gutter(
+                      child: _ContentField(
+                        controller: _contentController,
+                        onChanged: (text) {
+                          setState(() {});
+                          if (!_contentStartedLogged && text.isNotEmpty) {
+                            _contentStartedLogged = true;
+                            ref
+                                .read(analyticsServiceProvider)
+                                .logCreatePostContentStarted();
+                          }
                           ref
-                              .read(analyticsServiceProvider)
-                              .logCreatePostContentStarted();
-                        }
-                        ref
-                            .read(createPostProvider.notifier)
-                            .checkToxicity(text);
-                      },
-                      decoration: InputDecoration(
-                        hintText: 'Durumu anlat... Diğer taraf ne yaptı?',
-                        alignLabelWithHint: true,
-                        counterStyle: TextStyle(
-                          color: _contentController.text.length >= 1400
-                              ? Colors.red
-                              : null,
-                          fontWeight: _contentController.text.length >= 1400
-                              ? FontWeight.bold
-                              : null,
-                        ),
+                              .read(createPostProvider.notifier)
+                              .checkToxicity(text);
+                        },
                       ),
                     ),
                     if (state.toxicityScore >= 0.5)
-                      Container(
-                        margin: const EdgeInsets.only(top: 8),
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.amber.shade100,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.amber.shade300),
+                      const _Gutter(child: _ToxicityWarning()),
+                    const SizedBox(height: KararSpace.s12),
+
+                    // Image picker with web drag-drop support
+                    _Gutter(
+                      child: DropZoneWidget(
+                        onFileDrop: (file) => ref
+                            .read(createPostProvider.notifier)
+                            .setDroppedImage(file),
+                        onError: (error) => ref
+                            .read(createPostProvider.notifier)
+                            .setImageError(error),
+                        child: ImagePickerWidget(
+                          images: state.images,
+                          onPick: () =>
+                              ref.read(createPostProvider.notifier).pickImage(),
+                          onRemove: (index) => ref
+                              .read(createPostProvider.notifier)
+                              .removeImage(index),
+                          imageError: state.imageError,
+                          permissionDenied: state.imagePermissionDenied,
+                          uploadFailed: state.imageUploadFailed,
+                          onRetry: state.imageUploadFailed ? _submit : null,
                         ),
-                        child: Row(
+                      ),
+                    ),
+                    const SizedBox(height: KararSpace.s16),
+
+                    // Tag input
+                    _Gutter(
+                      child: _TagInput(
+                        tags: state.tags,
+                        onAdd: (tag) =>
+                            ref.read(createPostProvider.notifier).addTag(tag),
+                        onRemove: (tag) => ref
+                            .read(createPostProvider.notifier)
+                            .removeTag(tag),
+                      ),
+                    ),
+                    const SizedBox(height: KararSpace.s20),
+
+                    // Anonymous + unlisted toggles
+                    _Gutter(
+                      child: KararSurface(
+                        radius: KararRadius.surface,
+                        padding: const EdgeInsets.all(KararSpace.s4),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(Icons.warning_amber_rounded,
-                                color: Colors.amber.shade900, size: 20),
-                            const SizedBox(width: 12),
-                            const Expanded(
-                              child: Text(
-                                'Bu içerik topluluk kurallarına aykırı olabilir.',
-                                style: TextStyle(
-                                  color: Colors.black87,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w500,
-                                ),
+                            if (currentUser != null) ...[
+                              _ToggleRow(
+                                title: 'Anonim paylaş',
+                                subtitle:
+                                    'Adın gözükmez. Yorumlar her zaman kullanıcı adıyla gösterilir.',
+                                value: state.isAnonymous,
+                                onChanged: (val) => ref
+                                    .read(createPostProvider.notifier)
+                                    .setAnonymous(val),
                               ),
+                              Divider(
+                                height: 1,
+                                indent: KararSpace.s16,
+                                endIndent: KararSpace.s16,
+                                color: kc.outlineVariant,
+                              ),
+                            ],
+                            _ToggleRow(
+                              title: 'Liste dışı paylaş',
+                              subtitle:
+                                  'Bu gönderi ana akışta görünmez, sadece paylaştığın linkle açılabilir.',
+                              value: state.isUnlisted,
+                              onChanged: (val) => ref
+                                  .read(createPostProvider.notifier)
+                                  .setUnlisted(val),
                             ),
                           ],
                         ),
                       ),
-                    const SizedBox(height: 8),
-
-                    // Image picker with web drag-drop support
-                    DropZoneWidget(
-                      onFileDrop: (file) => ref
-                          .read(createPostProvider.notifier)
-                          .setDroppedImage(file),
-                      onError: (error) => ref
-                          .read(createPostProvider.notifier)
-                          .setImageError(error),
-                      child: ImagePickerWidget(
-                        images: state.images,
-                        onPick: () =>
-                            ref.read(createPostProvider.notifier).pickImage(),
-                        onRemove: (index) => ref
-                            .read(createPostProvider.notifier)
-                            .removeImage(index),
-                        imageError: state.imageError,
-                        permissionDenied: state.imagePermissionDenied,
-                        uploadFailed: state.imageUploadFailed,
-                        onRetry: state.imageUploadFailed ? _submit : null,
-                      ),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: KararSpace.s12),
 
-                    // Tag input
-                    _TagInput(
-                      tags: state.tags,
-                      onAdd: (tag) =>
-                          ref.read(createPostProvider.notifier).addTag(tag),
-                      onRemove: (tag) =>
-                          ref.read(createPostProvider.notifier).removeTag(tag),
-                    ),
-                    const SizedBox(height: 12),
-
-                    // Anonymous toggle
-                    if (ref.watch(currentUserProvider) != null)
-                      SwitchListTile.adaptive(
-                        title: const Text('Anonim paylaş'),
-                        subtitle: const Text(
-                          'Adın gözükmez. Yorumlar her zaman kullanıcı adıyla gösterilir.',
+                    // Policy acceptance
+                    _Gutter(
+                      child: CheckboxListTile(
+                        value: _acceptedPolicy,
+                        onChanged: state.isLoading
+                            ? null
+                            : (value) => setState(
+                                  () => _acceptedPolicy = value ?? false,
+                                ),
+                        controlAffinity: ListTileControlAffinity.leading,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: KararSpace.s8,
                         ),
-                        value: state.isAnonymous,
-                        onChanged: (val) => ref
-                            .read(createPostProvider.notifier)
-                            .setAnonymous(val),
-                        contentPadding: EdgeInsets.zero,
-                      ),
-                    const SizedBox(height: 12),
-
-                    // Unlisted toggle
-                    SwitchListTile.adaptive(
-                      title: const Text('Liste dışı paylaş'),
-                      subtitle: const Text(
-                        'Bu gönderi ana akışta görünmez, sadece paylaştığın linkle açılabilir.',
-                      ),
-                      value: state.isUnlisted,
-                      onChanged: (val) => ref
-                          .read(createPostProvider.notifier)
-                          .setUnlisted(val),
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                    const SizedBox(height: 12),
-                    CheckboxListTile(
-                      value: _acceptedPolicy,
-                      onChanged: state.isLoading
-                          ? null
-                          : (value) => setState(
-                                () => _acceptedPolicy = value ?? false,
-                              ),
-                      controlAffinity: ListTileControlAffinity.leading,
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text(
-                        'Kullanim Kosullari ve Topluluk Kurallarini kabul ediyorum.',
-                      ),
-                    ),
-                    Center(
-                      child: TextButton(
-                        onPressed: () => context.push('/legal/terms'),
-                        style: TextButton.styleFrom(
-                          visualDensity: VisualDensity.compact,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: KararRadius.all(KararRadius.input),
                         ),
-                        child: const Text('Kullanim Kosullari'),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-
-                    // Community guidelines link
-                    Center(
-                      child: TextButton(
-                        onPressed: () => context.push('/legal/community'),
-                        style: TextButton.styleFrom(
-                          visualDensity: VisualDensity.compact,
-                        ),
-                        child: Text(
-                          'Topluluk Kurallarını oku',
-                          style: Theme.of(context)
-                              .textTheme
-                              .labelSmall
-                              ?.copyWith(
-                                color: Theme.of(context).colorScheme.primary,
-                                decoration: TextDecoration.underline,
-                              ),
+                        title: Text(
+                          'Kullanım Koşulları ve Topluluk Kurallarını kabul ediyorum.',
+                          style: AppTypography.bodyS.copyWith(color: kc.text1),
                         ),
                       ),
                     ),
-                    const SizedBox(height: 8),
+                    _Gutter(
+                      child: Wrap(
+                        alignment: WrapAlignment.center,
+                        spacing: KararSpace.s4,
+                        children: [
+                          TextButton(
+                            onPressed: () => context.push('/legal/terms'),
+                            child: const Text('Kullanım Koşulları'),
+                          ),
+                          // Community guidelines link
+                          TextButton(
+                            onPressed: () => context.push('/legal/community'),
+                            child: const Text('Topluluk Kurallarını oku'),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: KararSpace.s12),
 
                     // Submit
-                    FilledButton.icon(
-                      onPressed: state.isLoading || state.toxicityScore >= 0.8
-                          ? null
-                          : _submit,
-                      icon: state.isLoading
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Icon(Icons.send),
-                      label: Text(
-                          state.isLoading ? 'Paylaşılıyor...' : 'Karar Al'),
+                    _Gutter(
+                      child: KararButton(
+                        size: KararButtonSize.large,
+                        icon: state.isLoading
+                            ? Icons.hourglass_top_rounded
+                            : Icons.send_rounded,
+                        label: state.isLoading ? 'Paylaşılıyor...' : 'Karar Al',
+                        onPressed:
+                            state.isLoading || state.toxicityScore >= 0.8
+                                ? null
+                                : _submit,
+                      ),
                     ),
                   ],
                 ),
               ),
+      ),
+    );
+  }
+}
+
+/// Horizontal page gutter for one form section.
+class _Gutter extends StatelessWidget {
+  const _Gutter({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: KararSpace.gutter),
+      child: child,
+    );
+  }
+}
+
+/// Live preview of the post as a feed card (spec §6.4.3): the selected
+/// category's gradient with the title typed straight onto it.
+class _ComposeCard extends StatelessWidget {
+  const _ComposeCard({
+    required this.controller,
+    required this.style,
+    required this.categoryName,
+    required this.username,
+    required this.anonymous,
+  });
+
+  static const _maxTitle = 120;
+
+  final TextEditingController controller;
+  final CategoryStyle style;
+  final String? categoryName;
+  final String? username;
+  final bool anonymous;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final showAnonymous = anonymous || username == null;
+    final handle = showAnonymous ? '@anonim' : '@$username';
+
+    return PostSurface.tinted(
+      style: style,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 230),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            KararSpace.cardPadding,
+            KararSpace.s16,
+            KararSpace.cardPadding,
+            KararSpace.s16,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: 36),
+                    child: Row(
+                      children: [
+                        KararAvatar(
+                          username: username ?? '',
+                          radius: 14,
+                          anonymous: showAnonymous,
+                          onColor: true,
+                        ),
+                        const SizedBox(width: KararSpace.s8),
+                        Expanded(
+                          child: Text(
+                            handle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTypography.bodyS.copyWith(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        if (categoryName != null) ...[
+                          const SizedBox(width: KararSpace.s8),
+                          OnColorChip(
+                            icon: style.icon,
+                            label: categoryName!,
+                            maxWidth: 140,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: KararSpace.s10),
+                  Theme(
+                    data: theme.copyWith(
+                      textSelectionTheme: TextSelectionThemeData(
+                        cursorColor: Colors.white,
+                        selectionColor: Colors.white.withValues(alpha: 0.32),
+                        selectionHandleColor: Colors.white,
+                      ),
+                    ),
+                    child: TextField(
+                      controller: controller,
+                      maxLength: _maxTitle,
+                      minLines: 2,
+                      maxLines: null,
+                      keyboardType: TextInputType.text,
+                      textInputAction: TextInputAction.next,
+                      textCapitalization: TextCapitalization.sentences,
+                      // The title stays a single paragraph (as before the
+                      // field became multi-line to wrap on the card).
+                      inputFormatters: [
+                        FilteringTextInputFormatter.deny(RegExp(r'[\r\n]')),
+                      ],
+                      cursorColor: Colors.white,
+                      style: AppTypography.cardTitle.copyWith(
+                        color: Colors.white,
+                      ),
+                      buildCounter: (_,
+                              {required int currentLength,
+                              required bool isFocused,
+                              required int? maxLength}) =>
+                          null,
+                      decoration: InputDecoration(
+                        hintText: 'Ne oldu kısaca?',
+                        hintMaxLines: 2,
+                        hintStyle: AppTypography.cardTitle.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        filled: false,
+                        isDense: true,
+                        contentPadding: EdgeInsets.zero,
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        disabledBorder: InputBorder.none,
+                        errorBorder: InputBorder.none,
+                        focusedErrorBorder: InputBorder.none,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: KararSpace.s8),
+              ValueListenableBuilder<TextEditingValue>(
+                valueListenable: controller,
+                builder: (context, value, _) => Align(
+                  alignment: Alignment.bottomRight,
+                  child: Text(
+                    '${value.text.characters.length}/$_maxTitle',
+                    style: AppTypography.meta.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontFeatures: AppTypography.tabular,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ContentField extends StatelessWidget {
+  const _ContentField({required this.controller, required this.onChanged});
+
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final kc = context.kc;
+    final nearLimit = controller.text.length >= 1400;
+    OutlineInputBorder border(Color color, double width) => OutlineInputBorder(
+          borderRadius: KararRadius.all(KararRadius.tile),
+          borderSide: BorderSide(color: color, width: width),
+        );
+
+    return TextField(
+      controller: controller,
+      maxLength: 1500,
+      minLines: 8,
+      maxLines: 14,
+      onChanged: onChanged,
+      textCapitalization: TextCapitalization.sentences,
+      decoration: InputDecoration(
+        hintText: 'Durumu anlat... Diğer taraf ne yaptı?',
+        alignLabelWithHint: true,
+        contentPadding: const EdgeInsets.all(KararSpace.s16),
+        border: border(kc.outlineVariant, 1),
+        enabledBorder: border(kc.outlineVariant, 1),
+        focusedBorder: border(kc.primary, 2),
+        counterStyle: AppTypography.meta.copyWith(
+          color: nearLimit ? kc.haksizText : kc.text3,
+          fontWeight: nearLimit ? FontWeight.w800 : null,
+          fontFeatures: AppTypography.tabular,
+        ),
+      ),
+    );
+  }
+}
+
+class _ToxicityWarning extends StatelessWidget {
+  const _ToxicityWarning();
+
+  @override
+  Widget build(BuildContext context) {
+    final kc = context.kc;
+    return Semantics(
+      liveRegion: true,
+      child: Container(
+        margin: const EdgeInsets.only(top: KararSpace.s8),
+        padding: const EdgeInsets.symmetric(
+          horizontal: KararSpace.s16,
+          vertical: KararSpace.s12,
+        ),
+        decoration: BoxDecoration(
+          color: kc.warnSoft,
+          borderRadius: KararRadius.all(KararRadius.input),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: kc.warnText, size: 20),
+            const SizedBox(width: KararSpace.s12),
+            Expanded(
+              child: Text(
+                'Bu içerik topluluk kurallarına aykırı olabilir.',
+                style: AppTypography.labelS.copyWith(
+                  color: kc.warnText,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One 64 px switch row of the toggles group.
+class _ToggleRow extends StatelessWidget {
+  const _ToggleRow({
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String title;
+  final String subtitle;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final kc = context.kc;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 64),
+      child: SwitchListTile.adaptive(
+        title: Text(
+          title,
+          style: AppTypography.bodyStrong.copyWith(
+            fontSize: 16,
+            color: kc.text1,
+          ),
+        ),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: KararSpace.s2),
+          child: Text(
+            subtitle,
+            style: AppTypography.bodyS.copyWith(color: kc.text2),
+          ),
+        ),
+        value: value,
+        onChanged: onChanged,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: KararSpace.s16,
+          vertical: KararSpace.s4,
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: KararRadius.all(KararRadius.tile),
+        ),
+      ),
+    );
+  }
+}
+
+/// Daily post limit reached (spec §6.4.12): `EmptyState`-style disc.
+class _DailyLimitView extends StatelessWidget {
+  const _DailyLimitView({required this.onDone});
+
+  final VoidCallback onDone;
+
+  @override
+  Widget build(BuildContext context) {
+    final kc = context.kc;
+    return Center(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(
+          KararSpace.s32,
+          KararSpace.s32,
+          KararSpace.s32,
+          context.navBottomInset + KararSpace.s32,
+        ),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 320),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ExcludeSemantics(
+                child: Container(
+                  width: 88,
+                  height: 88,
+                  decoration: BoxDecoration(
+                    color: kc.primaryContainer,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.hourglass_top_rounded,
+                    size: 36,
+                    color: kc.primary,
+                  ),
+                ),
+              ),
+              const SizedBox(height: KararSpace.s16),
+              Semantics(
+                header: true,
+                child: Text(
+                  'Günlük post limitine ulaştın',
+                  textAlign: TextAlign.center,
+                  style: AppTypography.headline.copyWith(color: kc.text1),
+                ),
+              ),
+              const SizedBox(height: KararSpace.s8),
+              Text(
+                'Yarın tekrar paylaşabilirsin.',
+                textAlign: TextAlign.center,
+                style: AppTypography.body.copyWith(color: kc.text2),
+              ),
+              const SizedBox(height: KararSpace.s24),
+              KararButton(
+                label: 'Tamam',
+                expand: false,
+                onPressed: onDone,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -523,6 +902,7 @@ class _PollInputState extends State<_PollInput> {
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
     final hasPoll = widget.options.isNotEmpty;
     final canAdd = widget.options.length < CreatePostState.maxPollOptions;
 
@@ -531,33 +911,32 @@ class _PollInputState extends State<_PollInput> {
       children: [
         Row(
           children: [
-            const Icon(Icons.poll_outlined, size: 20),
-            const SizedBox(width: 8),
+            Icon(Icons.poll_rounded, size: 20, color: kc.text2),
+            const SizedBox(width: KararSpace.s8),
             Text(
               'Anket Ekle',
-              style: Theme.of(context).textTheme.titleSmall,
+              style: AppTypography.bodyStrong.copyWith(color: kc.text1),
             ),
             const Spacer(),
             if (hasPoll)
               TextButton(
                 onPressed: widget.onClear,
-                style: TextButton.styleFrom(foregroundColor: Colors.red),
+                style: TextButton.styleFrom(foregroundColor: kc.haksizText),
                 child: const Text('Kaldır'),
               ),
           ],
         ),
         if (hasPoll) ...[
-          const SizedBox(height: 8),
+          const SizedBox(height: KararSpace.s8),
           for (int i = 0; i < widget.options.length; i++)
             Padding(
-              padding: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.only(bottom: KararSpace.s8),
               child: Row(
                 children: [
                   Expanded(
                     child: TextField(
                       decoration: InputDecoration(
                         hintText: 'Seçenek ${i + 1}',
-                        isDense: true,
                       ),
                       onChanged: (text) => widget.onUpdate(i, text),
                       controller:
@@ -566,8 +945,8 @@ class _PollInputState extends State<_PollInput> {
                   ),
                   IconButton(
                     onPressed: () => widget.onRemove(i),
-                    icon: const Icon(Icons.remove_circle_outline),
-                    color: Colors.red,
+                    icon: const Icon(Icons.remove_circle_outline_rounded),
+                    color: kc.haksizText,
                   ),
                 ],
               ),
@@ -581,15 +960,14 @@ class _PollInputState extends State<_PollInput> {
                   controller: _optionCtrl,
                   decoration: const InputDecoration(
                     hintText: 'Seçenek ekle...',
-                    isDense: true,
                   ),
                   onSubmitted: (_) => _add(),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: KararSpace.s8),
               IconButton.filledTonal(
                 onPressed: _add,
-                icon: const Icon(Icons.add),
+                icon: const Icon(Icons.add_rounded),
               ),
             ],
           ),
@@ -640,7 +1018,13 @@ class _TagInputState extends State<_TagInput> {
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
     final canAdd = widget.tags.length < CreatePostState.maxTags;
+    OutlineInputBorder pill(Color color, double width) => OutlineInputBorder(
+          borderRadius: KararRadius.all(KararRadius.surface),
+          borderSide: BorderSide(color: color, width: width),
+        );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -657,9 +1041,15 @@ class _TagInputState extends State<_TagInput> {
                       ? '#etiket ekle (maks. ${CreatePostState.maxTags})'
                       : 'Maksimum etiket sayısına ulaştın',
                   prefixText: '#',
-                  isDense: true,
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: KararSpace.s20,
+                    vertical: 14,
+                  ),
+                  border: pill(kc.outlineVariant, 1),
+                  enabledBorder: pill(kc.outlineVariant, 1),
+                  disabledBorder:
+                      pill(kc.outlineVariant.withValues(alpha: 0.5), 1),
+                  focusedBorder: pill(kc.primary, 2),
                 ),
                 maxLength: 20,
                 buildCounter: (_,
@@ -670,29 +1060,29 @@ class _TagInputState extends State<_TagInput> {
               ),
             ),
             if (canAdd) ...[
-              const SizedBox(width: 8),
-              IconButton.filled(
+              const SizedBox(width: KararSpace.s10),
+              KararCircleButton(
+                icon: Icons.add_rounded,
                 onPressed: _submit,
-                icon: const Icon(Icons.add),
-                iconSize: 18,
-                style: IconButton.styleFrom(
-                  minimumSize: const Size(36, 36),
-                ),
+                tooltip: 'Ekle',
+                style: KararCircleStyle.primary,
+                size: 44,
+                iconSize: 24,
               ),
             ],
           ],
         ),
         if (widget.tags.isNotEmpty) ...[
-          const SizedBox(height: 8),
+          const SizedBox(height: KararSpace.s8),
           Wrap(
-            spacing: 6,
+            spacing: KararSpace.s8,
             children: widget.tags
                 .map(
-                  (tag) => Chip(
-                    label: Text('#$tag'),
-                    onDeleted: () => widget.onRemove(tag),
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    visualDensity: VisualDensity.compact,
+                  (tag) => KararChip(
+                    label: '#$tag',
+                    semanticLabel: '#$tag, Kaldır',
+                    trailing: const Icon(Icons.close_rounded, size: 16),
+                    onTap: () => widget.onRemove(tag),
                   ),
                 )
                 .toList(),

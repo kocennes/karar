@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../core/providers.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/karar_tokens.dart';
 import '../../shared/widgets/karar_avatar.dart';
+import '../../shared/widgets/karar_surface.dart';
 
 class UserMentionOverlay extends ConsumerStatefulWidget {
   const UserMentionOverlay({
@@ -59,25 +63,24 @@ class _UserMentionOverlayState extends ConsumerState<UserMentionOverlay> {
   Widget build(BuildContext context) {
     if (_users.isEmpty && !_isLoading) return const SizedBox.shrink();
 
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
+    final kc = context.kc;
 
-    return Material(
-      elevation: 8,
-      borderRadius: BorderRadius.circular(12),
-      clipBehavior: Clip.antiAlias,
-      color: colorScheme.surface,
-      child: Container(
+    return KararSurface(
+      radius: KararRadius.input,
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      color: kc.elevated,
+      shadow: KararShadowKind.float,
+      child: ConstrainedBox(
         constraints: const BoxConstraints(maxHeight: 200, maxWidth: 260),
-        decoration: BoxDecoration(
-          border: Border.all(color: colorScheme.outlineVariant),
-          borderRadius: BorderRadius.circular(12),
-        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             if (_isLoading)
-              const LinearProgressIndicator(minHeight: 2),
+              LinearProgressIndicator(
+                minHeight: 2,
+                color: kc.primary,
+                backgroundColor: kc.muted,
+              ),
             Flexible(
               child: ListView.builder(
                 shrinkWrap: true,
@@ -87,18 +90,32 @@ class _UserMentionOverlayState extends ConsumerState<UserMentionOverlay> {
                   final user = _users[index];
                   final username = user['username'] as String;
                   return ListTile(
-                    dense: true,
-                    leading: KararAvatar(username: username, radius: 14, fontSize: 10),
-                    title: Text('@$username', style: const TextStyle(fontWeight: FontWeight.bold)),
+                    minTileHeight: 48,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                    leading: KararAvatar(
+                      username: username,
+                      radius: 14,
+                      fontSize: 11,
+                      shape: KararAvatarShape.rounded,
+                    ),
+                    title: Text(
+                      '@$username',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTypography.bodyStrong.copyWith(color: kc.text1),
+                    ),
                     onTap: () => widget.onSelect(username),
                   );
                 },
               ),
             ),
             if (_users.isEmpty && _isLoading)
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: Text('Aranıyor...', style: TextStyle(fontSize: 12)),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  'Aranıyor...',
+                  style: AppTypography.meta.copyWith(color: kc.text3),
+                ),
               ),
           ],
         ),

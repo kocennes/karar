@@ -118,7 +118,6 @@ class _ChangePasswordScreenState extends ConsumerState<ChangePasswordScreen> {
                     textInputAction: TextInputAction.next,
                     decoration: InputDecoration(
                       labelText: 'Mevcut şifre',
-                      border: const OutlineInputBorder(),
                       suffixIcon: IconButton(
                         icon: Icon(_obscureCurrent
                             ? Icons.visibility_outlined
@@ -137,7 +136,6 @@ class _ChangePasswordScreenState extends ConsumerState<ChangePasswordScreen> {
                     textInputAction: TextInputAction.next,
                     decoration: InputDecoration(
                       labelText: 'Yeni şifre',
-                      border: const OutlineInputBorder(),
                       suffixIcon: IconButton(
                         icon: Icon(_obscureNew
                             ? Icons.visibility_outlined
@@ -163,7 +161,6 @@ class _ChangePasswordScreenState extends ConsumerState<ChangePasswordScreen> {
                     onFieldSubmitted: (_) => _submit(),
                     decoration: InputDecoration(
                       labelText: 'Yeni şifre (tekrar)',
-                      border: const OutlineInputBorder(),
                       suffixIcon: IconButton(
                         icon: Icon(_obscureConfirm
                             ? Icons.visibility_outlined
