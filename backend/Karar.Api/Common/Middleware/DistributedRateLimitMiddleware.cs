@@ -39,6 +39,7 @@ public sealed class DistributedRateLimitMiddleware(RequestDelegate next, RedisSe
             if (!isAllowed)
             {
                 var retryAfterSeconds = Math.Max(1, (int)Math.Ceiling(window.TotalSeconds));
+                SubnetBanService.MarkLimiterRejection(context);
                 context.Response.Headers.RetryAfter = retryAfterSeconds.ToString();
                 context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
                 await context.Response.WriteAsJsonAsync(new

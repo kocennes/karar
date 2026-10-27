@@ -262,6 +262,7 @@ builder.Services.AddRateLimiter(options =>
 
     options.OnRejected = async (ctx, _) =>
     {
+        SubnetBanService.MarkLimiterRejection(ctx.HttpContext);
         ctx.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
         await ctx.HttpContext.Response.WriteAsJsonAsync(new
         {
@@ -892,22 +893,11 @@ app.MapPost("/api/v1/devices/register", async (
         return BadRequest("INVALID_PLATFORM", "Platform android, ios veya web olmalı.");
     }
 
-    // /24 subnet rate limit: max 5 registrations per hour per subnet
-    var subnetBlock = GetClientIpBlock(httpRequest);
-    if (subnetBlock is not null)
+    // Saatlik kayıt bütçesi: IP başına 5, /24 başına 30 (tek IP ağın kotasını tüketemez)
+    if (!await SubnetBanService.TryConsumeDeviceRegistrationAsync(redis.GetDb(), httpRequest.HttpContext.Connection.RemoteIpAddress))
     {
-        var rateLimitKey = $"device_reg:subnet:{subnetBlock}";
-        var db2 = redis.GetDb();
-        var count = await db2.StringIncrementAsync(rateLimitKey);
-        if (count == 1)
-        {
-            await db2.KeyExpireAsync(rateLimitKey, TimeSpan.FromHours(1));
-        }
-        if (count > 5)
-        {
-            log.LogWarning("DeviceRegister: /24 subnet rate limit aşıldı. Subnet={S}", subnetBlock);
-            return TooManyRequests("SUBNET_RATE_LIMIT", "Bu ağdan çok fazla kayıt yapıldı. Lütfen bir saat sonra tekrar deneyin.");
-        }
+        log.LogWarning("DeviceRegister: IP veya /24 subnet rate limit aşıldı. Subnet={S}", GetClientIpBlock(httpRequest));
+        return TooManyRequests("SUBNET_RATE_LIMIT", "Bu ağdan çok fazla kayıt yapıldı. Lütfen bir saat sonra tekrar deneyin.");
     }
 
     var token = tokenService.Generate();
