@@ -703,7 +703,9 @@ app.MapGet("/posts/{id:guid}", async (
     await using var connection = await db.OpenConnectionAsync();
     await using var command = new NpgsqlCommand(
         """
-        SELECT title, content, image_url, vote_count_hakli, vote_count_haksiz,
+        SELECT title, content,
+               CASE WHEN image_moderation_status IS NULL OR image_moderation_status = 'approved' THEN image_url END,
+               vote_count_hakli, vote_count_haksiz,
                COALESCE(slug, id::text), created_at, is_unlisted
         FROM posts
         WHERE id = @id AND status = 'active'
@@ -753,7 +755,9 @@ app.MapGet("/posts/{slug}", async (
     await using var connection = await db.OpenConnectionAsync();
     await using var command = new NpgsqlCommand(
         """
-        SELECT id, title, content, image_url, vote_count_hakli, vote_count_haksiz, created_at, is_unlisted
+        SELECT id, title, content,
+               CASE WHEN image_moderation_status IS NULL OR image_moderation_status = 'approved' THEN image_url END,
+               vote_count_hakli, vote_count_haksiz, created_at, is_unlisted
         FROM posts
         WHERE slug = @slug AND status = 'active'
         """,
@@ -2361,7 +2365,7 @@ app.MapGet("/api/v1/posts/{id:guid}/similar", async (
         WITH target AS (
             SELECT category_id, title FROM posts WHERE id = @id
         )
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
@@ -2440,7 +2444,7 @@ app.MapGet("/api/v1/posts/weekly-featured", async (
     // Logic: highest comment count in last 7 days among posts with > 50 votes.
     await using var command = new NpgsqlCommand(
         """
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
@@ -2480,7 +2484,7 @@ app.MapGet("/api/v1/posts/today", async (
     await using var connection = await db.OpenConnectionAsync();
     await using var command = new NpgsqlCommand(
         """
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
@@ -2529,7 +2533,7 @@ app.MapGet("/api/v1/posts/trending/city", async (
     await using var connection = await db.OpenConnectionAsync();
     await using var cmd = new NpgsqlCommand(
         """
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
@@ -2565,7 +2569,8 @@ app.MapPost("/api/v1/posts", async (
     BusinessMetricsService metrics,
     SloMetrics sloMetrics,
     DeviceTrustService deviceTrust,
-    AppAttestationService appAttestation
+    AppAttestationService appAttestation,
+    SafeSearchService safeSearch
 ) =>
 {
     var (request, imageFile) = await ReadCreatePostRequestWithImageAsync(httpRequest);
@@ -2591,6 +2596,10 @@ app.MapPost("/api/v1/posts", async (
         using var stream = imageFile.OpenReadStream();
         if (ImageValidator.DetectFormat(stream) is null)
             return BadRequest("INVALID_IMAGE_FORMAT", "Desteklenmeyen görsel formatı. jpg, png veya webp kullanın.");
+
+        // Fail closed: SafeSearch yapılandırılmamışsa görsel hiç denetlenemez; herkese açık depoya yüklenmez.
+        if (storageService.IsEnabled && !safeSearch.IsEnabled)
+            return BadRequest("IMAGE_MODERATION_UNAVAILABLE", "Görsel denetimi şu anda kullanılamıyor. Görseli kaldırıp tekrar dene.");
     }
 
     var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
@@ -2844,7 +2853,7 @@ app.MapGet("/api/v1/posts/{id:guid}", async (
     await using var connection = await db.OpenConnectionAsync();
     await using var command = new NpgsqlCommand(
         """
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
@@ -2972,7 +2981,7 @@ app.MapPost("/api/v1/posts/{id:guid}/ai-summary", async (
 
     await using var postCmd = new NpgsqlCommand(
         """
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
@@ -3491,7 +3500,7 @@ app.MapGet("/api/v1/search", async (
     await using var connection = await db.OpenConnectionAsync();
     await using var command = new NpgsqlCommand(
         $"""
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
@@ -10304,7 +10313,7 @@ app.MapGet("/api/v1/users/{username}/posts", async (
 
     await using var cmd = new NpgsqlCommand(
         $"""
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.user_id = @userParam), p.is_edited,
@@ -10784,7 +10793,7 @@ app.MapGet("/api/v1/users/me/posts", async (
 
     await using var cmd = new NpgsqlCommand(
         $"""
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                NULL::text, p.trend_score, p.created_at, TRUE,
                p.status, p.moderation_reason, p.is_anonymous
@@ -10841,7 +10850,7 @@ app.MapGet("/api/v1/users/me/saved", async (
 
     await using var cmd = new NpgsqlCommand(
         """
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.device_id = @deviceId OR p.user_id = @userId),
