@@ -88,6 +88,12 @@ public sealed record TwoFactorCodeRequest(
     [Required, StringLength(6, MinimumLength = 6)] string Code
 );
 
+public sealed record TwoFactorDisableRequest(
+    [StringLength(72)] string? Password = null,
+    [StringLength(6)] string? Code = null,
+    [StringLength(32)] string? BackupCode = null
+);
+
 public sealed record CreateReportRequest(
     [Required] string TargetType,
     [Required] Guid TargetId,

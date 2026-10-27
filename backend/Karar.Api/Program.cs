@@ -9991,8 +9991,20 @@ app.MapPost("/api/v1/auth/2fa/setup", async (
     var otpAuthUrl = $"otpauth://totp/Karar:{Uri.EscapeDataString(username)}?secret={secret}&issuer=Karar&digits=6&period=30";
 
     await using var connection = await db.OpenConnectionAsync();
+
+    // 2FA açıkken sırrı değiştirmek, kapatmakla eşdeğerdir: önce doğrulamalı /2fa/disable gerekir.
+    await using var enabledCmd = new NpgsqlCommand(
+        "SELECT is_2fa_enabled FROM users WHERE id = @id AND deleted_at IS NULL",
+        connection
+    );
+    enabledCmd.Parameters.AddWithValue("id", userId);
+    if (await enabledCmd.ExecuteScalarAsync() is true)
+    {
+        return Conflict("TWO_FACTOR_ALREADY_ENABLED", "İki faktörlü doğrulama zaten açık. Yeniden kurmak için önce kapat.");
+    }
+
     await using var command = new NpgsqlCommand(
-        "UPDATE users SET totp_secret = @secret, updated_at = NOW() WHERE id = @id AND deleted_at IS NULL",
+        "UPDATE users SET totp_secret = @secret, updated_at = NOW() WHERE id = @id AND deleted_at IS NULL AND is_2fa_enabled = FALSE",
         connection
     );
     command.Parameters.AddWithValue("id", userId);
@@ -10007,7 +10019,8 @@ app.MapPost("/api/v1/auth/2fa/enable", async (
     TwoFactorCodeRequest request,
     HttpRequest httpRequest,
     Db db,
-    JwtService jwtService
+    JwtService jwtService,
+    RedisService redis
 ) =>
 {
     if (ValidateRequest(request) is { } validationError) return validationError;
@@ -10033,6 +10046,9 @@ app.MapPost("/api/v1/auth/2fa/enable", async (
     );
     update.Parameters.AddWithValue("id", userId);
     await update.ExecuteNonQueryAsync();
+
+    // Geçerli kodla 2FA'yı açan oturum, ilk yedek kodlarını kodsuz alabilsin (kısa süreli, tek kullanımlık).
+    await redis.GetDb().StringSetAsync($"2fa:fresh-enable:{userId}", "1", TimeSpan.FromMinutes(10));
     return Results.NoContent();
 });
 
@@ -10046,15 +10062,86 @@ app.MapPost("/api/v1/auth/2fa/disable", async (
     if (principal is null) return Unauthorized();
     var userId = GetUserId(principal);
 
+    var request = await ReadOptionalJsonRequestAsync<TwoFactorDisableRequest>(httpRequest)
+        ?? new TwoFactorDisableRequest();
+    if (ValidateRequest(request) is { } validationError) return validationError;
+
     await using var connection = await db.OpenConnectionAsync();
+    await using var transaction = await connection.BeginTransactionAsync();
+
+    await using var select = new NpgsqlCommand(
+        "SELECT password_hash, is_2fa_enabled, totp_secret FROM users WHERE id = @id AND deleted_at IS NULL FOR UPDATE",
+        connection,
+        transaction
+    );
+    select.Parameters.AddWithValue("id", userId);
+    await using var reader = await select.ExecuteReaderAsync();
+    if (!await reader.ReadAsync())
+    {
+        await reader.CloseAsync();
+        await transaction.RollbackAsync();
+        return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
+    }
+    var passwordHash = reader.IsDBNull(0) ? null : reader.GetString(0);
+    var is2faEnabled = reader.GetBoolean(1);
+    var totpSecret = reader.IsDBNull(2) ? null : reader.GetString(2);
+    await reader.CloseAsync();
+
+    // Oturum (JWT) tek başına yetmez: şifre + TOTP/yedek kod.
+    var check = AuthAccountPolicy.CheckTwoFactorDisable(
+        passwordHash, is2faEnabled, totpSecret, request.Password, request.Code, request.BackupCode);
+    switch (check)
+    {
+        case TwoFactorDisableCheck.PasswordRequired:
+            await transaction.RollbackAsync();
+            return BadRequest("PASSWORD_REQUIRED", "İki faktörlü doğrulamayı kapatmak için şifreni gir.");
+        case TwoFactorDisableCheck.InvalidPassword:
+            await transaction.RollbackAsync();
+            return BadRequest("INVALID_PASSWORD", "Şifre hatalı.");
+        case TwoFactorDisableCheck.SecondFactorRequired:
+            await transaction.RollbackAsync();
+            return BadRequest("TWO_FACTOR_REQUIRED", "Geçerli iki faktörlü doğrulama kodu veya yedek kod gerekli.");
+        case TwoFactorDisableCheck.InvalidTotpCode:
+            await transaction.RollbackAsync();
+            return BadRequest("INVALID_TOTP_CODE", "Doğrulama kodu hatalı.");
+        case TwoFactorDisableCheck.VerifyBackupCode:
+        {
+            await using var backupCmd = new NpgsqlCommand(
+                "UPDATE totp_backup_codes SET used_at = NOW() WHERE user_id = @userId AND code_hash = @hash AND used_at IS NULL RETURNING id",
+                connection,
+                transaction
+            );
+            backupCmd.Parameters.AddWithValue("userId", userId);
+            backupCmd.Parameters.AddWithValue("hash", HashBackupCode(request.BackupCode!));
+            if (await backupCmd.ExecuteScalarAsync() is null)
+            {
+                await transaction.RollbackAsync();
+                return BadRequest("INVALID_BACKUP_CODE", "Yedek kod geçersiz veya daha önce kullanıldı.");
+            }
+            break;
+        }
+    }
+
     await using var command = new NpgsqlCommand(
         "UPDATE users SET is_2fa_enabled = FALSE, totp_secret = NULL, updated_at = NOW() WHERE id = @id AND deleted_at IS NULL",
-        connection
+        connection,
+        transaction
     );
     command.Parameters.AddWithValue("id", userId);
     var affected = await command.ExecuteNonQueryAsync();
+
+    // 2FA kapanınca eski yedek kodlar da geçersiz olmalı.
+    await using var deleteBackup = new NpgsqlCommand(
+        "DELETE FROM totp_backup_codes WHERE user_id = @id",
+        connection,
+        transaction
+    );
+    deleteBackup.Parameters.AddWithValue("id", userId);
+    await deleteBackup.ExecuteNonQueryAsync();
+
+    await transaction.CommitAsync();
     return affected == 0 ? NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.") : Results.NoContent();
-});
+}).RequireRateLimiting("auth-strict");
 
 app.MapGet("/api/v1/users/me/sessions", async (
     HttpRequest httpRequest,
@@ -13351,12 +13438,15 @@ app.MapGet("/api/v1/admin/analytics/operations", async (
 app.MapPost("/api/v1/auth/2fa/backup-codes", async (
     HttpRequest httpRequest,
     Db db,
-    JwtService jwtService
+    JwtService jwtService,
+    RedisService redis
 ) =>
 {
     var principal = GetJwtPrincipal(httpRequest, jwtService);
     if (principal is null) return Unauthorized();
     var userId = GetUserId(principal);
+
+    var codeRequest = await ReadOptionalJsonRequestAsync<TwoFactorCodeRequest>(httpRequest);
 
     var codes = Enumerable.Range(0, 8)
         .Select(_ => $"{GenerateBackupSegment()}-{GenerateBackupSegment()}")
@@ -13364,6 +13454,39 @@ app.MapPost("/api/v1/auth/2fa/backup-codes", async (
 
     await using var connection = await db.OpenConnectionAsync();
     await using var tx = await connection.BeginTransactionAsync();
+
+    await using var stateCmd = new NpgsqlCommand(
+        "SELECT is_2fa_enabled, totp_secret FROM users WHERE id = @userId AND deleted_at IS NULL FOR UPDATE",
+        connection, tx
+    );
+    stateCmd.Parameters.AddWithValue("userId", userId);
+    var is2faEnabled = false;
+    string? totpSecret = null;
+    await using (var stateReader = await stateCmd.ExecuteReaderAsync())
+    {
+        if (await stateReader.ReadAsync())
+        {
+            is2faEnabled = stateReader.GetBoolean(0);
+            totpSecret = stateReader.IsDBNull(1) ? null : stateReader.GetString(1);
+        }
+    }
+
+    // Yedek kod = TOTP'siz giriş; yalnızca geçerli TOTP kodu ya da az önce 2FA'yı açan oturum alabilir.
+    var freshEnableGrant = string.IsNullOrWhiteSpace(codeRequest?.Code)
+        && is2faEnabled
+        && await redis.GetDb().KeyDeleteAsync($"2fa:fresh-enable:{userId}");
+    switch (AuthAccountPolicy.CheckBackupCodeIssue(is2faEnabled, totpSecret, codeRequest?.Code, freshEnableGrant))
+    {
+        case BackupCodeIssueCheck.NotEnabled:
+            await tx.RollbackAsync();
+            return Conflict("TWO_FACTOR_NOT_ENABLED", "Yedek kod için önce iki faktörlü doğrulamayı aç.");
+        case BackupCodeIssueCheck.SecondFactorRequired:
+            await tx.RollbackAsync();
+            return BadRequest("TWO_FACTOR_REQUIRED", "Yeni yedek kodlar için geçerli iki faktörlü doğrulama kodu gerekli.");
+        case BackupCodeIssueCheck.InvalidTotpCode:
+            await tx.RollbackAsync();
+            return BadRequest("INVALID_TOTP_CODE", "Doğrulama kodu hatalı.");
+    }
 
     await using var deleteOld = new NpgsqlCommand(
         "DELETE FROM totp_backup_codes WHERE user_id = @userId",
@@ -14937,6 +15060,24 @@ static async Task<DeleteAccountRequest?> ReadOptionalDeleteAccountRequestAsync(H
     }
 
     return await request.ReadFromJsonAsync<DeleteAccountRequest>();
+}
+
+// Gövdesi isteğe bağlı JSON uç noktaları: boş/JSON olmayan/bozuk gövde → null (500 yerine).
+static async Task<T?> ReadOptionalJsonRequestAsync<T>(HttpRequest request) where T : class
+{
+    if (request.ContentLength is null or 0 || !request.HasJsonContentType())
+    {
+        return null;
+    }
+
+    try
+    {
+        return await request.ReadFromJsonAsync<T>();
+    }
+    catch (System.Text.Json.JsonException)
+    {
+        return null;
+    }
 }
 
 static async Task<CommentDto?> ReadCommentDtoAsync(
