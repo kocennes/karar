@@ -116,6 +116,8 @@ builder.Services.AddHttpClient("brevo", c =>
         c.DefaultRequestHeaders.Add("api-key", apiKey);
 });
 builder.Services.AddSingleton<PlayIntegrityService>();
+// Ücretsiz katman boşta kalma kapısı: işçiler kullanıcı yokken Neon'u uyandırmaz (FreeTier:Enabled, FreeTier:IdleAfterMinutes)
+builder.Services.AddSingleton<ActivityTracker>();
 var hostedServicesEnabled = !builder.Environment.IsEnvironment("Testing")
     && !builder.Configuration.GetValue("Testing:DisableHostedServices", false);
 if (hostedServicesEnabled)
@@ -367,6 +369,7 @@ app.UseForwardedHeaders(new ForwardedHeadersOptions
 
 app.UseResponseCompression();
 app.UseCors("flutter-app");
+app.UseMiddleware<ActivityTrackingMiddleware>();
 app.UseMiddleware<RedactedRequestLoggingMiddleware>();
 app.UseKararSloMetrics();
 
@@ -13727,19 +13730,8 @@ static bool IsSupportedPlatform(string platform) => platform is "android" or "io
 static string GetWebBaseUrl(IConfiguration configuration) =>
     (configuration["Web:BaseUrl"] ?? "https://karar.app").TrimEnd('/');
 
-static bool IsCrawler(string userAgent)
-{
-    if (string.IsNullOrWhiteSpace(userAgent)) return false;
-
-    return userAgent.Contains("facebookexternalhit", StringComparison.OrdinalIgnoreCase)
-        || userAgent.Contains("Twitterbot", StringComparison.OrdinalIgnoreCase)
-        || userAgent.Contains("WhatsApp", StringComparison.OrdinalIgnoreCase)
-        || userAgent.Contains("Googlebot", StringComparison.OrdinalIgnoreCase)
-        || userAgent.Contains("LinkedInBot", StringComparison.OrdinalIgnoreCase)
-        || userAgent.Contains("Slackbot", StringComparison.OrdinalIgnoreCase)
-        || userAgent.Contains("TelegramBot", StringComparison.OrdinalIgnoreCase)
-        || userAgent.Contains("Discordbot", StringComparison.OrdinalIgnoreCase);
-}
+// Liste CrawlerDetector'da: OG kabuğu ve ActivityTrackingMiddleware aynı tanımı paylaşır.
+static bool IsCrawler(string userAgent) => CrawlerDetector.IsCrawler(userAgent);
 
 static string ToSlug(string title, Guid id)
 {
