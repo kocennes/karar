@@ -14561,9 +14561,10 @@ static string BuildOgHtml(
     var descEncoded = WebUtility.HtmlEncode(description);
     var imageEncoded = WebUtility.HtmlEncode(imageUrl);
     var urlEncoded = WebUtility.HtmlEncode(postUrl);
-    var jsonTitle = title.Replace("\\", "\\\\").Replace("\"", "\\\"");
+    // System.Text.Json default encoder escapes <, >, &, ' and control chars as \uXXXX, so UGC cannot close the <script> block.
+    var jsonTitle = JsonSerializer.Serialize(title);
     var dateStr = createdAt.ToString("yyyy-MM-dd");
-    var jsonLd = $"{{\"@context\":\"https://schema.org\",\"@type\":\"Question\",\"name\":\"{jsonTitle}\",\"answerCount\":{total},\"datePublished\":\"{dateStr}\",\"author\":{{\"@type\":\"Person\",\"name\":\"Anonim\"}}}}";
+    var jsonLd = $"{{\"@context\":\"https://schema.org\",\"@type\":\"Question\",\"name\":{jsonTitle},\"answerCount\":{total},\"datePublished\":\"{dateStr}\",\"author\":{{\"@type\":\"Person\",\"name\":\"Anonim\"}}}}";
 
     return $$"""
         <!DOCTYPE html>

@@ -19,9 +19,10 @@ public static class SensitiveDataRedactor
         @"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+",
         RegexOptions.Compiled);
 
+    // NonBacktracking: the backtracking engine is quadratic on "a.a.a...@a.a.a..." (ReDoS on every request).
     private static readonly Regex EmailPattern = new(
         @"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b",
-        RegexOptions.Compiled);
+        RegexOptions.NonBacktracking);
 
     private static readonly Regex Ipv4Pattern = new(
         @"\b(?<a>\d{1,3})\.(?<b>\d{1,3})\.(?<c>\d{1,3})\.(?<d>\d{1,3})\b",
