@@ -147,40 +147,51 @@ Write-Host "[3/3] Write operations"
 $firstCategoryId = ($cats.categories | Select-Object -First 1).id
 $ts = Get-Date -Format 'yyyyMMddHHmmss'
 
-Write-Host "  Registering device..."
+Write-Host "  Registering devices (author + voter)..."
 $session = Invoke-Json -Method POST -Path "/api/v1/devices/register" -Body @{
     fingerprint = "smoke-$ts"
     platform    = "web"
     appVersion  = "1.0.0"
 }
 $headers = @{ "X-Device-Token" = $session.deviceToken }
-Write-Host "    device registered"
+# The API refuses votes on your own post (403 CANNOT_VOTE_OWN_POST), so vote/comment/report
+# come from a second device, like a real reader would.
+$voterSession = Invoke-Json -Method POST -Path "/api/v1/devices/register" -Body @{
+    fingerprint = "smoke-$ts-voter"
+    platform    = "web"
+    appVersion  = "1.0.0"
+}
+$voterHeaders = @{ "X-Device-Token" = $voterSession.deviceToken }
+Write-Host "    devices registered"
 
 Write-Host "  Creating post [SMOKE]..."
 $post = Invoke-Json -Method POST -Path "/api/v1/posts" -Headers $headers -Body @{
     title      = "[SMOKE] Test icin yeterince uzun baslik metni"
     content    = "[SMOKE] Bu smoke test icerigi en az elli karakter olacak sekilde yazilmistir."
     categoryId = $firstCategoryId
+    # Required since policy versioning: otherwise 400 POLICY_ACCEPTANCE_REQUIRED.
+    acceptedTerms               = $true
+    acceptedCommunityGuidelines = $true
 }
 Write-Host "    post created: $($post.id)"
 
 Write-Host "  Voting..."
-Invoke-Json -Method POST -Path "/api/v1/posts/$($post.id)/vote" -Headers $headers -Body @{
+Invoke-Json -Method POST -Path "/api/v1/posts/$($post.id)/vote" -Headers $voterHeaders -Body @{
     voteType = "hakli"
 } | Out-Null
 Write-Host "    vote OK"
 
 Write-Host "  Commenting..."
-Invoke-Json -Method POST -Path "/api/v1/posts/$($post.id)/comments" -Headers $headers -Body @{
+Invoke-Json -Method POST -Path "/api/v1/posts/$($post.id)/comments" -Headers $voterHeaders -Body @{
     content = "[SMOKE] Smoke test yorumu basariyla gonderildi."
 } | Out-Null
 Write-Host "    comment OK"
 
 Write-Host "  Reporting..."
-Invoke-Json -Method POST -Path "/api/v1/reports" -Headers $headers -Body @{
+Invoke-Json -Method POST -Path "/api/v1/reports" -Headers $voterHeaders -Body @{
     targetType  = "post"
     targetId    = $post.id
-    reason      = "other"
+    reason      = "misinformation"
     description = "[SMOKE] Smoke test raporu"
 } | Out-Null
 Write-Host "    report OK"
