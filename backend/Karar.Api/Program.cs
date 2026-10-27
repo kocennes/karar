@@ -2327,8 +2327,27 @@ app.MapGet("/api/v1/posts/{id:guid}/stats", async (
     var avgReadingSeconds = reader.IsDBNull(2) ? 0 : (int)Math.Round(reader.GetDouble(2));
     await reader.CloseAsync();
 
-    // Mock vote timeline for now (should be derived from votes table)
-    var timeline = Enumerable.Range(0, 24).Select(_ => Random.Shared.Next(0, 50)).ToList();
+    // Son 24 saatin saatlik oy dağılımı (UTC); oy almayan saatler sıfırla doldurulur.
+    await using var timelineCmd = new NpgsqlCommand(
+        """
+        SELECT date_trunc('hour', created_at AT TIME ZONE 'UTC') AS bucket, COUNT(*)
+        FROM votes
+        WHERE post_id = @id AND created_at >= NOW() - INTERVAL '24 hours'
+        GROUP BY bucket
+        ORDER BY bucket
+        """,
+        connection
+    );
+    timelineCmd.Parameters.AddWithValue("id", id);
+    var voteBuckets = new List<(DateTime Hour, int Count)>();
+    await using (var timelineReader = await timelineCmd.ExecuteReaderAsync())
+    {
+        while (await timelineReader.ReadAsync())
+        {
+            voteBuckets.Add((timelineReader.GetDateTime(0), Convert.ToInt32(timelineReader.GetInt64(1))));
+        }
+    }
+    var timeline = VoteTimelineBuilder.ZeroFillHourly(voteBuckets, DateTime.UtcNow);
 
     return Results.Ok(new
     {
@@ -2397,7 +2416,10 @@ app.MapGet("/api/v1/trends/topics", async (Db db) =>
             WHERE status = 'active' AND is_unlisted = FALSE
               AND created_at >= NOW() - INTERVAL '48 hours'
         )
-        SELECT tag, COUNT(*) as post_count
+        SELECT tag,
+               COUNT(*) as post_count,
+               COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours') as recent_count,
+               COUNT(*) FILTER (WHERE created_at < NOW() - INTERVAL '24 hours') as previous_count
         FROM tags
         GROUP BY tag
         ORDER BY post_count DESC
@@ -2410,11 +2432,14 @@ app.MapGet("/api/v1/trends/topics", async (Db db) =>
     await using var reader = await command.ExecuteReaderAsync();
     while (await reader.ReadAsync())
     {
+        // Büyüme: son 24 saat vs önceki 24 saat (işaretli yüzde, +999 ile sınırlı).
+        var recentCount = Convert.ToInt32(reader.GetInt64(2));
+        var previousCount = Convert.ToInt32(reader.GetInt64(3));
         topics.Add(new
         {
             name = reader.GetString(0),
             postCount = Convert.ToInt32(reader.GetInt64(1)),
-            growthPercent = Random.Shared.Next(5, 40) // Simplified growth metric
+            growthPercent = TrendGrowthCalculator.Percent(recentCount, previousCount)
         });
     }
 
