@@ -28,13 +28,15 @@ public sealed class AccountDeletionContractTests
     public void DataRetentionService_AnonymizesPersonalFieldsAfterRecoveryWindow()
     {
         var service = TestRepoPaths.ReadText("backend", "Karar.Api", "Services", "DataRetentionService.cs");
+        var erasure = TestRepoPaths.ReadText("backend", "Karar.Api", "Services", "UserDataErasure.cs");
 
         service.Should().Contain("deleted_at < NOW() - (@thresholdDays * INTERVAL '1 day')");
-        service.Should().Contain("username = 'silinen_'");
-        service.Should().Contain("email = 'deleted-'");
-        service.Should().Contain("password_hash = NULL");
-        service.Should().Contain("google_id = NULL");
-        service.Should().Contain("fingerprint = 'deleted-'");
+        service.Should().Contain("UserDataErasure.EraseAsync");
+        erasure.Should().Contain("username = 'silinen_'");
+        erasure.Should().Contain("email = 'deleted-'");
+        erasure.Should().Contain("password_hash = NULL");
+        erasure.Should().Contain("google_id = NULL");
+        erasure.Should().Contain("fingerprint = 'deleted-'");
     }
 
     [Fact]

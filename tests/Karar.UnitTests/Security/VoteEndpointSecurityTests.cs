@@ -52,19 +52,48 @@ public sealed class VoteEndpointSecurityTests
         upsertBlock.Should().Contain("DO UPDATE SET");
     }
 
+    // [F10] A brigade (>5 devices from one /24 or fingerprint cluster within 10 min) is suppressed by
+    // VoteBrigadeGuard. The guard window is keyed on votes.created_at, which the upsert never changes,
+    // so a re-vote after the window is not re-evaluated. If the upsert cleared is_suppressed, every
+    // brigade device could flip haksiz -> hakli after 10 minutes and be counted again.
     [Fact]
-    public void VoteUpsert_ResetsSuppressionBeforeReevaluationButKeepsUniqueConstraint()
+    public void VoteUpsert_KeepsBrigadeSuppressionStickyAndKeepsUniqueConstraint()
     {
         var programText = ReadProgram();
         var upsertBlock = SliceBlock(
             programText,
             "static async Task UpsertVoteAsync",
             "static async Task UpdateVoteCountersAsync");
+        var conflictUpdate = SliceBlock(upsertBlock, "DO UPDATE SET", "\"\"\"");
 
         upsertBlock.Should().Contain("ON CONFLICT (post_id, device_id)");
-        upsertBlock.Should().Contain("is_suppressed = FALSE");
-        upsertBlock.Should().Contain("suppression_reason = NULL");
-        upsertBlock.Should().Contain("suppressed_at = NULL");
+        conflictUpdate.Should().NotContain("is_suppressed =",
+            "a client re-vote must not clear server-side brigade suppression");
+        conflictUpdate.Should().NotContain("suppression_reason =",
+            "the suppression audit reason must survive a re-vote");
+        conflictUpdate.Should().NotContain("suppressed_at =",
+            "the suppression timestamp must survive a re-vote");
+        conflictUpdate.Should().Contain("is_quarantined = @isQuarantined OR votes.is_suppressed",
+            "suppressed votes must also stay out of legacy is_quarantined-only ranking paths");
+    }
+
+    [Fact]
+    public void VoteEndpoint_TreatsStoredSuppressionAsSuppressedForSideEffects()
+    {
+        var programText = ReadProgram();
+        var contextBlock = SliceBlock(
+            programText,
+            "static async Task<(string? OldVote, int OldTotal",
+            "static async Task<(int Hakli, int Haksiz)> UpdateVoteCountersReturningAsync");
+        var voteBlock = SliceBlock(
+            programText,
+            "app.MapPost(\"/api/v1/posts/{id:guid}/vote\"",
+            "app.MapDelete(\"/api/v1/posts/{id:guid}/vote\"");
+
+        contextBlock.Should().Contain("COALESCE(v.is_suppressed, FALSE)",
+            "the vote context must expose whether the device's stored vote is suppressed");
+        voteBlock.Should().Contain("var voteIsSuppressed = brigadeResult.Detected || existingVoteSuppressed;",
+            "a re-vote of a suppressed vote must not feed affinity or city trending after the guard window");
     }
 
     // ── Suspicious device quarantine ───────────────────────────────────────

@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using StackExchange.Redis;
 
 namespace Karar.Api.Services;
@@ -7,6 +9,10 @@ namespace Karar.Api.Services;
 public sealed class BruteForceService
 {
     private const int MaxAttempts = 10;
+
+    // Hedef hesap bazlı sayaç eşiği (IP/cihazdan bağımsız). Kurban hesabın kolayca
+    // kilitlenmesini zorlaştırmak için IP+cihaz eşiğinden yüksek tutulur.
+    public const int MaxAccountAttempts = 20;
     private static readonly TimeSpan LockoutDuration = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan AttemptWindow = TimeSpan.FromMinutes(15);
 
@@ -26,7 +32,8 @@ public sealed class BruteForceService
     }
 
     // Başarısız denemeyi kaydeder. Lockout'a girildiyse true döner.
-    public async Task<(bool IsLockedOut, int AttemptsRemaining)> RecordFailedAttemptAsync(string identity)
+    public async Task<(bool IsLockedOut, int AttemptsRemaining)> RecordFailedAttemptAsync(
+        string identity, int maxAttempts = MaxAttempts)
     {
         var key = AttemptsKey(identity);
         var attempts = await _db.StringIncrementAsync(key);
@@ -35,14 +42,14 @@ public sealed class BruteForceService
             await _db.KeyExpireAsync(key, AttemptWindow);
         }
 
-        if (attempts >= MaxAttempts)
+        if (attempts >= maxAttempts)
         {
             await _db.StringSetAsync(LockoutKey(identity), "1", LockoutDuration);
             await _db.KeyDeleteAsync(key);
             return (true, 0);
         }
 
-        return (false, (int)(MaxAttempts - attempts));
+        return (false, (int)(maxAttempts - attempts));
     }
 
     // Başarılı girişte sayacı temizle.
@@ -68,5 +75,18 @@ public sealed class BruteForceService
     {
         var devicePart = deviceId?.ToString("N") ?? "unknown-device";
         return $"{ip}:{devicePart}:{endpoint}";
+    }
+
+    // Hedef hesap bazlı identity: saldırgan IP/cihaz değiştirerek sayacı sıfırlayamaz.
+    public static string AccountIdentityFor(string endpoint, Guid userId) =>
+        $"account:{userId:N}:{endpoint}";
+
+    // Bulunamayan tanımlayıcılar (kullanıcı adı / e-posta) için: aynı eşikle sayılır ki kilitlenme
+    // davranışı hesabın var olup olmadığını sızdırmasın. Ham tanımlayıcı Redis'e yazılmaz.
+    public static string AccountIdentityFor(string endpoint, string identifier)
+    {
+        var normalized = identifier.Trim().ToLowerInvariant();
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized)));
+        return $"account-id:{hash}:{endpoint}";
     }
 }

@@ -77,6 +77,15 @@ public sealed class EmailService
                 Eğer bu işlemi siz yapmadıysanız şifrenizi değiştirmenizi öneririz.
                 """);
 
+    public Task SendEmailChangedNoticeAsync(string oldEmail) =>
+        SendAsync(oldEmail, "Karar — Hesabınızın E-posta Adresi Değiştirildi", """
+                Karar hesabınızın e-posta adresi az önce değiştirildi. Bu adres artık hesabınızla ilişkili değil.
+
+                Bu işlemi siz yaptıysanız başka bir şey yapmanıza gerek yok.
+
+                Bu işlemi siz yapmadıysanız hesabınız tehlikede olabilir; lütfen hemen destek ekibimizle iletişime geçin.
+                """);
+
     public Task SendAdminLoginOtpAsync(string toEmail, string otp) =>
         SendAsync(toEmail, "Karar Admin Giriş Kodunuz", $"""
                 Karar Admin giriş kodunuz: {otp}

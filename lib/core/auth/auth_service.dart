@@ -317,14 +317,22 @@ class AuthService {
     }
   }
 
+  /// Sunucu şifre değişince diğer tüm oturumları kapatır; bu oturumun refresh
+  /// token'ı gönderilmezse bu cihaz da bir sonraki yenilemede çıkış yapar.
   Future<void> changePassword({
     required String currentPassword,
     required String newPassword,
-  }) =>
-      _apiClient.putJson<void>(
-        ApiEndpoints.userMePassword,
-        body: {'currentPassword': currentPassword, 'newPassword': newPassword},
-      );
+  }) async {
+    final refreshToken = await _storage.readRefreshToken();
+    await _apiClient.putJson<void>(
+      ApiEndpoints.userMePassword,
+      body: {
+        'currentPassword': currentPassword,
+        'newPassword': newPassword,
+        if (refreshToken != null) 'refreshToken': refreshToken,
+      },
+    );
+  }
 
   Future<void> forgotPassword(String email) => _apiClient.postJson<void>(
         ApiEndpoints.authForgotPassword,
@@ -408,7 +416,22 @@ class AuthService {
     return AuthUser.fromJson(json);
   }
 
+  /// Yeni bir TOTP sırrı üretir. Sunucu `/2fa/setup` çağrısında mevcut sırrı
+  /// koşulsuz değiştirdiği için 2FA zaten etkinse (güncel profil sunucudan
+  /// okunarak) istek hiç gönderilmez; aksi halde kullanıcının doğrulama
+  /// uygulaması geçersiz kalır ve hesap kilitlenebilir.
   Future<Map<String, Object?>> setup2fa() async {
+    final me = AuthUser.fromJson(
+      await _apiClient.getJson<Map<String, Object?>>(ApiEndpoints.userMe),
+    );
+    _currentUser = me;
+    if (me.is2faEnabled) {
+      throw const ApiException(
+        statusCode: 409,
+        code: 'TWO_FACTOR_ALREADY_ENABLED',
+        message: 'İki faktörlü doğrulama zaten etkin.',
+      );
+    }
     return await _apiClient.postJson<Map<String, Object?>>(
       '/api/v1/auth/2fa/setup',
     );
@@ -422,9 +445,21 @@ class AuthService {
     await init();
   }
 
-  Future<void> disable2fa() async {
+  /// Sunucu 2FA'yı kapatmak için oturumun yanında şifre (şifreli hesapta) ve
+  /// geçerli bir TOTP kodu ya da yedek kod ister. 6 haneli giriş TOTP kodu,
+  /// diğer her giriş yedek kod olarak gönderilir.
+  Future<void> disable2fa({
+    String? password,
+    required String secondFactor,
+  }) async {
+    final factor = secondFactor.trim();
+    final isTotp = RegExp(r'^\d{6}$').hasMatch(factor);
     await _apiClient.postJson<void>(
       '/api/v1/auth/2fa/disable',
+      body: {
+        if (password != null && password.isNotEmpty) 'password': password,
+        if (isTotp) 'code': factor else 'backupCode': factor,
+      },
     );
     await init();
   }
@@ -465,13 +500,20 @@ class AuthService {
         body: {'newEmail': newEmail, 'password': password},
       );
 
+  /// E-posta değişince sunucu diğer oturumları kapatır; bu oturum korunsun diye
+  /// refresh token da gönderilir.
   Future<void> confirmEmailChange({
     required String newEmail,
     required String otp,
   }) async {
+    final refreshToken = await _storage.readRefreshToken();
     await _apiClient.postJson<void>(
       ApiEndpoints.authChangeEmailConfirm,
-      body: {'newEmail': newEmail, 'otp': otp},
+      body: {
+        'newEmail': newEmail,
+        'otp': otp,
+        if (refreshToken != null) 'refreshToken': refreshToken,
+      },
     );
     await init();
   }

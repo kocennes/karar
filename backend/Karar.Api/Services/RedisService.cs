@@ -27,11 +27,9 @@ public sealed class RedisService : IDisposable
 
         if (configuration.GetValue<bool>("Redis:Ssl"))
         {
+            // Sertifika sistem CA deposu ve host adıyla doğrulanır (Upstash genel CA kullanır).
+            // Her sertifikayı kabul eden callback, araya girene AUTH parolasını veriyordu.
             options.Ssl = true;
-            // Memorystore typically uses a self-signed cert for transit encryption
-            // We allow any certificate in the internal VPC context for simplicity,
-            // or we could point to a root cert if strictly needed.
-            options.CertificateValidation += (sender, cert, chain, errors) => true;
         }
 
         _redis = ConnectionMultiplexer.Connect(options);
@@ -162,12 +160,13 @@ public sealed class RedisService : IDisposable
             local now = tonumber(ARGV[1])
             local window = tonumber(ARGV[2])
             local limit = tonumber(ARGV[3])
+            local member = ARGV[4]
 
             redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
             local count = redis.call('ZCARD', key)
 
             if count < limit then
-                redis.call('ZADD', key, now, now)
+                redis.call('ZADD', key, now, member)
                 redis.call('EXPIRE', key, math.ceil(window / 1000) + 1)
                 return 1
             end
@@ -178,7 +177,8 @@ public sealed class RedisService : IDisposable
         {
             var result = await _db.ScriptEvaluateAsync(script,
                 keys: new RedisKey[] { key },
-                values: new RedisValue[] { now, windowMs, limit });
+                // Üye benzersiz olmalı: aynı milisaniyedeki istekler tek kayda çökmesin (limit aşımı).
+                values: new RedisValue[] { now, windowMs, limit, $"{now}-{Guid.NewGuid():N}" });
 
             KararTelemetry.RecordRedisOperation("EVAL", true);
             return (int)result == 1;

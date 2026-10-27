@@ -6,8 +6,10 @@ namespace Karar.Api.Services;
 
 // Koordineli oylama anomalisi dedektörü — 10 dakikada bir çalışır.
 // Tespit kriterleri (hepsi aynı anda): 6 dk içinde aynı posta ≥15 cihaz,
-// bu cihazların ≥%60'ı aynı /24 IP bloğundan veya aynı fingerprint prefix'i (ilk 8 karakter),
+// bu cihazların ≥%60'ı aynı /24 IP bloğundan,
 // medyan hesap yaşı < 72 saat, son 24 saatte birden fazla farklı posta aynı yönde oy.
+// Cihaz parmak izi bilinçli olarak kullanılmaz: istemci tarafından gönderilir ve resmi istemci
+// platform başına sabit bir değer yollar (tüm Android kullanıcıları tek "küme" görünür).
 public sealed class BrigadeCoordinatedDetectorJob(
     IConfiguration configuration,
     ActivityTracker activityTracker,
@@ -80,7 +82,6 @@ public sealed class BrigadeCoordinatedDetectorJob(
                     v.device_id,
                     v.vote_type,
                     v.voter_ip_block,
-                    d.fingerprint,
                     d.created_at AS device_created_at,
                     EXTRACT(EPOCH FROM (NOW() - d.created_at)) / 3600.0 AS account_age_hours
                 FROM votes v
@@ -97,9 +98,7 @@ public sealed class BrigadeCoordinatedDetectorJob(
                     COUNT(DISTINCT voter_ip_block)::int                               AS distinct_ip_blocks,
                     COUNT(*)::int                                                      AS total_votes,
                     -- dominant /24 block count
-                    MAX(ip_block_count)                                                AS max_ip_block_count,
-                    -- dominant fingerprint prefix count (first 8 chars)
-                    MAX(fp_prefix_count)                                               AS max_fp_prefix_count
+                    MAX(ip_block_count)                                                AS max_ip_block_count
                 FROM window_votes
                 CROSS JOIN LATERAL (
                     SELECT
@@ -114,18 +113,6 @@ public sealed class BrigadeCoordinatedDetectorJob(
                         LIMIT 1
                     ) t
                 ) ip_max
-                CROSS JOIN LATERAL (
-                    SELECT
-                        MAX(c) AS fp_prefix_count
-                    FROM (
-                        SELECT COUNT(*) AS c
-                        FROM window_votes wv3
-                        WHERE wv3.post_id = window_votes.post_id
-                          AND LEFT(wv3.fingerprint, 8) = LEFT(window_votes.fingerprint, 8)
-                        GROUP BY LEFT(wv3.fingerprint, 8)
-                        LIMIT 1
-                    ) t2
-                ) fp_max
                 GROUP BY post_id
             )
             SELECT
@@ -134,8 +121,7 @@ public sealed class BrigadeCoordinatedDetectorJob(
                 dominant_vote_type,
                 median_account_age_hours,
                 distinct_ip_blocks,
-                max_ip_block_count::float / NULLIF(device_count, 0) AS ip_concentration,
-                max_fp_prefix_count::float / NULLIF(device_count, 0) AS fp_concentration
+                max_ip_block_count::float / NULLIF(device_count, 0) AS ip_concentration
             FROM cluster_stats
             WHERE device_count >= @minDevices
               AND median_account_age_hours < @youngAccountMaxHours
@@ -149,9 +135,7 @@ public sealed class BrigadeCoordinatedDetectorJob(
         {
             while (await reader.ReadAsync(ct))
             {
-                var ipConc = reader.IsDBNull(5) ? 0.0 : reader.GetDouble(5);
-                var fpConc = reader.IsDBNull(6) ? 0.0 : reader.GetDouble(6);
-                var concentration = Math.Max(ipConc, fpConc);
+                var concentration = reader.IsDBNull(5) ? 0.0 : reader.GetDouble(5);
                 if (concentration < IpBlockConcentrationThreshold)
                     continue;
 

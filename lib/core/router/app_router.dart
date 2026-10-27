@@ -44,6 +44,15 @@ import '../../features/auth/change_email_screen.dart';
 import '../../features/auth/forgot_password_screen.dart';
 import '../../features/onboarding/onboarding_screen.dart';
 import '../../shared/models/post.dart';
+import '../../shared/widgets/content_unavailable_view.dart';
+
+// Derin bağlantıdan gelen yol parametreleri API yoluna eklenmeden önce
+// doğrulanır: `/posts/..%2Fauth%2F2fa%2Fdisable%3F` gibi bir bağlantı aksi
+// halde açılışta kimlik doğrulamalı isteği başka bir uç noktaya yönlendirir.
+final _postIdPattern = RegExp(
+  r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+);
+final _usernamePattern = RegExp(r'^[A-Za-z0-9_]{1,32}$');
 
 GoRouter buildRouter(AppServices services) => GoRouter(
       initialLocation: '/splash',
@@ -281,11 +290,15 @@ GoRouter buildRouter(AppServices services) => GoRouter(
         GoRoute(
           path: '/posts/:id',
           builder: (_, state) {
+            final postId = state.pathParameters['id']!;
+            if (!_postIdPattern.hasMatch(postId)) {
+              return const _InvalidLinkScreen();
+            }
             final commentId = state.uri.queryParameters['commentId'];
             final refCode = state.uri.queryParameters['ref'];
             final source = state.uri.queryParameters['source'];
             return PostDetailScreen(
-              postId: state.pathParameters['id']!,
+              postId: postId,
               post: state.extra as Post?,
               initialCommentId: commentId,
               referrerCode: refCode,
@@ -297,9 +310,13 @@ GoRouter buildRouter(AppServices services) => GoRouter(
         // ── Profiles ────────────────────────────────────────────────────────
         GoRoute(
           path: '/users/:username',
-          builder: (_, state) => OtherProfileScreen(
-            username: state.pathParameters['username']!,
-          ),
+          builder: (_, state) {
+            final username = state.pathParameters['username']!;
+            if (!_usernamePattern.hasMatch(username)) {
+              return const _InvalidLinkScreen();
+            }
+            return OtherProfileScreen(username: username);
+          },
         ),
 
         // ── Auth ─────────────────────────────────────────────────────────────
@@ -327,6 +344,24 @@ GoRouter buildRouter(AppServices services) => GoRouter(
         ),
       ],
     );
+
+class _InvalidLinkScreen extends StatelessWidget {
+  const _InvalidLinkScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(),
+      body: ContentUnavailableView(
+        icon: Icons.link_off_rounded,
+        title: 'Bağlantı geçersiz',
+        message: 'Bu bağlantı hatalı ya da artık geçerli değil.',
+        buttonLabel: 'Ana sayfaya dön',
+        onPressed: () => context.go('/'),
+      ),
+    );
+  }
+}
 
 // ── Route wrappers that update currentUserProvider ────────────────────────────
 

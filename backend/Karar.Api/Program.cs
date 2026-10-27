@@ -123,6 +123,7 @@ var hostedServicesEnabled = !builder.Environment.IsEnvironment("Testing")
 if (hostedServicesEnabled)
 {
     builder.Services.AddHostedService<ImageModerationWorker>();
+    builder.Services.AddHostedService<PostImageCleanupJob>();
 }
 builder.Services.AddSingleton<ReportThresholdService>();
 builder.Services.AddSingleton<ReporterReputationService>();
@@ -164,6 +165,7 @@ builder.Services.AddSingleton<ComplianceLogService>();
 builder.Services.AddSingleton<BusinessMetricsService>();
 builder.Services.AddKararObservability(builder.Configuration, builder.Environment);
 builder.Services.AddSingleton<SubnetBanService>();
+builder.Services.AddSingleton<IUserAccessStatusService, UserAccessStatusService>();
 builder.Services.AddSingleton<VoteBrigadeGuard>();
 builder.Services.AddScoped<RequestDevice>();
 builder.Services.AddRateLimiter(options =>
@@ -264,6 +266,7 @@ builder.Services.AddRateLimiter(options =>
 
     options.OnRejected = async (ctx, _) =>
     {
+        SubnetBanService.MarkLimiterRejection(ctx.HttpContext);
         ctx.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
         await ctx.HttpContext.Response.WriteAsJsonAsync(new
         {
@@ -431,6 +434,7 @@ app.UseRateLimiter();
 app.UseMiddleware<DistributedRateLimitMiddleware>();
 app.UseMiddleware<AppAttestationMiddleware>();
 app.UseMiddleware<AdminSecurityMiddleware>();
+app.UseMiddleware<BannedUserMiddleware>();
 
 // Liveness: yalnızca "self" (DB'siz). "/health" takma adı dış uptime ping'leri ve admin keepalive içindir;
 // aynı seçenekleri paylaşır, Neon'u uyandırmaz ve ActivityTrackingMiddleware'de etkinlik sayılmaz.
@@ -572,8 +576,8 @@ app.MapGet("/sitemap.xml", async (HttpContext httpContext, Db db, IConfiguration
     var webBaseUrl = GetWebBaseUrl(configuration);
     await using var connection = await db.OpenConnectionAsync();
 
-    // Get total count of active posts
-    await using var countCmd = new NpgsqlCommand("SELECT COUNT(*) FROM posts WHERE status = 'active'", connection);
+    // Get total count of active posts (liste dışı gönderiler sitemap'te yayınlanmaz)
+    await using var countCmd = new NpgsqlCommand("SELECT COUNT(*) FROM posts WHERE status = 'active' AND is_unlisted = FALSE", connection);
     var totalCount = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
     var pageSize = 40000;
     var pageCount = (int)Math.Ceiling((double)totalCount / pageSize);
@@ -661,7 +665,7 @@ app.MapGet("/sitemap-posts-{page:int}.xml", async (int page, HttpContext httpCon
         """
         SELECT COALESCE(slug, id::text), updated_at
         FROM posts
-        WHERE status = 'active'
+        WHERE status = 'active' AND is_unlisted = FALSE
         ORDER BY updated_at DESC
         LIMIT @limit OFFSET @offset
         """,
@@ -712,8 +716,10 @@ app.MapGet("/posts/{id:guid}", async (
     await using var connection = await db.OpenConnectionAsync();
     await using var command = new NpgsqlCommand(
         """
-        SELECT title, content, image_url, vote_count_hakli, vote_count_haksiz,
-               COALESCE(slug, id::text), created_at
+        SELECT title, content,
+               CASE WHEN image_moderation_status IS NULL OR image_moderation_status = 'approved' THEN image_url END,
+               vote_count_hakli, vote_count_haksiz,
+               COALESCE(slug, id::text), created_at, is_unlisted
         FROM posts
         WHERE id = @id AND status = 'active'
         """,
@@ -732,8 +738,10 @@ app.MapGet("/posts/{id:guid}", async (
     var haksiz = reader.GetInt32(4);
     var slug = reader.GetString(5);
     var createdAt = reader.GetFieldValue<DateTimeOffset>(6);
+    // Liste dışı gönderi paylaşılan id linkiyle önizlenebilir ama arama motorlarına noindex döner.
+    var isUnlisted = reader.GetBoolean(7);
 
-    var html = BuildOgHtml(id, slug, title, content, hakli, haksiz, customImageUrl, webBaseUrl, createdAt);
+    var html = BuildOgHtml(id, slug, title, content, hakli, haksiz, customImageUrl, webBaseUrl, createdAt, isUnlisted);
     await redis.SetAsync(cacheKey, html, TimeSpan.FromMinutes(5));
     return Results.Content(html, "text/html; charset=utf-8");
 });
@@ -761,9 +769,11 @@ app.MapGet("/posts/{slug}", async (
     await using var connection = await db.OpenConnectionAsync();
     await using var command = new NpgsqlCommand(
         """
-        SELECT id, title, content, image_url, vote_count_hakli, vote_count_haksiz, created_at
+        SELECT id, title, content,
+               CASE WHEN image_moderation_status IS NULL OR image_moderation_status = 'approved' THEN image_url END,
+               vote_count_hakli, vote_count_haksiz, created_at
         FROM posts
-        WHERE slug = @slug AND status = 'active'
+        WHERE slug = @slug AND status = 'active' AND is_unlisted = FALSE
         """,
         connection
     );
@@ -781,7 +791,8 @@ app.MapGet("/posts/{slug}", async (
     var haksiz = reader.GetInt32(5);
     var createdAt = reader.GetFieldValue<DateTimeOffset>(6);
 
-    var html = BuildOgHtml(id, slug, title, content, hakli, haksiz, customImageUrl, webBaseUrl, createdAt);
+    // Slug sayfası liste dışı gönderileri hiç sunmaz (WHERE is_unlisted = FALSE); bayrak her zaman false.
+    var html = BuildOgHtml(id, slug, title, content, hakli, haksiz, customImageUrl, webBaseUrl, createdAt, isUnlisted: false);
     await redis.SetAsync(cacheKey, html, TimeSpan.FromMinutes(5));
     return Results.Content(html, "text/html; charset=utf-8");
 });
@@ -901,22 +912,12 @@ app.MapPost("/api/v1/devices/register", async (
         return BadRequest("INVALID_PLATFORM", "Platform android, ios veya web olmalı.");
     }
 
-    // /24 subnet rate limit: max 5 registrations per hour per subnet
-    var subnetBlock = GetClientIpBlock(httpRequest);
-    if (subnetBlock is not null)
+    // Saatlik kayıt bütçesi (DeviceRegistrationRateLimit): önce IP başına 5 (tek IP ağın kotasını
+    // tüketemez), sonra IPv4 /24 → 30; IPv6 /64 → 5, /56 → 20, /48 → 50 (/64 döndürerek sınırsız cihaz üretilemez).
+    if (!await DeviceRegistrationRateLimit.TryConsumeAsync(redis.GetDb(), httpRequest.HttpContext.Connection.RemoteIpAddress))
     {
-        var rateLimitKey = $"device_reg:subnet:{subnetBlock}";
-        var db2 = redis.GetDb();
-        var count = await db2.StringIncrementAsync(rateLimitKey);
-        if (count == 1)
-        {
-            await db2.KeyExpireAsync(rateLimitKey, TimeSpan.FromHours(1));
-        }
-        if (count > 5)
-        {
-            log.LogWarning("DeviceRegister: /24 subnet rate limit aşıldı. Subnet={S}", subnetBlock);
-            return TooManyRequests("SUBNET_RATE_LIMIT", "Bu ağdan çok fazla kayıt yapıldı. Lütfen bir saat sonra tekrar deneyin.");
-        }
+        log.LogWarning("DeviceRegister: IP veya ağ bloğu kayıt limiti aşıldı. Subnet={S}", GetClientIpBlock(httpRequest));
+        return TooManyRequests("SUBNET_RATE_LIMIT", "Bu ağdan çok fazla kayıt yapıldı. Lütfen bir saat sonra tekrar deneyin.");
     }
 
     var token = tokenService.Generate();
@@ -1347,13 +1348,13 @@ app.MapGet("/api/v1/posts", async (
             WITH base AS (
                 SELECT p.id,
                        ROW_NUMBER() OVER (PARTITION BY p.category_id ORDER BY p.trend_score DESC, p.created_at DESC) AS cat_rank,
-                       ROW_NUMBER() OVER (PARTITION BY COALESCE(p.user_id::text, p.device_id::text) ORDER BY p.trend_score DESC, p.created_at DESC) AS author_rank
+                       ROW_NUMBER() OVER (PARTITION BY COALESCE(p.user_id::text, p.device_id::text), CASE WHEN p.is_anonymous THEN p.id END ORDER BY p.trend_score DESC, p.created_at DESC) AS author_rank
                 FROM posts p
                 WHERE p.status = 'active' AND p.is_unlisted = FALSE {stageWhere} {notInterestedWhere} {overImposedWhere}
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-              AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
-              AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
+              AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
+              AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
                   AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
             )
             SELECT COUNT(*) FROM base WHERE cat_rank <= 5 AND author_rank <= 3
@@ -1367,8 +1368,8 @@ app.MapGet("/api/v1/posts", async (
             WHERE p.status = 'active' AND p.is_unlisted = FALSE {categoryWhere} {afterWhere} {stageWhere} {notInterestedWhere} {overImposedWhere}
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-              AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
-              AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
+              AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
+              AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
               AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
             """;
     }
@@ -1396,18 +1397,18 @@ app.MapGet("/api/v1/posts", async (
                 SELECT p.id, p.title, p.content, p.image_url, c.id AS cat_id, c.name AS cat_name, c.emoji,
                        p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                        v.vote_type, p.trend_score, p.created_at,
-                       (p.device_id = @deviceId OR p.user_id = @userId),
+                       (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END) AS is_owner,
                        p.is_anonymous,
                        ROW_NUMBER() OVER (PARTITION BY p.category_id ORDER BY p.trend_score DESC, p.created_at DESC) AS cat_rank,
-                       ROW_NUMBER() OVER (PARTITION BY COALESCE(p.user_id::text, p.device_id::text) ORDER BY p.trend_score DESC, p.created_at DESC) AS author_rank
+                       ROW_NUMBER() OVER (PARTITION BY COALESCE(p.user_id::text, p.device_id::text), CASE WHEN p.is_anonymous THEN p.id END ORDER BY p.trend_score DESC, p.created_at DESC) AS author_rank
                 FROM posts p
                 JOIN categories c ON c.id = p.category_id
                 LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
                 WHERE p.status = 'active' AND p.is_unlisted = FALSE {stageWhere} {notInterestedWhere} {overImposedWhere}
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-              AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
-              AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
+              AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
+              AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
                   AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
             )
             SELECT id, title, content, image_url, cat_id, cat_name, emoji,
@@ -1439,7 +1440,7 @@ app.MapGet("/api/v1/posts", async (
             SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                    p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                    v.vote_type, p.trend_score, p.created_at,
-                   (p.device_id = @deviceId OR p.user_id = @userId),
+                   (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                    p.is_unlisted, p.is_anonymous, p.tags, p.content_source
             FROM posts p
             JOIN categories c ON c.id = p.category_id
@@ -1448,8 +1449,8 @@ app.MapGet("/api/v1/posts", async (
             WHERE p.status = 'active' AND p.is_unlisted = FALSE {categoryWhere} {afterWhere} {stageWhere} {notInterestedWhere} {overImposedWhere}
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-              AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
-              AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
+              AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
+              AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
               AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
             ORDER BY {affinityOrderBy}
             LIMIT @limit{(hasCursor ? "" : " OFFSET @offset")}
@@ -1491,7 +1492,7 @@ app.MapGet("/api/v1/posts", async (
             SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                    p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                    v.vote_type, p.trend_score, p.created_at,
-                   (p.device_id = @deviceId OR p.user_id = @userId),
+                   (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                    p.is_unlisted, p.is_anonymous, p.tags, p.content_source
             FROM posts p
             JOIN categories c ON c.id = p.category_id
@@ -1499,12 +1500,12 @@ app.MapGet("/api/v1/posts", async (
             WHERE p.status = 'active' AND p.is_unlisted = FALSE
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-              AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+              AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
               AND p.created_at >= NOW() - INTERVAL '2 hours'
               AND p.id != ALL(@existingIds)
               AND p.distribution_stage >= 2
               {notInterestedWhere} {overImposedWhere}
-              AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
+              AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
               AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
             ORDER BY p.created_at DESC
             LIMIT @freshSlots
@@ -1542,7 +1543,7 @@ app.MapGet("/api/v1/posts", async (
                 SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                        p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                        v.vote_type, p.trend_score, p.created_at,
-                       (p.device_id = @deviceId OR p.user_id = @userId),
+                       (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                        p.is_anonymous
                 FROM posts p
                 JOIN categories c ON c.id = p.category_id
@@ -1550,7 +1551,7 @@ app.MapGet("/api/v1/posts", async (
                 WHERE p.status = 'active' AND p.is_unlisted = FALSE
                   AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
                   AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-                  AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+                  AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
                   AND p.distribution_stage >= 2
                   AND p.id != ALL(@existingIds)
                   AND p.category_id NOT IN (
@@ -1559,7 +1560,7 @@ app.MapGet("/api/v1/posts", async (
                       WHERE user_id = @userId
                         AND updated_at >= NOW() - INTERVAL '7 days'
                   )
-                  AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
+                  AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
                   AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
                 ORDER BY RANDOM()
                 LIMIT @slots
@@ -1638,7 +1639,7 @@ app.MapGet("/api/v1/posts/discover", async (
         SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
@@ -1646,11 +1647,11 @@ app.MapGet("/api/v1/posts/discover", async (
         WHERE p.status = 'active' AND p.is_unlisted = FALSE
           AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
           AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-          AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+          AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
           AND (
               @userId = '00000000-0000-0000-0000-000000000000'::uuid
               OR (
-                  NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
+                  NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
                   AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
               )
           )
@@ -1674,7 +1675,7 @@ app.MapGet("/api/v1/posts/discover", async (
         SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
@@ -1682,11 +1683,11 @@ app.MapGet("/api/v1/posts/discover", async (
         WHERE p.status = 'active' AND p.is_unlisted = FALSE
           AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
           AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-          AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+          AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
           AND (
               @userId = '00000000-0000-0000-0000-000000000000'::uuid
               OR (
-                  NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
+                  NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
                   AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
               )
           )
@@ -1711,7 +1712,7 @@ app.MapGet("/api/v1/posts/discover", async (
         SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
@@ -1719,11 +1720,11 @@ app.MapGet("/api/v1/posts/discover", async (
         WHERE p.status = 'active' AND p.is_unlisted = FALSE
           AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
           AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-          AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+          AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
           AND (
               @userId = '00000000-0000-0000-0000-000000000000'::uuid
               OR (
-                  NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
+                  NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
                   AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
               )
           )
@@ -1754,7 +1755,7 @@ app.MapGet("/api/v1/posts/discover", async (
                 SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                        p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                        v.vote_type, p.trend_score, p.created_at,
-                       (p.device_id = @deviceId OR p.user_id = @userId),
+                       (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                        p.is_anonymous
                 FROM posts p
                 JOIN categories c ON c.id = p.category_id
@@ -1762,11 +1763,11 @@ app.MapGet("/api/v1/posts/discover", async (
                 WHERE p.id = ANY(@postIds) AND p.status = 'active' AND p.is_unlisted = FALSE
                   AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
                   AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-                  AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+                  AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
                   AND (
                       @userId = '00000000-0000-0000-0000-000000000000'::uuid
                       OR (
-                          NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
+                          NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
                           AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
                       )
                   )
@@ -1788,7 +1789,7 @@ app.MapGet("/api/v1/posts/discover", async (
         SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
@@ -1796,11 +1797,11 @@ app.MapGet("/api/v1/posts/discover", async (
         WHERE p.status = 'active' AND p.is_unlisted = FALSE
           AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
           AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-          AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+          AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
           AND (
               @userId = '00000000-0000-0000-0000-000000000000'::uuid
               OR (
-                  NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
+                  NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id AND p.is_anonymous = FALSE)
                   AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
               )
           )
@@ -1895,11 +1896,11 @@ app.MapGet("/api/v1/posts/discover/feed", async (
                    c.id AS c_id, c.name AS c_name, c.emoji,
                    p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                    v.vote_type, p.trend_score, p.created_at,
-                   (p.device_id = @deviceId OR p.user_id = @userId) AS is_owner,
+                   (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END) AS is_owner,
                    p.is_unlisted, p.is_anonymous, p.tags, p.content_source,
-                   COALESCE(p.user_id, p.device_id) AS ranking_author_key,
+                   CASE WHEN p.is_anonymous THEN p.id ELSE COALESCE(p.user_id, p.device_id) END AS ranking_author_key,
                    ROW_NUMBER() OVER (
-                       PARTITION BY COALESCE(p.user_id::text, p.device_id::text)
+                       PARTITION BY COALESCE(p.user_id::text, p.device_id::text), CASE WHEN p.is_anonymous THEN p.id END
                        ORDER BY p.trend_score DESC, p.id DESC
                    ) AS author_rank
             FROM posts p
@@ -1911,8 +1912,10 @@ app.MapGet("/api/v1/posts/discover/feed", async (
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
               AND (
-                  SELECT COUNT(*) FROM reports r
+                  SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r
+                  JOIN devices rd ON rd.id = r.reporter_device_id
                   WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending'
+                    AND rd.created_at <= NOW() - INTERVAL '24 hours'
               ) < 3
               AND (
                   @deviceId = '00000000-0000-0000-0000-000000000000'::uuid
@@ -1927,6 +1930,7 @@ app.MapGet("/api/v1/posts/discover/feed", async (
                       NOT EXISTS (
                           SELECT 1 FROM blocked_users bu
                           WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id
+                            AND p.is_anonymous = FALSE
                       )
                       AND NOT EXISTS (
                           SELECT 1 FROM muted_categories mc
@@ -2001,9 +2005,9 @@ app.MapGet("/api/v1/posts/discover/feed", async (
                c.id AS c_id, c.name AS c_name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId) AS is_owner,
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END) AS is_owner,
                p.is_unlisted, p.is_anonymous, p.tags, p.content_source,
-               COALESCE(p.user_id, p.device_id) AS ranking_author_key
+               CASE WHEN p.is_anonymous THEN p.id ELSE COALESCE(p.user_id, p.device_id) END AS ranking_author_key
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -2017,8 +2021,10 @@ app.MapGet("/api/v1/posts/discover/feed", async (
           AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
           AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
           AND (
-              SELECT COUNT(*) FROM reports r
+              SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r
+              JOIN devices rd ON rd.id = r.reporter_device_id
               WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending'
+                AND rd.created_at <= NOW() - INTERVAL '24 hours'
           ) < 3
           AND (
               @deviceId = '00000000-0000-0000-0000-000000000000'::uuid
@@ -2178,9 +2184,9 @@ app.MapGet("/api/v1/posts/discover/feed", async (
                    c.id AS c_id, c.name AS c_name, c.emoji,
                    p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                    v.vote_type, p.trend_score, p.created_at,
-                   (p.device_id = @deviceId OR p.user_id = @userId) AS is_owner,
+                   (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END) AS is_owner,
                    p.is_unlisted, p.is_anonymous, p.tags, p.content_source,
-                   COALESCE(p.user_id, p.device_id) AS ranking_author_key
+                   CASE WHEN p.is_anonymous THEN p.id ELSE COALESCE(p.user_id, p.device_id) END AS ranking_author_key
             FROM posts p
             JOIN categories c ON c.id = p.category_id
             LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
@@ -2190,8 +2196,10 @@ app.MapGet("/api/v1/posts/discover/feed", async (
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
               AND (
-                  SELECT COUNT(*) FROM reports r
+                  SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r
+                  JOIN devices rd ON rd.id = r.reporter_device_id
                   WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending'
+                    AND rd.created_at <= NOW() - INTERVAL '24 hours'
               ) < 3
               AND p.id != ALL(@usedIds)
               AND (
@@ -2207,6 +2215,7 @@ app.MapGet("/api/v1/posts/discover/feed", async (
                       NOT EXISTS (
                           SELECT 1 FROM blocked_users bu
                           WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id
+                            AND p.is_anonymous = FALSE
                       )
                       AND NOT EXISTS (
                           SELECT 1 FROM muted_categories mc
@@ -2308,7 +2317,7 @@ app.MapGet("/api/v1/posts/{id:guid}/stats", async (
     await using var connection = await db.OpenConnectionAsync();
     // Check ownership
     await using var ownerCmd = new NpgsqlCommand(
-        "SELECT 1 FROM posts WHERE id = @id AND (device_id = @deviceId OR user_id = @userId)",
+        "SELECT 1 FROM posts WHERE id = @id AND (CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END)",
         connection
     );
     ownerCmd.Parameters.AddWithValue("id", id);
@@ -2387,10 +2396,10 @@ app.MapGet("/api/v1/posts/{id:guid}/similar", async (
         WITH target AS (
             SELECT category_id, title FROM posts WHERE id = @id
         )
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
@@ -2472,10 +2481,10 @@ app.MapGet("/api/v1/posts/weekly-featured", async (
     // Logic: highest comment count in last 7 days among posts with > 50 votes.
     await using var command = new NpgsqlCommand(
         """
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
@@ -2512,10 +2521,10 @@ app.MapGet("/api/v1/posts/today", async (
     await using var connection = await db.OpenConnectionAsync();
     await using var command = new NpgsqlCommand(
         """
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
@@ -2561,15 +2570,15 @@ app.MapGet("/api/v1/posts/trending/city", async (
     await using var connection = await db.OpenConnectionAsync();
     await using var cmd = new NpgsqlCommand(
         """
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
-        WHERE p.id = ANY(@postIds) AND p.status = 'active'
+        WHERE p.id = ANY(@postIds) AND p.status = 'active' AND p.is_unlisted = FALSE
         ORDER BY p.trend_score DESC
         """,
         connection
@@ -2597,7 +2606,8 @@ app.MapPost("/api/v1/posts", async (
     BusinessMetricsService metrics,
     SloMetrics sloMetrics,
     DeviceTrustService deviceTrust,
-    AppAttestationService appAttestation
+    AppAttestationService appAttestation,
+    SafeSearchService safeSearch
 ) =>
 {
     var (request, imageFile) = await ReadCreatePostRequestWithImageAsync(httpRequest);
@@ -2623,6 +2633,10 @@ app.MapPost("/api/v1/posts", async (
         using var stream = imageFile.OpenReadStream();
         if (ImageValidator.DetectFormat(stream) is null)
             return BadRequest("INVALID_IMAGE_FORMAT", "Desteklenmeyen görsel formatı. jpg, png veya webp kullanın.");
+
+        // Fail closed: SafeSearch yapılandırılmamışsa görsel hiç denetlenemez; herkese açık depoya yüklenmez.
+        if (storageService.IsEnabled && !safeSearch.IsEnabled)
+            return BadRequest("IMAGE_MODERATION_UNAVAILABLE", "Görsel denetimi şu anda kullanılamıyor. Görseli kaldırıp tekrar dene.");
     }
 
     var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
@@ -2711,7 +2725,7 @@ app.MapPost("/api/v1/posts", async (
         var objectName = $"posts/{Guid.NewGuid()}.jpg";
 
         using var stream = imageFile.OpenReadStream();
-        using var processedStream = await imageProcessorService.ProcessAsync(stream);
+        using var processedStream = await imageProcessorService.ProcessAsync(stream, httpRequest.HttpContext.RequestAborted);
 
         // Decode/re-encode zorunlu: işlenemeyen dosya yüklenmez, post oluşturma reddedilir.
         if (processedStream is null)
@@ -2876,10 +2890,10 @@ app.MapGet("/api/v1/posts/{id:guid}", async (
     await using var connection = await db.OpenConnectionAsync();
     await using var command = new NpgsqlCommand(
         """
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                p.is_unlisted, p.is_anonymous, p.tags, p.ai_summary, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
@@ -2891,6 +2905,7 @@ app.MapGet("/api/v1/posts/{id:guid}", async (
                   SELECT 1 FROM blocked_users bu
                   WHERE bu.blocker_user_id = @userId
                     AND bu.blocked_user_id = p.user_id
+                    AND p.is_anonymous = FALSE
               )
           )
         """,
@@ -3004,10 +3019,10 @@ app.MapPost("/api/v1/posts/{id:guid}/ai-summary", async (
 
     await using var postCmd = new NpgsqlCommand(
         """
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                p.is_unlisted, p.is_anonymous, p.tags, p.ai_summary, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
@@ -3019,6 +3034,7 @@ app.MapPost("/api/v1/posts/{id:guid}/ai-summary", async (
                   SELECT 1 FROM blocked_users bu
                   WHERE bu.blocker_user_id = @userId
                     AND bu.blocked_user_id = p.user_id
+                    AND p.is_anonymous = FALSE
               )
           )
         """,
@@ -3054,7 +3070,7 @@ app.MapDelete("/api/v1/posts/{id:guid}", async (
         UPDATE posts
         SET status = 'deleted', updated_at = NOW()
         WHERE id = @id
-          AND (device_id = @deviceId OR user_id = @userId)
+          AND (CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END)
           AND status != 'deleted'
         """,
         connection
@@ -3164,7 +3180,11 @@ app.MapPut("/api/v1/posts/{id:guid}", async (
     Db db,
     RequestDevice requestDevice,
     JwtService jwtService,
-    RedisService redis
+    RedisService redis,
+    ContentModerationService moderationService,
+    PerspectiveApiService perspectiveService,
+    ComplianceLogService complianceLog,
+    SloMetrics sloMetrics
 ) =>
 {
     if (ValidateRequest(request) is { } validationError)
@@ -3179,26 +3199,92 @@ app.MapPut("/api/v1/posts/{id:guid}", async (
         return Unauthorized();
     }
 
+    // Düzenleme, oluşturma ile aynı moderasyondan geçer (anahtar kelime/PII/tehdit, Perspective, kriz).
+    var moderationStarted = TimeProvider.System.GetTimestamp();
+    var moderation = moderationService.Analyze($"{request.Title}\n{request.Content}");
+    sloMetrics.RecordModeration(
+        TimeProvider.System.GetElapsedTime(moderationStarted),
+        moderation.IsRejected);
+
     await using var connection = await db.OpenConnectionAsync();
-    await using var transaction = await connection.BeginTransactionAsync();
-    var effectiveDeviceId = deviceId ?? await GetUserDeviceIdAsync(connection, userId!.Value, transaction);
+    var effectiveDeviceId = deviceId ?? await GetUserDeviceIdAsync(connection, userId!.Value);
     if (effectiveDeviceId is null)
     {
-        await transaction.RollbackAsync();
         return Unauthorized();
     }
 
+    // Sahiplik ve düzenleme penceresi Perspective çağrısından ÖNCE doğrulanır: sahibi olmayan veya
+    // süresi geçmiş düzenleme istekleri Perspective kotası harcamasın. İncelemeye düşen düzenlemeler de
+    // aynı kontrolden geçmiş olur.
+    await using (var editableCommand = new NpgsqlCommand(
+        """
+        SELECT EXISTS (
+            SELECT 1
+            FROM posts
+            WHERE id = @id
+              AND status = 'active'
+              AND created_at > NOW() - INTERVAL '15 minutes'
+              AND (CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END)
+        )
+        """,
+        connection))
+    {
+        editableCommand.Parameters.AddWithValue("id", id);
+        editableCommand.Parameters.AddWithValue("deviceId", effectiveDeviceId.Value);
+        editableCommand.Parameters.AddWithValue("userId", (object?)userId ?? DBNull.Value);
+        if (await editableCommand.ExecuteScalarAsync() is not true)
+        {
+            return NotFound("POST_NOT_EDITABLE", "Post bulunamadı veya düzenleme süresi doldu.");
+        }
+    }
+
+    // Perspective sonucu (kullanılamıyor dahil) oluşturmadaki gibi ApplyToxicityResult ile karara uygulanır:
+    // API yapılandırılmamış / çökükse Moderation:ToxicityUnavailableMode "review" iken düzenleme incelemeye
+    // düşer (kaydedilmez, önceki metin yayında kalır).
+    PerspectiveResult? perspectiveResult = null;
+    if (!moderation.IsRejected)
+    {
+        var toxicityCheck = await perspectiveService.AnalyzeAsync($"{request.Title}\n{request.Content}");
+        moderation = PerspectiveApiService.ApplyToxicityResult(moderation, toxicityCheck, perspectiveService.UnavailableMode);
+        perspectiveResult = toxicityCheck.Result;
+    }
+    var editDecision = ContentEditModeration.Decide(moderation, perspectiveResult);
+    if (editDecision.Outcome == ContentEditOutcome.Rejected)
+    {
+        return BadRequest(editDecision.ErrorCode!, editDecision.Message);
+    }
+
+    var editIp = httpRequest.HttpContext.Connection.RemoteIpAddress?.ToString();
+    if (editDecision.Outcome == ContentEditOutcome.RequiresReview)
+    {
+        // Önceki (onaylı) metin yayında kalır; incelemeye düşecek düzenleme kaydedilmez.
+        if (editDecision.IsCrisisFlagged)
+        {
+            await InsertCrisisSupportNotificationForContentAsync(connection, effectiveDeviceId.Value, id);
+        }
+
+        _ = complianceLog.LogAsync("post_edit_held", editIp, effectiveDeviceId, userId, id, "post",
+            new { reason = moderation.Message, crisis_flagged = editDecision.IsCrisisFlagged });
+        return BadRequest(editDecision.ErrorCode!, editDecision.Message);
+    }
+
+    await using var transaction = await connection.BeginTransactionAsync();
     await using var command = new NpgsqlCommand(
         """
         UPDATE posts
         SET title = @title,
             content = @content,
             is_edited = TRUE,
+            moderation_reason = @moderationReason,
+            moderation_checked_at = NOW(),
+            perspective_toxicity = @perspectiveToxicity,
+            perspective_scores = @perspectiveScores::jsonb,
             updated_at = NOW()
         WHERE id = @id
           AND status = 'active'
           AND created_at > NOW() - INTERVAL '15 minutes'
-          AND (device_id = @deviceId OR user_id = @userId)
+          AND (CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END)
+        RETURNING slug
         """,
         connection,
         transaction
@@ -3208,13 +3294,45 @@ app.MapPut("/api/v1/posts/{id:guid}", async (
     command.Parameters.AddWithValue("content", request.Content);
     command.Parameters.AddWithValue("deviceId", effectiveDeviceId.Value);
     command.Parameters.AddWithValue("userId", (object?)userId ?? DBNull.Value);
+    command.Parameters.AddWithValue("moderationReason", moderation.Message);
+    command.Parameters.AddWithValue("perspectiveToxicity",
+        perspectiveResult is not null ? (object)perspectiveResult.Toxicity : DBNull.Value);
+    command.Parameters.AddWithValue("perspectiveScores",
+        perspectiveResult is not null
+            ? System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    toxicity = perspectiveResult.Toxicity,
+                    severe_toxicity = perspectiveResult.SevereToxicity,
+                    identity_attack = perspectiveResult.IdentityAttack,
+                    insult = perspectiveResult.Insult,
+                    threat = perspectiveResult.Threat,
+                    overall = perspectiveResult.Overall,
+                    analyzed_at = DateTime.UtcNow,
+                    action = moderation.Status
+                })
+            : (object)DBNull.Value);
 
-    var affected = await command.ExecuteNonQueryAsync();
-    await transaction.CommitAsync();
-    if (affected == 0)
+    // RETURNING slug: 0 satır (pencere bu arada dolduysa) => null.
+    var slug = await command.ExecuteScalarAsync();
+    if (slug is null)
     {
+        await transaction.RollbackAsync();
         return NotFound("POST_NOT_EDITABLE", "Post bulunamadı veya düzenleme süresi doldu.");
     }
+    await transaction.CommitAsync();
+
+    _ = complianceLog.LogAsync("post_edit", editIp, effectiveDeviceId, userId, id, "post",
+        new { status = moderation.Status });
+
+    // Paylaşım görselleri ve crawler OG HTML'i düzenleme öncesi metni sunmaya devam etmesin.
+    var staleCacheKeys = new List<string>
+    {
+        $"post:share-image:{id}",
+        $"post:story-image:{id}",
+        $"crawler:post:{id}"
+    };
+    if (slug is string postSlug) staleCacheKeys.Add($"crawler:slug:{postSlug}");
+    await redis.DeleteAsync(staleCacheKeys.ToArray());
 
     await redis.MarkPostDirtyAsync(id);
     return Results.NoContent();
@@ -3523,10 +3641,10 @@ app.MapGet("/api/v1/search", async (
     await using var connection = await db.OpenConnectionAsync();
     await using var command = new NpgsqlCommand(
         $"""
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                COUNT(*) OVER() AS total_count,
                ts_rank(to_tsvector('simple', coalesce(p.title, '') || ' ' || coalesce(p.content, '')), plainto_tsquery('simple', @query)) as rank,
                p.tags
@@ -3540,6 +3658,7 @@ app.MapGet("/api/v1/search", async (
                   SELECT 1 FROM blocked_users bu
                   WHERE bu.blocker_user_id = @userId
                     AND bu.blocked_user_id = p.user_id
+                    AND p.is_anonymous = FALSE
               )
           )
           AND to_tsvector('simple', coalesce(p.title, '') || ' ' || coalesce(p.content, '')) @@ plainto_tsquery('simple', @query)
@@ -3593,7 +3712,8 @@ app.MapGet("/api/v1/search/users", async (
         """
         SELECT u.username,
                u.karma,
-               (SELECT COUNT(*) FROM posts p WHERE p.user_id = u.id AND p.status = 'active') AS post_count
+               (SELECT COUNT(*) FROM posts p WHERE p.user_id = u.id AND p.status = 'active'
+                  AND p.is_anonymous = FALSE AND p.is_unlisted = FALSE) AS post_count
         FROM users u
         WHERE u.deleted_at IS NULL
           AND u.is_banned = FALSE
@@ -3689,7 +3809,7 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
         );
     }
 
-    if (userId is not null && await IsBlockedByPostAuthorAsync(connection, transaction, id, userId.Value))
+    if (await IsBlockedByPostAuthorAsync(connection, transaction, id, userId, effectiveDeviceId.Value))
     {
         await transaction.RollbackAsync();
         return Results.Json(
@@ -3698,7 +3818,7 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
         );
     }
 
-    var (oldVote, oldTotal, curHakli, curHaksiz, categoryId, postCreatedAt) = await GetVoteContextAsync(connection, transaction, id, effectiveDeviceId.Value);
+    var (oldVote, oldTotal, curHakli, curHaksiz, categoryId, postCreatedAt, postIsUnlisted, existingVoteSuppressed) = await GetVoteContextAsync(connection, transaction, id, effectiveDeviceId.Value);
 
     if (postCreatedAt != DateTimeOffset.MinValue && postCreatedAt.AddDays(7) <= DateTimeOffset.UtcNow)
     {
@@ -3739,7 +3859,7 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
         );
         hakli = 0;
         haksiz = 0;
-        // Inline brigade guard: if ≥5 votes from same /24 IP block or fingerprint cluster
+        // Inline brigade guard: if >5 devices vote from the same /24 IP block
         // within 10 min, quarantine the entire cluster (suppressed status).
         brigadeResult = await brigadeGuard.CheckAndSuppressAsync(connection, transaction, id, voterIpBlock);
         (hakli, haksiz) = await UpdateVoteCountersReturningAsync(connection, transaction, id, oldVote, request.VoteType);
@@ -3754,7 +3874,8 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
     await CheckPostVoteMilestoneAsync(connection, transaction, id, oldTotal, newTotal);
     await transaction.CommitAsync();
 
-    var voteIsSuppressed = brigadeResult.Detected;
+    // Daha önce bastırılmış oy, yeniden oylansa da bastırılmış kalır (UpsertVoteAsync sıfırlamaz).
+    var voteIsSuppressed = brigadeResult.Detected || existingVoteSuppressed;
     var voteIp = httpRequest.HttpContext.Connection.RemoteIpAddress?.ToString();
     _ = complianceLog.LogAsync("vote", voteIp, effectiveDeviceId, userId, id, "post",
         new { vote_type = request.VoteType, quarantined = trustDecision.ShouldQuarantineVote, suppressed = voteIsSuppressed });
@@ -3791,9 +3912,9 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
     if (!trustDecision.ShouldQuarantineVote && !brigadeResult.Detected)
         await redis.MarkPostDirtyAsync(id);
 
-    // City-level trending: fire-and-forget update
+    // City-level trending: fire-and-forget update (liste dışı gönderiler herkese açık listeye girmez)
     var city = geo.GetCity(voterIp);
-    if (city is not null && !trustDecision.ShouldQuarantineVote && !voteIsSuppressed)
+    if (city is not null && !postIsUnlisted && !trustDecision.ShouldQuarantineVote && !voteIsSuppressed)
         _ = redis.UpdateCityTrendingAsync(city, id, newTotal);
 
     sseManager.Broadcast(id, "vote_update", new
@@ -3849,8 +3970,21 @@ app.MapDelete("/api/v1/posts/{id:guid}/vote", async (
 
     if (oldVote is not null)
     {
+        // Brigade bastırması silmeyle aklanamaz: bastırılmış oy silinirken (post, cihaz) hafızaya alınır,
+        // aynı cihaz yeniden oy verdiğinde UpsertVoteAsync bastırmayı geri uygular.
         await using var delete = new NpgsqlCommand(
-            "DELETE FROM votes WHERE post_id = @postId AND device_id = @deviceId",
+            """
+            WITH removed AS (
+                DELETE FROM votes
+                WHERE post_id = @postId AND device_id = @deviceId
+                RETURNING post_id, device_id, is_suppressed, suppression_reason, suppressed_at
+            )
+            INSERT INTO vote_suppression_history (post_id, device_id, suppression_reason, suppressed_at)
+            SELECT post_id, device_id, suppression_reason, COALESCE(suppressed_at, NOW())
+            FROM removed
+            WHERE is_suppressed
+            ON CONFLICT (post_id, device_id) DO NOTHING
+            """,
             connection,
             transaction
         );
@@ -3978,21 +4112,46 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
     };
 
     await using var connection = await db.OpenConnectionAsync();
+    // Engellenen kullanıcının yorumları gizlenir; JWT'siz (user_id NULL) yorumlar da
+    // engellenen hesaba bağlı cihazdan geldiyse gizlenir (user_device_links).
+    // Anonim postta OP'nin kendi yanıtları (is_post_owner) iki dalda da gizlenmez: aksi halde
+    // "engelle ve farka bak" anonim yazarı ele verir.
+    const string blockedCommentAuthorFilter = """
+        AND (
+            @userId = '00000000-0000-0000-0000-000000000000'::uuid
+            OR NOT EXISTS (
+                SELECT 1 FROM blocked_users bu
+                WHERE bu.blocker_user_id = @userId
+                  AND (
+                      (bu.blocked_user_id = cm.user_id AND NOT (p.is_anonymous AND p.user_id IS NOT DISTINCT FROM cm.user_id))
+                      OR (
+                          cm.user_id IS NULL
+                          AND NOT (p.is_anonymous AND cm.device_id = p.device_id)
+                          AND EXISTS (
+                              SELECT 1 FROM user_device_links udl
+                              WHERE udl.user_id = bu.blocked_user_id
+                                AND udl.device_id = cm.device_id
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1 FROM user_device_links own
+                              WHERE own.user_id = bu.blocker_user_id
+                                AND own.device_id = cm.device_id
+                          )
+                      )
+                  )
+            )
+        )
+        """;
+
     await using var countCommand = new NpgsqlCommand(
-        """
+        $"""
         SELECT COUNT(*)
         FROM comments cm
+        JOIN posts p ON p.id = cm.post_id
         WHERE cm.post_id = @postId
           AND cm.status = 'active'
           AND cm.parent_id IS NULL
-          AND (
-              @userId = '00000000-0000-0000-0000-000000000000'::uuid
-              OR NOT EXISTS (
-                  SELECT 1 FROM blocked_users bu
-                  WHERE bu.blocker_user_id = @userId
-                    AND bu.blocked_user_id = cm.user_id
-              )
-          )
+          {blockedCommentAuthorFilter}
         """,
         connection
     );
@@ -4002,10 +4161,10 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
 
     const string commentSelectColumns = """
         cm.id, cm.content, cm.upvote_count, cm.downvote_count, cu.comment_id IS NOT NULL, cd.comment_id IS NOT NULL,
-               (cm.device_id = @deviceId OR cm.user_id = @userId), cm.created_at,
+               COALESCE((CASE WHEN cm.user_id IS NULL THEN cm.device_id = @deviceId ELSE cm.user_id = @userId END), FALSE), cm.created_at,
                cm.is_pinned,
-               CASE WHEN p.is_anonymous = TRUE AND cm.user_id = p.user_id THEN NULL ELSE u.username END AS username,
-               CASE WHEN p.is_anonymous = TRUE AND cm.user_id = p.user_id THEN NULL ELSE cm.user_id END AS author_id,
+               CASE WHEN (p.is_anonymous = TRUE AND cm.user_id = p.user_id) OR u.deleted_at IS NOT NULL THEN NULL ELSE u.username END AS username,
+               CASE WHEN (p.is_anonymous = TRUE AND cm.user_id = p.user_id) OR u.deleted_at IS NOT NULL THEN NULL ELSE cm.user_id END AS author_id,
                cm.is_edited,
                ((cm.user_id IS NOT NULL AND cm.user_id = p.user_id) OR (cm.user_id IS NULL AND cm.device_id = p.device_id)) AS is_post_owner,
                (SELECT COUNT(*)::int FROM comment_upvotes cu_h
@@ -4057,14 +4216,7 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
         LEFT JOIN comment_downvotes cd ON cd.comment_id = cm.id AND cd.device_id = @deviceId
         LEFT JOIN users u ON u.id = cm.user_id
         WHERE cm.post_id = @postId AND cm.status = 'active' AND cm.parent_id IS NULL
-          AND (
-              @userId = '00000000-0000-0000-0000-000000000000'::uuid
-              OR NOT EXISTS (
-                  SELECT 1 FROM blocked_users bu
-                  WHERE bu.blocker_user_id = @userId
-                    AND bu.blocked_user_id = cm.user_id
-              )
-          )
+          {blockedCommentAuthorFilter}
         ORDER BY cm.is_pinned DESC, {orderBy}
         LIMIT @limit OFFSET @offset
         """,
@@ -4098,14 +4250,8 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
                 LEFT JOIN comment_downvotes cd ON cd.comment_id = cm.id AND cd.device_id = @deviceId
                 LEFT JOIN users u ON u.id = cm.user_id
                 WHERE cm.parent_id = ANY(@parentIds) AND cm.status = 'active'
-                  AND (
-                      @userId = '00000000-0000-0000-0000-000000000000'::uuid
-                      OR NOT EXISTS (
-                          SELECT 1 FROM blocked_users bu
-                          WHERE bu.blocker_user_id = @userId
-                            AND bu.blocked_user_id = cm.user_id
-                      )
-                  )
+                  AND cm.post_id = @postId
+                  {blockedCommentAuthorFilter}
 
                 UNION ALL
 
@@ -4117,14 +4263,8 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
                 LEFT JOIN comment_downvotes cd ON cd.comment_id = cm.id AND cd.device_id = @deviceId
                 LEFT JOIN users u ON u.id = cm.user_id
                 WHERE cm.status = 'active'
-                  AND (
-                      @userId = '00000000-0000-0000-0000-000000000000'::uuid
-                      OR NOT EXISTS (
-                          SELECT 1 FROM blocked_users bu
-                          WHERE bu.blocker_user_id = @userId
-                            AND bu.blocked_user_id = cm.user_id
-                      )
-                  )
+                  AND cm.post_id = @postId
+                  {blockedCommentAuthorFilter}
             )
             SELECT * FROM descendants
             """,
@@ -4231,13 +4371,48 @@ app.MapPost("/api/v1/posts/{id:guid}/comments", async (
         return Unauthorized();
     }
 
-    if (userId is not null && await IsBlockedByPostAuthorAsync(connection, transaction, id, userId.Value))
+    if (await IsBlockedByPostAuthorAsync(connection, transaction, id, userId, effectiveDeviceId.Value))
     {
         await transaction.RollbackAsync();
         return Results.Json(
             new ErrorEnvelope(new ErrorBody("BLOCKED_BY_AUTHOR", "Bu içeriğe yorum yapamazsınız.")),
             statusCode: StatusCodes.Status403Forbidden
         );
+    }
+
+    await using var postCheck = new NpgsqlCommand(
+        "SELECT EXISTS(SELECT 1 FROM posts WHERE id = @postId AND status = 'active')",
+        connection,
+        transaction
+    );
+    postCheck.Parameters.AddWithValue("postId", id);
+    if (!(bool)(await postCheck.ExecuteScalarAsync() ?? false))
+    {
+        await transaction.RollbackAsync();
+        return NotFound("POST_NOT_FOUND", "Post bulunamadı.");
+    }
+
+    // Yanıt yalnızca aynı gönderideki aktif bir yoruma bağlanabilir; aksi halde başka bir
+    // gönderinin başlığına yanıt enjekte edilip "Yargılanan" rozeti taklit edilebilir.
+    if (request.ParentId is not null)
+    {
+        await using var parentCheck = new NpgsqlCommand(
+            "SELECT EXISTS(SELECT 1 FROM comments WHERE id = @parentId AND post_id = @postId AND status = 'active')",
+            connection,
+            transaction
+        );
+        parentCheck.Parameters.AddWithValue("parentId", request.ParentId.Value);
+        parentCheck.Parameters.AddWithValue("postId", id);
+        if (!(bool)(await parentCheck.ExecuteScalarAsync() ?? false))
+        {
+            await transaction.RollbackAsync();
+            return BadRequest("INVALID_PARENT", "Yanıtlanan yorum bulunamadı veya bu gönderiye ait değil.");
+        }
+    }
+
+    if (userId is not null && deviceId is not null)
+    {
+        await LinkUserDeviceAsync(connection, transaction, userId.Value, deviceId.Value);
     }
 
     await using var command = new NpgsqlCommand(
@@ -4374,7 +4549,7 @@ app.MapDelete("/api/v1/comments/{id:guid}", async (
         UPDATE comments
         SET status = 'deleted', updated_at = NOW()
         WHERE id = @id
-          AND (device_id = @deviceId OR user_id = @userId)
+          AND (CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END)
           AND status = 'active'
         RETURNING post_id
         """,
@@ -4417,7 +4592,10 @@ app.MapPut("/api/v1/comments/{id:guid}", async (
     HttpRequest httpRequest,
     Db db,
     RequestDevice requestDevice,
-    JwtService jwtService
+    JwtService jwtService,
+    ContentModerationService moderationService,
+    ComplianceLogService complianceLog,
+    SloMetrics sloMetrics
 ) =>
 {
     if (ValidateRequest(request) is { } validationError)
@@ -4434,15 +4612,89 @@ app.MapPut("/api/v1/comments/{id:guid}", async (
     var deviceParam = deviceId ?? Guid.Empty;
     var userParam = userId ?? Guid.Empty;
 
+    // Düzenleme, oluşturma ile aynı moderasyondan geçer (anahtar kelime/PII/tehdit, kriz, kalite).
+    var moderationStarted = TimeProvider.System.GetTimestamp();
+    var moderation = moderationService.Analyze(request.Content);
+    sloMetrics.RecordModeration(
+        TimeProvider.System.GetElapsedTime(moderationStarted),
+        moderation.IsRejected);
+    var editDecision = ContentEditModeration.Decide(moderation);
+    if (editDecision.Outcome == ContentEditOutcome.Rejected)
+    {
+        return BadRequest(editDecision.ErrorCode!, editDecision.Message);
+    }
+
     await using var connection = await db.OpenConnectionAsync();
+    var editIp = httpRequest.HttpContext.Connection.RemoteIpAddress?.ToString();
+    if (editDecision.Outcome == ContentEditOutcome.RequiresReview)
+    {
+        // Önceki (onaylı) metin yayında kalır; incelemeye düşecek düzenleme kaydedilmez.
+        await using var editableCommand = new NpgsqlCommand(
+            """
+            SELECT post_id
+            FROM comments
+            WHERE id = @id
+              AND (CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END)
+              AND status = 'active'
+              AND created_at > NOW() - INTERVAL '5 minutes'
+            """,
+            connection
+        );
+        editableCommand.Parameters.AddWithValue("id", id);
+        editableCommand.Parameters.AddWithValue("deviceId", deviceParam);
+        editableCommand.Parameters.AddWithValue("userId", userParam);
+        if (await editableCommand.ExecuteScalarAsync() is not Guid commentPostId)
+        {
+            return NotFound("COMMENT_NOT_EDITABLE", "Yorum bulunamadı veya düzenleme süresi doldu.");
+        }
+
+        if (editDecision.IsCrisisFlagged)
+        {
+            var supportDeviceId = deviceId ?? await GetUserDeviceIdAsync(connection, userId!.Value);
+            if (supportDeviceId is not null)
+            {
+                await InsertCrisisSupportNotificationForContentAsync(connection, supportDeviceId.Value, commentPostId);
+            }
+        }
+
+        _ = complianceLog.LogAsync("comment_edit_held", editIp, deviceId, userId, id, "comment",
+            new { post_id = commentPostId, reason = moderation.Message, crisis_flagged = editDecision.IsCrisisFlagged });
+        return BadRequest(editDecision.ErrorCode!, editDecision.Message);
+    }
+
+    // Kalite cezası oluşturmadaki gibi yeniden hesaplanır (aynı posttaki başka yorumun kopyası +0.8).
+    var qualityPenalty = CommentQualityScorer.Score(request.Content);
+    await using var duplicateCommand = new NpgsqlCommand(
+        """
+        SELECT EXISTS (
+            SELECT 1
+            FROM comments other
+            WHERE other.post_id = (SELECT post_id FROM comments WHERE id = @id)
+              AND other.id <> @id
+              AND LOWER(TRIM(other.content)) = LOWER(TRIM(@content))
+              AND other.status = 'active'
+        )
+        """,
+        connection
+    );
+    duplicateCommand.Parameters.AddWithValue("id", id);
+    duplicateCommand.Parameters.AddWithValue("content", request.Content);
+    if ((bool)(await duplicateCommand.ExecuteScalarAsync() ?? false))
+    {
+        qualityPenalty = Math.Min(qualityPenalty + 0.8f, 1.0f);
+    }
+
     await using var command = new NpgsqlCommand(
         """
         UPDATE comments
         SET content = @content,
             is_edited = TRUE,
+            moderation_reason = @moderationReason,
+            moderation_checked_at = NOW(),
+            quality_penalty = @qualityPenalty,
             updated_at = NOW()
         WHERE id = @id
-          AND (device_id = @deviceId OR user_id = @userId)
+          AND (CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END)
           AND status = 'active'
           AND created_at > NOW() - INTERVAL '5 minutes'
         """,
@@ -4452,11 +4704,18 @@ app.MapPut("/api/v1/comments/{id:guid}", async (
     command.Parameters.AddWithValue("content", request.Content);
     command.Parameters.AddWithValue("deviceId", deviceParam);
     command.Parameters.AddWithValue("userId", userParam);
+    command.Parameters.AddWithValue("moderationReason", moderation.Message);
+    command.Parameters.AddWithValue("qualityPenalty", qualityPenalty);
 
     var affected = await command.ExecuteNonQueryAsync();
-    return affected == 0
-        ? NotFound("COMMENT_NOT_EDITABLE", "Yorum bulunamadı veya düzenleme süresi doldu.")
-        : Results.NoContent();
+    if (affected == 0)
+    {
+        return NotFound("COMMENT_NOT_EDITABLE", "Yorum bulunamadı veya düzenleme süresi doldu.");
+    }
+
+    _ = complianceLog.LogAsync("comment_edit", editIp, deviceId, userId, id, "comment",
+        new { status = moderation.Status });
+    return Results.NoContent();
 });
 
 app.MapPost("/api/v1/comments/{id:guid}/upvote", async (
@@ -4676,6 +4935,16 @@ app.MapPost("/api/v1/reports", async (
             request.TargetType,
             request.TargetId,
             threshold.Reason ?? "Rapor eşiği aşıldı."
+        );
+    }
+    else if (threshold.NeedsAdminAttention)
+    {
+        await AlertAdminsAboutUntrustedReportsAsync(
+            connection,
+            transaction,
+            request.TargetType,
+            request.TargetId,
+            threshold
         );
     }
 
@@ -4919,11 +5188,12 @@ app.MapGet("/api/v1/notifications", async (
                       SELECT 1 FROM blocked_users bu
                       WHERE bu.blocker_user_id = @userId
                         AND bu.blocked_user_id = p.user_id
+                        AND p.is_anonymous = FALSE
                   )
                   AND NOT EXISTS (
                       SELECT 1 FROM blocked_users bu
                       WHERE bu.blocker_user_id = @userId
-                        AND bu.blocked_user_id = nc.user_id
+                        AND bu.blocked_user_id = nc.user_id AND NOT (p.is_anonymous AND p.user_id IS NOT DISTINCT FROM nc.user_id)
                   )
               )
           )
@@ -4951,11 +5221,12 @@ app.MapGet("/api/v1/notifications", async (
                       SELECT 1 FROM blocked_users bu
                       WHERE bu.blocker_user_id = @userId
                         AND bu.blocked_user_id = p.user_id
+                        AND p.is_anonymous = FALSE
                   )
                   AND NOT EXISTS (
                       SELECT 1 FROM blocked_users bu
                       WHERE bu.blocker_user_id = @userId
-                        AND bu.blocked_user_id = nc.user_id
+                        AND bu.blocked_user_id = nc.user_id AND NOT (p.is_anonymous AND p.user_id IS NOT DISTINCT FROM nc.user_id)
                   )
               )
           )
@@ -4983,11 +5254,12 @@ app.MapGet("/api/v1/notifications", async (
                       SELECT 1 FROM blocked_users bu
                       WHERE bu.blocker_user_id = @userId
                         AND bu.blocked_user_id = p.user_id
+                        AND p.is_anonymous = FALSE
                   )
                   AND NOT EXISTS (
                       SELECT 1 FROM blocked_users bu
                       WHERE bu.blocker_user_id = @userId
-                        AND bu.blocked_user_id = nc.user_id
+                        AND bu.blocked_user_id = nc.user_id AND NOT (p.is_anonymous AND p.user_id IS NOT DISTINCT FROM nc.user_id)
                   )
               )
           )
@@ -5931,6 +6203,7 @@ app.MapPost("/api/v1/admin/devices/{id:guid}/ban", async (
     command.Parameters.AddWithValue("reason", request.Reason);
     command.Parameters.AddWithValue("expiresAt", (object?)expiresAt ?? DBNull.Value);
     await command.ExecuteNonQueryAsync();
+    await SetBannedDeviceVoteSuppressionAsync(connection, transaction, id, suppress: true);
 
     await LogAdminActionAsync(connection, transaction, adminEmail, "ban_device", "device", id, request.Reason);
     await transaction.CommitAsync();
@@ -5965,6 +6238,7 @@ app.MapPost("/api/v1/admin/devices/{id:guid}/unban", async (
         await transaction.RollbackAsync();
         return NotFound("DEVICE_NOT_FOUND", "Cihaz bulunamadı.");
     }
+    await SetBannedDeviceVoteSuppressionAsync(connection, transaction, id, suppress: false);
 
     await LogAdminActionAsync(connection, transaction, adminEmail, "unban_device", "device", id, null);
     await transaction.CommitAsync();
@@ -6809,6 +7083,17 @@ app.MapPost("/api/v1/admin/users/{id:guid}/strike", async (
         await tempBan.ExecuteNonQueryAsync();
     }
 
+    // Strike bana dönüştüyse admin kullanıcı banında olduğu gibi açık oturumlar da kapatılır.
+    if (autoAction is not null)
+    {
+        await using var revokeTokens = new NpgsqlCommand(
+            "UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = @userId AND revoked_at IS NULL",
+            connection, transaction
+        );
+        revokeTokens.Parameters.AddWithValue("userId", id);
+        await revokeTokens.ExecuteNonQueryAsync();
+    }
+
     var notifBody = autoAction switch
     {
         "permanent_ban" => "Platformun kullanim kurallarina tekrarlayan ihlaller nedeniyle hesabiniz kalici olarak askiya alinmistir.",
@@ -6860,8 +7145,10 @@ app.MapPost("/api/v1/admin/users/{id:guid}/delete", async (
     await using var connection = await db.OpenConnectionAsync();
     await using var transaction = await connection.BeginTransactionAsync();
 
+    // Kullanıcı kendi hesabını silmiş olsa bile (30 günlük kurtarma süresi) KVKK silme
+    // talebi hemen uygulanabilmeli; yalnızca zaten anonimleştirilmiş hesaplar reddedilir.
     var exists = await new NpgsqlCommand(
-        "SELECT EXISTS(SELECT 1 FROM users WHERE id = @id AND deleted_at IS NULL)",
+        "SELECT EXISTS(SELECT 1 FROM users WHERE id = @id AND email NOT LIKE 'deleted-%@deleted.karar.local')",
         connection,
         transaction
     ) { Parameters = { new("id", id) } }.ExecuteScalarAsync();
@@ -6872,23 +7159,8 @@ app.MapPost("/api/v1/admin/users/{id:guid}/delete", async (
         return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı veya zaten silinmiş.");
     }
 
-    // KVKK hard delete: kişisel verileri anonimleştir
-    await using var anonCmd = new NpgsqlCommand(
-        """
-        UPDATE users SET
-            username        = 'deleted_' || SUBSTR(id::text, 1, 8),
-            email           = NULL,
-            password_hash   = NULL,
-            totp_secret     = NULL,
-            bio             = NULL,
-            deleted_at      = NOW()
-        WHERE id = @id
-        """,
-        connection,
-        transaction
-    );
-    anonCmd.Parameters.AddWithValue("id", id);
-    await anonCmd.ExecuteNonQueryAsync();
+    // KVKK silme: kişisel verileri anonimleştir (DataRetentionService ile aynı rutin)
+    await UserDataErasure.EraseAsync(connection, transaction, id);
 
     await LogAdminActionAsync(connection, transaction, adminEmail, "kvkk_delete", "user", id, null);
     await transaction.CommitAsync();
@@ -8278,11 +8550,17 @@ app.MapPost("/api/v1/auth/register", async (
 
     await using var transaction = await connection.BeginTransactionAsync();
 
-    // Kullanıcıyı kaydet (doğrulanmamış)
+    // Kullanıcıyı kaydet (doğrulanmamış) + kayıt cihazını hesaba bağla (blok kontrolleri için)
     await using var insertUser = new NpgsqlCommand(
         """
-        INSERT INTO users (device_id, username, email, email_verified, password_hash, auth_provider, date_of_birth, gender)
-        VALUES (@deviceId, @username, @email, FALSE, @passwordHash, 'password', @dob, @gender)
+        WITH new_user AS (
+            INSERT INTO users (device_id, username, email, email_verified, password_hash, auth_provider, date_of_birth, gender)
+            VALUES (@deviceId, @username, @email, FALSE, @passwordHash, 'password', @dob, @gender)
+            RETURNING id, device_id
+        )
+        INSERT INTO user_device_links (user_id, device_id)
+        SELECT id, device_id FROM new_user
+        ON CONFLICT (user_id, device_id) DO NOTHING
         """,
         connection,
         transaction
@@ -8343,6 +8621,13 @@ app.MapPost("/api/v1/auth/verify-email", async (
     var email = request.Email.ToLowerInvariant();
     var otpHash = PasswordService.HashOtp(request.Otp);
 
+    // Kayıt gibi doğrulama da cihaz ister: kodu giren cihaz, kaydı açan cihazla karşılaştırılır.
+    var verifyingDeviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    if (verifyingDeviceId is null)
+    {
+        return Unauthorized();
+    }
+
     await using var connection = await db.OpenConnectionAsync();
 
     // OTP kontrol et
@@ -8399,7 +8684,7 @@ app.MapPost("/api/v1/auth/verify-email", async (
         UPDATE users
         SET email_verified = TRUE, updated_at = NOW()
         WHERE email = @email AND email_verified = FALSE
-        RETURNING id, username, karma, auth_provider
+        RETURNING id, username, karma, auth_provider, device_id
         """,
         connection,
         transaction
@@ -8416,7 +8701,33 @@ app.MapPost("/api/v1/auth/verify-email", async (
     var username = userReader.GetString(1);
     var karma = userReader.GetInt32(2);
     var authProvider = userReader.GetString(3);
+    var registeredDeviceId = userReader.GetGuid(4);
     await userReader.CloseAsync();
+
+    // Kod kaydı açan cihazdan girilmediyse şifre başkası tarafından konmuş olabilir (pre-account hijack):
+    // e-posta sahibi hesabı alır, kayıttaki şifre ve cihaz bağı atılır; sahip şifresini sıfırlama ile belirler.
+    if (!AuthAccountPolicy.KeepsRegistrantPassword(registeredDeviceId, verifyingDeviceId))
+    {
+        await using var dropPassword = new NpgsqlCommand(
+            "UPDATE users SET password_hash = NULL, device_id = @deviceId, updated_at = NOW() WHERE id = @id",
+            connection,
+            transaction
+        );
+        dropPassword.Parameters.AddWithValue("id", userId);
+        dropPassword.Parameters.AddWithValue("deviceId", verifyingDeviceId.Value);
+        await dropPassword.ExecuteNonQueryAsync();
+
+        // Kayıt cihazının hesap bağı (user_device_links) da atılır; aksi halde kaydı açan cihaz
+        // sahibin cihazı sayılır ve sahibin engellediği hesaplar için blok kontrolünü atlatır.
+        await using var dropRegistrantLinks = new NpgsqlCommand(
+            "DELETE FROM user_device_links WHERE user_id = @id",
+            connection,
+            transaction
+        );
+        dropRegistrantLinks.Parameters.AddWithValue("id", userId);
+        await dropRegistrantLinks.ExecuteNonQueryAsync();
+        await LinkUserDeviceAsync(connection, transaction, userId, verifyingDeviceId.Value);
+    }
 
     // OTP sil
     await using var deleteOtp = new NpgsqlCommand(
@@ -8510,7 +8821,8 @@ app.MapPost("/api/v1/auth/google", async (
     Db db,
     RequestDevice requestDevice,
     JwtService jwtService,
-    FirebaseAuthService firebaseAuth
+    FirebaseAuthService firebaseAuth,
+    BruteForceService bruteForce
 ) =>
 {
     if (ValidateRequest(request) is { } validationError)
@@ -8546,7 +8858,8 @@ app.MapPost("/api/v1/auth/google", async (
     // Mevcut kullanıcı var mı? (google_id veya email ile bul)
     await using var findCmd = new NpgsqlCommand(
         """
-        SELECT id, username, email, karma, auth_provider
+        SELECT id, username, email, karma, auth_provider, is_banned, deleted_at IS NOT NULL,
+               is_2fa_enabled, totp_secret
         FROM users
         WHERE google_id = @googleId OR (email = @email AND auth_provider = 'google')
         LIMIT 1
@@ -8573,8 +8886,42 @@ app.MapPost("/api/v1/auth/google", async (
         userEmail = findReader.GetString(2);
         karma = findReader.GetInt32(3);
         authProvider = findReader.GetString(4);
+        var isBanned = findReader.GetBoolean(5);
+        var isDeleted = findReader.GetBoolean(6);
+        var is2faEnabled = findReader.GetBoolean(7);
+        var totpSecret = findReader.IsDBNull(8) ? null : findReader.GetString(8);
         isNewUser = false;
         await findReader.CloseAsync();
+
+        // Şifreli giriş ve refresh ile aynı kural: askıya alınmış / silinmiş hesaba token verilmez.
+        if (isBanned)
+        {
+            await transaction.RollbackAsync();
+            return BadRequest("USER_BANNED", "Hesabınız askıya alınmıştır.");
+        }
+        if (isDeleted)
+        {
+            await transaction.RollbackAsync();
+            return BadRequest("ACCOUNT_DELETED", "Bu hesap silinmiş. Geri almak için e-postanıza gönderilen kurtarma bağlantısını kullanın.");
+        }
+
+        // Google bağlanmış şifreli hesapta 2FA açıksa Google girişi ikinci faktörü atlatamaz.
+        if (authProvider == "password" && is2faEnabled)
+        {
+            var accountBfIdentity = BruteForceService.AccountIdentityFor("login", userId);
+            if (await bruteForce.IsLockedOutAsync(accountBfIdentity))
+            {
+                await transaction.RollbackAsync();
+                return TooManyRequests("ACCOUNT_LOCKED", "Çok fazla başarısız deneme. 15 dakika bekleyin.");
+            }
+            if (totpSecret is null || request.TotpCode is null || !TotpService.Validate(totpSecret, request.TotpCode))
+            {
+                await transaction.RollbackAsync();
+                if (request.TotpCode is not null)
+                    await bruteForce.RecordFailedAttemptAsync(accountBfIdentity, BruteForceService.MaxAccountAttempts);
+                return BadRequest("TWO_FACTOR_REQUIRED", "Bu hesapta iki faktörlü doğrulama açık. Doğrulama kodunu girin veya şifrenizle giriş yapın.");
+            }
+        }
 
         await using var updateCmd = new NpgsqlCommand(
             "UPDATE users SET google_id = @googleId, updated_at = NOW() WHERE id = @id",
@@ -8589,6 +8936,32 @@ app.MapPost("/api/v1/auth/google", async (
     {
         await findReader.CloseAsync();
         isNewUser = true;
+
+        // E-postayı başka bir satır tutuyor mu? (ör. başkasının açtığı doğrulanmamış şifreli kayıt)
+        Guid? pendingUserId = null;
+        await using (var emailCmd = new NpgsqlCommand(
+            "SELECT id, email_verified, auth_provider, deleted_at IS NOT NULL FROM users WHERE email = @email FOR UPDATE",
+            connection,
+            transaction))
+        {
+            emailCmd.Parameters.AddWithValue("email", googleEmail);
+            await using var emailReader = await emailCmd.ExecuteReaderAsync();
+            if (await emailReader.ReadAsync())
+            {
+                var collision = AuthAccountPolicy.ResolveGoogleEmailCollision(
+                    emailReader.GetBoolean(1),
+                    emailReader.GetString(2),
+                    emailReader.GetBoolean(3),
+                    AuthAccountPolicy.IsFirebaseEmailVerified(firebaseToken.Claims));
+                if (collision != GoogleEmailCollision.TakeOverPendingRegistration)
+                {
+                    await emailReader.CloseAsync();
+                    await transaction.RollbackAsync();
+                    return Conflict("EMAIL_ALREADY_REGISTERED", "Bu e-posta adresiyle kayıtlı bir hesap zaten var. E-posta ve şifrenle giriş yapabilirsin.");
+                }
+                pendingUserId = emailReader.GetGuid(0);
+            }
+        }
 
         // E-posta Google'dan alındığından doğrulanmış kabul edilir
         var baseUsername = googleEmail.Split('@')[0]
@@ -8614,28 +8987,84 @@ app.MapPost("/api/v1/auth/google", async (
             username = $"{baseUsername}_{suffix}";
         }
 
-        await using var insertCmd = new NpgsqlCommand(
-            """
-            INSERT INTO users (device_id, username, email, email_verified, auth_provider, google_id)
-            VALUES (@deviceId, @username, @email, TRUE, 'google', @googleId)
-            RETURNING id, karma
-            """,
-            connection,
-            transaction
-        );
-        insertCmd.Parameters.AddWithValue("deviceId", deviceId.Value);
-        insertCmd.Parameters.AddWithValue("username", username);
-        insertCmd.Parameters.AddWithValue("email", googleEmail);
-        insertCmd.Parameters.AddWithValue("googleId", googleId);
-        await using var insertReader = await insertCmd.ExecuteReaderAsync();
-        await insertReader.ReadAsync();
-        userId = insertReader.GetGuid(0);
-        karma = insertReader.GetInt32(1);
-        await insertReader.CloseAsync();
+        try
+        {
+            // Bekleyen kayıt devralınırsa: kaydı açanın şifresi, profil alanları ve oturumları atılır.
+            await using var insertCmd = new NpgsqlCommand(
+                pendingUserId is null
+                    ? """
+                      INSERT INTO users (device_id, username, email, email_verified, auth_provider, google_id)
+                      VALUES (@deviceId, @username, @email, TRUE, 'google', @googleId)
+                      RETURNING id, karma
+                      """
+                    : """
+                      UPDATE users
+                      SET device_id = @deviceId, username = @username, email_verified = TRUE,
+                          auth_provider = 'google', google_id = @googleId, password_hash = NULL,
+                          date_of_birth = NULL, gender = NULL, updated_at = NOW()
+                      WHERE id = @pendingUserId AND email = @email AND email_verified = FALSE
+                      RETURNING id, karma
+                      """,
+                connection,
+                transaction
+            );
+            insertCmd.Parameters.AddWithValue("deviceId", deviceId.Value);
+            insertCmd.Parameters.AddWithValue("username", username);
+            insertCmd.Parameters.AddWithValue("email", googleEmail);
+            insertCmd.Parameters.AddWithValue("googleId", googleId);
+            if (pendingUserId is { } pendingId)
+                insertCmd.Parameters.AddWithValue("pendingUserId", pendingId);
+            await using var insertReader = await insertCmd.ExecuteReaderAsync();
+            if (!await insertReader.ReadAsync())
+            {
+                await insertReader.CloseAsync();
+                await transaction.RollbackAsync();
+                return Conflict("EMAIL_ALREADY_REGISTERED", "Bu e-posta adresiyle kayıtlı bir hesap zaten var. E-posta ve şifrenle giriş yapabilirsin.");
+            }
+            userId = insertReader.GetGuid(0);
+            karma = insertReader.GetInt32(1);
+            await insertReader.CloseAsync();
+
+            if (pendingUserId is not null)
+            {
+                await using var deletePendingOtp = new NpgsqlCommand(
+                    "DELETE FROM email_otps WHERE email = @email",
+                    connection,
+                    transaction
+                );
+                deletePendingOtp.Parameters.AddWithValue("email", googleEmail);
+                await deletePendingOtp.ExecuteNonQueryAsync();
+
+                await using var revokePending = new NpgsqlCommand(
+                    "UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = @id AND revoked_at IS NULL",
+                    connection,
+                    transaction
+                );
+                revokePending.Parameters.AddWithValue("id", userId);
+                await revokePending.ExecuteNonQueryAsync();
+
+                // Kaydı açanın cihaz bağları da atılır (Google cihazı aşağıda bağlanır).
+                await using var dropPendingLinks = new NpgsqlCommand(
+                    "DELETE FROM user_device_links WHERE user_id = @id",
+                    connection,
+                    transaction
+                );
+                dropPendingLinks.Parameters.AddWithValue("id", userId);
+                await dropPendingLinks.ExecuteNonQueryAsync();
+            }
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            // Eşzamanlı kayıt / google_id çakışması: 500 yerine 409.
+            await transaction.RollbackAsync();
+            return Conflict("EMAIL_ALREADY_REGISTERED", "Bu e-posta adresiyle kayıtlı bir hesap zaten var. E-posta ve şifrenle giriş yapabilirsin.");
+        }
 
         userEmail = googleEmail;
         authProvider = "google";
     }
+
+    await LinkUserDeviceAsync(connection, transaction, userId, deviceId.Value);
 
     var accessToken = jwtService.GenerateAccessToken(userId, username);
     var refreshToken = JwtService.GenerateRefreshToken();
@@ -8674,16 +9103,26 @@ app.MapPost("/api/v1/auth/google", async (
 }).RequireRateLimiting("auth-strict");
 
 app.MapPost("/api/v1/auth/google/link", async (
-    GoogleSignInRequest request,
+    GoogleLinkRequest request,
     HttpRequest httpRequest,
     Db db,
     JwtService jwtService,
-    FirebaseAuthService firebaseAuth
+    FirebaseAuthService firebaseAuth,
+    BruteForceService bruteForce
 ) =>
 {
     var principal = GetJwtPrincipal(httpRequest, jwtService);
     if (principal is null) return Unauthorized();
     var userId = GetUserId(principal);
+    if (ValidateRequest(request) is { } validationError) return validationError;
+
+    await using var connection = await db.OpenConnectionAsync();
+
+    // Kalıcı giriş yolu ekler: çalınmış access token tek başına yetmez (step-up).
+    if (await RequireStepUpAsync(connection, bruteForce, userId, request.Password, request.TotpCode) is { } stepUpError)
+    {
+        return stepUpError;
+    }
 
     var firebaseToken = await firebaseAuth.VerifyIdTokenAsync(request.IdToken);
     if (firebaseToken is null)
@@ -8692,7 +9131,6 @@ app.MapPost("/api/v1/auth/google/link", async (
     }
 
     var googleId = firebaseToken.Uid;
-    await using var connection = await db.OpenConnectionAsync();
 
     // Bu googleId başka birine bağlı mı?
     await using var checkCmd = new NpgsqlCommand(
@@ -8804,7 +9242,14 @@ app.MapPost("/api/v1/auth/login", async (
     await using var reader = await findCmd.ExecuteReaderAsync();
     if (!await reader.ReadAsync())
     {
+        // Bilinmeyen tanımlayıcı da hesap eşiğiyle sayılır: kilitlenme davranışı hesap varlığını sızdırmaz.
+        var unknownAccountIdentity = BruteForceService.AccountIdentityFor("login", identifier);
+        if (await bruteForce.IsLockedOutAsync(unknownAccountIdentity))
+        {
+            return TooManyRequests("ACCOUNT_LOCKED", "Çok fazla başarısız deneme. 15 dakika bekleyin.");
+        }
         await bruteForce.RecordFailedAttemptAsync(bfIdentity);
+        await bruteForce.RecordFailedAttemptAsync(unknownAccountIdentity, BruteForceService.MaxAccountAttempts);
         return BadRequest("INVALID_CREDENTIALS", "Kullanıcı adı veya şifre hatalı.");
     }
 
@@ -8820,6 +9265,13 @@ app.MapPost("/api/v1/auth/login", async (
     var totpSecret = reader.IsDBNull(9) ? null : reader.GetString(9);
     await reader.CloseAsync();
 
+    // Hedef hesap bazlı kilit: IP/cihaz döndürülerek aynı hesaba sınırsız tahmin yapılamaz.
+    var accountBfIdentity = BruteForceService.AccountIdentityFor("login", userId);
+    if (await bruteForce.IsLockedOutAsync(accountBfIdentity))
+    {
+        return TooManyRequests("ACCOUNT_LOCKED", "Çok fazla başarısız deneme. 15 dakika bekleyin.");
+    }
+
     if (isBanned)
     {
         return BadRequest("USER_BANNED", "Hesabınız askıya alınmıştır.");
@@ -8833,10 +9285,10 @@ app.MapPost("/api/v1/auth/login", async (
     if (passwordHash is null || !PasswordService.Verify(request.Password, passwordHash))
     {
         await bruteForce.RecordFailedAttemptAsync(bfIdentity);
+        await bruteForce.RecordFailedAttemptAsync(accountBfIdentity, BruteForceService.MaxAccountAttempts);
         return BadRequest("INVALID_CREDENTIALS", "Kullanıcı adı veya şifre hatalı.");
     }
 
-    // Başarılı giriş — sayacı temizle
     var backupCodeUsed = false;
     if (is2faEnabled)
     {
@@ -8848,13 +9300,12 @@ app.MapPost("/api/v1/auth/login", async (
             if (request.BackupCode is null)
             {
                 await bruteForce.RecordFailedAttemptAsync(bfIdentity);
+                await bruteForce.RecordFailedAttemptAsync(accountBfIdentity, BruteForceService.MaxAccountAttempts);
                 return BadRequest("TWO_FACTOR_REQUIRED", "Geçerli iki faktörlü doğrulama kodu veya yedek kod gerekli.");
             }
             backupCodeUsed = true;
         }
     }
-
-    await bruteForce.ClearAsync(bfIdentity);
 
     await using var transaction = await connection.BeginTransactionAsync();
 
@@ -8871,9 +9322,14 @@ app.MapPost("/api/v1/auth/login", async (
         {
             await transaction.RollbackAsync();
             await bruteForce.RecordFailedAttemptAsync(bfIdentity);
+            await bruteForce.RecordFailedAttemptAsync(accountBfIdentity, BruteForceService.MaxAccountAttempts);
             return BadRequest("INVALID_BACKUP_CODE", "Yedek kod geçersiz veya daha önce kullanıldı.");
         }
     }
+
+    // Başarılı giriş — sayaçlar yalnızca tüm faktörler doğrulandıktan sonra temizlenir
+    await bruteForce.ClearAsync(bfIdentity);
+    await bruteForce.ClearAsync(accountBfIdentity);
 
     var accessToken = jwtService.GenerateAccessToken(userId, username);
     var refreshToken = JwtService.GenerateRefreshToken();
@@ -8898,6 +9354,7 @@ app.MapPost("/api/v1/auth/login", async (
         );
         linkCmd.Parameters.AddWithValue("deviceId", deviceId.Value);
         await linkCmd.ExecuteNonQueryAsync();
+        await LinkUserDeviceAsync(connection, transaction, userId, deviceId.Value);
     }
 
     await transaction.CommitAsync();
@@ -8930,12 +9387,15 @@ app.MapPost("/api/v1/auth/refresh", async (
     await using var connection = await db.OpenConnectionAsync();
     await using var transaction = await connection.BeginTransactionAsync();
 
+    // İptal edilmiş token'lar da okunur (reuse tespiti); FOR UPDATE eşzamanlı rotasyonları sıraya sokar.
     await using var findCmd = new NpgsqlCommand(
         """
-        SELECT rt.id, rt.user_id, rt.expires_at, u.username, u.email, u.karma, u.auth_provider, u.is_banned
+        SELECT rt.id, rt.user_id, rt.expires_at, u.username, u.email, u.karma, u.auth_provider, u.is_banned,
+               rt.revoked_at, rt.rotated_at, COALESCE(rt.family_id, rt.id), NOW()
         FROM refresh_tokens rt
         JOIN users u ON u.id = rt.user_id
-        WHERE rt.token_hash = @hash AND rt.revoked_at IS NULL
+        WHERE rt.token_hash = @hash
+        FOR UPDATE OF rt
         """,
         connection,
         transaction
@@ -8957,34 +9417,76 @@ app.MapPost("/api/v1/auth/refresh", async (
     var karma = reader.GetInt32(5);
     var authProvider = reader.GetString(6);
     var isBanned = reader.GetBoolean(7);
+    DateTimeOffset? revokedAt = reader.IsDBNull(8) ? null : reader.GetFieldValue<DateTimeOffset>(8);
+    DateTimeOffset? rotatedAt = reader.IsDBNull(9) ? null : reader.GetFieldValue<DateTimeOffset>(9);
+    var familyId = reader.GetGuid(10);
+    var dbNow = reader.GetFieldValue<DateTimeOffset>(11);
     await reader.CloseAsync();
 
-    if (expiresAt < DateTimeOffset.UtcNow || isBanned)
+    var familyHasActiveToken = false;
+    if (revokedAt is not null && rotatedAt is not null)
+    {
+        await using var familyCmd = new NpgsqlCommand(
+            "SELECT EXISTS (SELECT 1 FROM refresh_tokens WHERE user_id = @userId AND (id = @familyId OR family_id = @familyId) AND revoked_at IS NULL)",
+            connection,
+            transaction
+        );
+        familyCmd.Parameters.AddWithValue("userId", userId);
+        familyCmd.Parameters.AddWithValue("familyId", familyId);
+        familyHasActiveToken = await familyCmd.ExecuteScalarAsync() is true;
+    }
+
+    var decision = RefreshTokenRotationPolicy.Classify(revokedAt, rotatedAt, familyHasActiveToken, dbNow);
+    if (decision == RefreshTokenRotationPolicy.Decision.ReuseDetected)
+    {
+        // Rotasyonla iptal edilmiş token tekrar sunuldu → sızmış olabilir: tüm aileyi kapat.
+        await using var revokeFamily = new NpgsqlCommand(
+            "UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = @userId AND (id = @familyId OR family_id = @familyId) AND revoked_at IS NULL",
+            connection,
+            transaction
+        );
+        revokeFamily.Parameters.AddWithValue("userId", userId);
+        revokeFamily.Parameters.AddWithValue("familyId", familyId);
+        await revokeFamily.ExecuteNonQueryAsync();
+        await transaction.CommitAsync();
+        return Unauthorized();
+    }
+
+    if (decision == RefreshTokenRotationPolicy.Decision.Reject || expiresAt < DateTimeOffset.UtcNow || isBanned)
     {
         await transaction.RollbackAsync();
         return Unauthorized();
     }
 
-    // Token rotation: eski iptal et, yeni ver
-    await using var revokeCmd = new NpgsqlCommand(
-        "UPDATE refresh_tokens SET revoked_at = NOW() WHERE id = @id",
-        connection,
-        transaction
-    );
-    revokeCmd.Parameters.AddWithValue("id", rtId);
-    await revokeCmd.ExecuteNonQueryAsync();
+    if (decision == RefreshTokenRotationPolicy.Decision.Rotate)
+    {
+        // Token rotation: eski iptal et (yalnızca hâlâ aktifse), yeni ver
+        await using var revokeCmd = new NpgsqlCommand(
+            "UPDATE refresh_tokens SET revoked_at = NOW(), rotated_at = NOW() WHERE id = @id AND revoked_at IS NULL",
+            connection,
+            transaction
+        );
+        revokeCmd.Parameters.AddWithValue("id", rtId);
+        if (await revokeCmd.ExecuteNonQueryAsync() != 1)
+        {
+            await transaction.RollbackAsync();
+            return Unauthorized();
+        }
+    }
+    // ConcurrentGrace: eski token az önce rotasyonla iptal edildi; aynı aileye yeni token verilir.
 
     var newAccessToken = jwtService.GenerateAccessToken(userId, username);
     var newRefreshToken = JwtService.GenerateRefreshToken();
     var newRefreshHash = JwtService.HashRefreshToken(newRefreshToken);
 
     await using var insertCmd = new NpgsqlCommand(
-        "INSERT INTO refresh_tokens (user_id, token_hash) VALUES (@userId, @hash)",
+        "INSERT INTO refresh_tokens (user_id, token_hash, family_id) VALUES (@userId, @hash, @familyId)",
         connection,
         transaction
     );
     insertCmd.Parameters.AddWithValue("userId", userId);
     insertCmd.Parameters.AddWithValue("hash", newRefreshHash);
+    insertCmd.Parameters.AddWithValue("familyId", familyId);
     await insertCmd.ExecuteNonQueryAsync();
 
     await transaction.CommitAsync();
@@ -9120,13 +9622,20 @@ app.MapPost("/api/v1/users/me/migrate-guest-data", async (
         return Unauthorized();
     }
 
+    // Misafir içerik yazarsız yayınlandı; hesaba bağlanması onu kamuya açık şekilde kullanıcı adına
+    // atfetmemeli. Postlar sahibine bağlanır ama anonim kalır (profil listesi anonim postları
+    // başkalarına göstermez); yalnızca hesap oluşturulmadan önce yazılanlar taşınır (paylaşılan
+    // cihazda sonradan başkasının yazdığı içerik hesaba eklenmez). Yorumlarda anonimlik bayrağı
+    // olmadığından (liste u.username döner) misafir yorumlar cihaz sahipliğinde, yazarsız kalır.
     await using var updatePosts = new NpgsqlCommand(
         """
         UPDATE posts
         SET user_id = @userId,
+            is_anonymous = TRUE,
             updated_at = NOW()
         WHERE device_id = @deviceId
           AND user_id IS NULL
+          AND created_at < (SELECT u.created_at FROM users u WHERE u.id = @userId)
         """,
         connection,
         transaction
@@ -9134,21 +9643,6 @@ app.MapPost("/api/v1/users/me/migrate-guest-data", async (
     updatePosts.Parameters.AddWithValue("userId", userId);
     updatePosts.Parameters.AddWithValue("deviceId", deviceId);
     await updatePosts.ExecuteNonQueryAsync();
-
-    await using var updateComments = new NpgsqlCommand(
-        """
-        UPDATE comments
-        SET user_id = @userId,
-            updated_at = NOW()
-        WHERE device_id = @deviceId
-          AND user_id IS NULL
-        """,
-        connection,
-        transaction
-    );
-    updateComments.Parameters.AddWithValue("userId", userId);
-    updateComments.Parameters.AddWithValue("deviceId", deviceId);
-    await updateComments.ExecuteNonQueryAsync();
 
     await using var updateVotes = new NpgsqlCommand(
         """
@@ -9503,7 +9997,13 @@ app.MapGet("/api/v1/users/me/data-export", async (
     }
 
     await using var userCmd = new NpgsqlCommand(
-        "SELECT username, email, karma, created_at FROM users WHERE id = @id AND deleted_at IS NULL",
+        """
+        SELECT username, email, karma, created_at,
+               bio, to_char(date_of_birth, 'YYYY-MM-DD'), gender, auth_provider,
+               notification_preferences::text, email_verified, is_2fa_enabled,
+               terms_version_accepted, privacy_version_accepted
+        FROM users WHERE id = @id AND deleted_at IS NULL
+        """,
         connection);
     ApplyDataExportBudget(userCmd);
     userCmd.Parameters.AddWithValue("id", userId);
@@ -9515,7 +10015,16 @@ app.MapGet("/api/v1/users/me/data-export", async (
         username = userReader.GetString(0),
         email = userReader.GetString(1),
         karma = userReader.GetInt32(2),
-        joinedAt = userReader.GetFieldValue<DateTimeOffset>(3)
+        joinedAt = userReader.GetFieldValue<DateTimeOffset>(3),
+        bio = userReader.IsDBNull(4) ? null : userReader.GetString(4),
+        dateOfBirth = userReader.IsDBNull(5) ? null : userReader.GetString(5),
+        gender = userReader.IsDBNull(6) ? null : userReader.GetString(6),
+        authProvider = userReader.GetString(7),
+        notificationPreferences = JsonSerializer.Deserialize<JsonElement>(userReader.GetString(8)),
+        emailVerified = userReader.GetBoolean(9),
+        twoFactorEnabled = userReader.GetBoolean(10),
+        termsVersionAccepted = userReader.GetInt16(11),
+        privacyVersionAccepted = userReader.GetInt16(12)
     };
     await userReader.CloseAsync();
 
@@ -9547,12 +10056,78 @@ app.MapGet("/api/v1/users/me/data-export", async (
         }
     }
 
+    // KVKK md. 11: hesaba bağlı diğer kişisel veri kategorileri
+    async Task<List<Dictionary<string, object?>>> ReadExportRowsAsync(string sql)
+    {
+        await using var command = new NpgsqlCommand(sql, connection);
+        ApplyDataExportBudget(command);
+        command.Parameters.AddWithValue("id", userId);
+        var rows = new List<Dictionary<string, object?>>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var row = new Dictionary<string, object?>(reader.FieldCount);
+            for (var i = 0; i < reader.FieldCount; i++)
+            {
+                row[reader.GetName(i)] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+            }
+            rows.Add(row);
+        }
+        return rows;
+    }
+
+    var votes = await ReadExportRowsAsync(
+        """
+        SELECT post_id AS "postId", vote_type AS "voteType", voter_region AS "voterRegion",
+               voter_ip_block AS "voterIpBlock", created_at AS "createdAt"
+        FROM votes WHERE user_id = @id ORDER BY created_at DESC
+        """);
+    var reports = await ReadExportRowsAsync(
+        """
+        SELECT target_type AS "targetType", target_id AS "targetId", reason, description, status,
+               reporter_ip_block AS "reporterIpBlock", created_at AS "createdAt"
+        FROM reports WHERE reporter_user_id = @id ORDER BY created_at DESC
+        """);
+    var savedPosts = await ReadExportRowsAsync(
+        """SELECT post_id AS "postId", created_at AS "createdAt" FROM saved_posts WHERE user_id = @id ORDER BY created_at DESC""");
+    var followedCategories = await ReadExportRowsAsync(
+        """SELECT category_id AS "categoryId", created_at AS "createdAt" FROM followed_categories WHERE user_id = @id""");
+    var mutedCategories = await ReadExportRowsAsync(
+        """SELECT category_id AS "categoryId", created_at AS "createdAt" FROM muted_categories WHERE user_id = @id""");
+    var blockedUsers = await ReadExportRowsAsync(
+        """SELECT blocked_user_id AS "blockedUserId", created_at AS "createdAt" FROM blocked_users WHERE blocker_user_id = @id""");
+    var linkedDevices = await ReadExportRowsAsync(
+        """SELECT device_id AS "deviceId", first_seen_at AS "firstSeenAt" FROM user_device_links WHERE user_id = @id""");
+    var moderationAppeals = await ReadExportRowsAsync(
+        """
+        SELECT target_type AS "targetType", target_id AS "targetId", message, status,
+               created_at AS "createdAt", reviewed_at AS "reviewedAt", review_note AS "reviewNote"
+        FROM moderation_appeals WHERE user_id = @id ORDER BY created_at DESC
+        """);
+    var strikes = await ReadExportRowsAsync(
+        """SELECT reason, severity, created_at AS "createdAt" FROM user_strikes WHERE user_id = @id ORDER BY created_at DESC""");
+    var feedback = await ReadExportRowsAsync(
+        """
+        SELECT type, subject, message, contact_email AS "contactEmail", status, created_at AS "createdAt"
+        FROM feedback_items WHERE user_id = @id ORDER BY created_at DESC
+        """);
+
     var exportedAt = DateTimeOffset.UtcNow;
     var exportData = new
     {
         user = userData,
         posts = posts,
         comments = comments,
+        votes,
+        reports,
+        savedPosts,
+        followedCategories,
+        mutedCategories,
+        blockedUsers,
+        linkedDevices,
+        moderationAppeals,
+        strikes,
+        feedback,
         exportedAt = exportedAt,
         notice = "Bu veriler KVKK/GDPR kapsamında talebiniz üzerine üretilmiştir."
     };
@@ -9595,7 +10170,7 @@ app.MapGet("/api/v1/users/me/moderation-history", async (
     var userId = GetUserId(principal);
 
     await using var connection = await db.OpenConnectionAsync();
-    var userDeviceId = await GetUserDeviceIdAsync(connection, userId);
+    var userDeviceId = await GetUserDeviceIdAsync(connection, userId, includeBannedDevice: true);
     if (userDeviceId is null) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
 
     await using var summaryCmd = new NpgsqlCommand(
@@ -9729,7 +10304,7 @@ app.MapGet("/api/v1/users/me/reports", async (
     var offset = (page - 1) * limit;
 
     await using var connection = await db.OpenConnectionAsync();
-    var effectiveDeviceId = deviceId ?? await GetUserDeviceIdAsync(connection, userId);
+    var effectiveDeviceId = deviceId ?? await GetUserDeviceIdAsync(connection, userId, includeBannedDevice: true);
     if (effectiveDeviceId is null) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
 
     await using var countCmd = new NpgsqlCommand(
@@ -9825,7 +10400,7 @@ app.MapPost("/api/v1/users/me/moderation-appeals", async (
     var message = request.Message.Trim();
 
     await using var connection = await db.OpenConnectionAsync();
-    var userDeviceId = await GetUserDeviceIdAsync(connection, userId);
+    var userDeviceId = await GetUserDeviceIdAsync(connection, userId, includeBannedDevice: true);
     if (userDeviceId is null) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
 
     var table = request.TargetType == "post" ? "posts" : "comments";
@@ -9834,8 +10409,8 @@ app.MapPost("/api/v1/users/me/moderation-appeals", async (
         SELECT status
         FROM {table}
         WHERE id = @targetId
-          AND (user_id = @userId OR device_id = @deviceId)
-          AND status IN ('auto_hidden', 'deleted')
+          AND (CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END)
+          AND status IN ('auto_hidden', 'deleted', 'under_review')
         """,
         connection
     );
@@ -9986,8 +10561,11 @@ app.MapGet("/api/v1/users/{username}/profile", async (
                u.created_at,
                u.bio,
                u.username_changed_at,
-               (SELECT COUNT(*) FROM posts p WHERE p.user_id = u.id AND p.status != 'deleted') AS post_count,
-               (SELECT COUNT(*) FROM comments cm WHERE cm.user_id = u.id AND cm.status != 'deleted') AS comment_count
+               (SELECT COUNT(*) FROM posts p WHERE p.user_id = u.id AND p.status = 'active'
+                  AND p.is_anonymous = FALSE AND p.is_unlisted = FALSE) AS post_count,
+               (SELECT COUNT(*) FROM comments cm JOIN posts cp ON cp.id = cm.post_id
+                WHERE cm.user_id = u.id AND cm.status = 'active' AND cp.status = 'active'
+                  AND cp.is_unlisted = FALSE AND NOT (cp.is_anonymous AND cp.user_id IS NOT DISTINCT FROM cm.user_id)) AS comment_count
         FROM users u
         WHERE lower(u.username) = lower(@username) AND u.deleted_at IS NULL
         """,
@@ -10027,8 +10605,20 @@ app.MapPost("/api/v1/auth/2fa/setup", async (
     var otpAuthUrl = $"otpauth://totp/Karar:{Uri.EscapeDataString(username)}?secret={secret}&issuer=Karar&digits=6&period=30";
 
     await using var connection = await db.OpenConnectionAsync();
+
+    // 2FA açıkken sırrı değiştirmek, kapatmakla eşdeğerdir: önce doğrulamalı /2fa/disable gerekir.
+    await using var enabledCmd = new NpgsqlCommand(
+        "SELECT is_2fa_enabled FROM users WHERE id = @id AND deleted_at IS NULL",
+        connection
+    );
+    enabledCmd.Parameters.AddWithValue("id", userId);
+    if (await enabledCmd.ExecuteScalarAsync() is true)
+    {
+        return Conflict("TWO_FACTOR_ALREADY_ENABLED", "İki faktörlü doğrulama zaten açık. Yeniden kurmak için önce kapat.");
+    }
+
     await using var command = new NpgsqlCommand(
-        "UPDATE users SET totp_secret = @secret, updated_at = NOW() WHERE id = @id AND deleted_at IS NULL",
+        "UPDATE users SET totp_secret = @secret, updated_at = NOW() WHERE id = @id AND deleted_at IS NULL AND is_2fa_enabled = FALSE",
         connection
     );
     command.Parameters.AddWithValue("id", userId);
@@ -10043,7 +10633,8 @@ app.MapPost("/api/v1/auth/2fa/enable", async (
     TwoFactorCodeRequest request,
     HttpRequest httpRequest,
     Db db,
-    JwtService jwtService
+    JwtService jwtService,
+    RedisService redis
 ) =>
 {
     if (ValidateRequest(request) is { } validationError) return validationError;
@@ -10053,44 +10644,152 @@ app.MapPost("/api/v1/auth/2fa/enable", async (
 
     await using var connection = await db.OpenConnectionAsync();
     await using var select = new NpgsqlCommand(
-        "SELECT totp_secret FROM users WHERE id = @id AND deleted_at IS NULL",
+        "SELECT totp_secret, is_2fa_enabled FROM users WHERE id = @id AND deleted_at IS NULL",
         connection
     );
     select.Parameters.AddWithValue("id", userId);
-    var secret = await select.ExecuteScalarAsync() as string;
+    string? secret = null;
+    var alreadyEnabled = false;
+    await using (var reader = await select.ExecuteReaderAsync())
+    {
+        if (await reader.ReadAsync())
+        {
+            secret = reader.IsDBNull(0) ? null : reader.GetString(0);
+            alreadyEnabled = reader.GetBoolean(1);
+        }
+    }
+
+    // 2FA zaten açıkken bu uç nokta hesap kilidi olmayan bir TOTP doğrulayıcısı olur ve başarılı
+    // tahmin yedek kod iznini (fresh-enable) basar; /2fa/backup-codes'taki "stepup" kilidi aşılmasın
+    // diye kod doğrulanmadan önce reddedilir (geçerli/geçersiz kod ayrımı da sızmaz).
+    if (alreadyEnabled)
+    {
+        return Conflict("TWO_FACTOR_ALREADY_ENABLED", "İki faktörlü doğrulama zaten açık.");
+    }
+
     if (secret is null || !TotpService.Validate(secret, request.Code))
     {
         return BadRequest("INVALID_TOTP_CODE", "Doğrulama kodu hatalı.");
     }
 
     await using var update = new NpgsqlCommand(
-        "UPDATE users SET is_2fa_enabled = TRUE, updated_at = NOW() WHERE id = @id",
+        "UPDATE users SET is_2fa_enabled = TRUE, updated_at = NOW() WHERE id = @id AND is_2fa_enabled = FALSE",
         connection
     );
     update.Parameters.AddWithValue("id", userId);
-    await update.ExecuteNonQueryAsync();
+    if (await update.ExecuteNonQueryAsync() != 1)
+    {
+        // Eşzamanlı ikinci /enable: izin yalnızca 2FA'yı gerçekten açan isteğe verilir.
+        return Conflict("TWO_FACTOR_ALREADY_ENABLED", "İki faktörlü doğrulama zaten açık.");
+    }
+
+    // Geçerli kodla 2FA'yı açan oturum, ilk yedek kodlarını kodsuz alabilsin (kısa süreli, tek kullanımlık).
+    await redis.GetDb().StringSetAsync($"2fa:fresh-enable:{userId}", "1", TimeSpan.FromMinutes(10));
     return Results.NoContent();
 });
 
 app.MapPost("/api/v1/auth/2fa/disable", async (
     HttpRequest httpRequest,
     Db db,
-    JwtService jwtService
+    JwtService jwtService,
+    BruteForceService bruteForce
 ) =>
 {
     var principal = GetJwtPrincipal(httpRequest, jwtService);
     if (principal is null) return Unauthorized();
     var userId = GetUserId(principal);
 
+    var request = await ReadOptionalJsonRequestAsync<TwoFactorDisableRequest>(httpRequest)
+        ?? new TwoFactorDisableRequest();
+    if (ValidateRequest(request) is { } validationError) return validationError;
+
+    // Yanlış şifre/kod tahminleri hesap bazlı sayaca yazılır (IP/cihazdan bağımsız; step-up ile aynı anahtar).
+    var bfIdentity = BruteForceService.AccountIdentityFor("stepup", userId);
+    if (await bruteForce.IsLockedOutAsync(bfIdentity))
+    {
+        return TooManyRequests("ACCOUNT_LOCKED", "Çok fazla başarısız deneme. 15 dakika bekleyin.");
+    }
+
     await using var connection = await db.OpenConnectionAsync();
+    await using var transaction = await connection.BeginTransactionAsync();
+
+    await using var select = new NpgsqlCommand(
+        "SELECT password_hash, is_2fa_enabled, totp_secret FROM users WHERE id = @id AND deleted_at IS NULL FOR UPDATE",
+        connection,
+        transaction
+    );
+    select.Parameters.AddWithValue("id", userId);
+    await using var reader = await select.ExecuteReaderAsync();
+    if (!await reader.ReadAsync())
+    {
+        await reader.CloseAsync();
+        await transaction.RollbackAsync();
+        return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
+    }
+    var passwordHash = reader.IsDBNull(0) ? null : reader.GetString(0);
+    var is2faEnabled = reader.GetBoolean(1);
+    var totpSecret = reader.IsDBNull(2) ? null : reader.GetString(2);
+    await reader.CloseAsync();
+
+    // Oturum (JWT) tek başına yetmez: şifre + TOTP/yedek kod.
+    var check = AuthAccountPolicy.CheckTwoFactorDisable(
+        passwordHash, is2faEnabled, totpSecret, request.Password, request.Code, request.BackupCode);
+    switch (check)
+    {
+        case TwoFactorDisableCheck.PasswordRequired:
+            await transaction.RollbackAsync();
+            return BadRequest("PASSWORD_REQUIRED", "İki faktörlü doğrulamayı kapatmak için şifreni gir.");
+        case TwoFactorDisableCheck.InvalidPassword:
+            await transaction.RollbackAsync();
+            await bruteForce.RecordFailedAttemptAsync(bfIdentity);
+            return BadRequest("INVALID_PASSWORD", "Şifre hatalı.");
+        case TwoFactorDisableCheck.SecondFactorRequired:
+            await transaction.RollbackAsync();
+            return BadRequest("TWO_FACTOR_REQUIRED", "Geçerli iki faktörlü doğrulama kodu veya yedek kod gerekli.");
+        case TwoFactorDisableCheck.InvalidTotpCode:
+            await transaction.RollbackAsync();
+            await bruteForce.RecordFailedAttemptAsync(bfIdentity);
+            return BadRequest("INVALID_TOTP_CODE", "Doğrulama kodu hatalı.");
+        case TwoFactorDisableCheck.VerifyBackupCode:
+        {
+            await using var backupCmd = new NpgsqlCommand(
+                "UPDATE totp_backup_codes SET used_at = NOW() WHERE user_id = @userId AND code_hash = @hash AND used_at IS NULL RETURNING id",
+                connection,
+                transaction
+            );
+            backupCmd.Parameters.AddWithValue("userId", userId);
+            backupCmd.Parameters.AddWithValue("hash", HashBackupCode(request.BackupCode!));
+            if (await backupCmd.ExecuteScalarAsync() is null)
+            {
+                await transaction.RollbackAsync();
+                await bruteForce.RecordFailedAttemptAsync(bfIdentity);
+                return BadRequest("INVALID_BACKUP_CODE", "Yedek kod geçersiz veya daha önce kullanıldı.");
+            }
+            break;
+        }
+    }
+
     await using var command = new NpgsqlCommand(
         "UPDATE users SET is_2fa_enabled = FALSE, totp_secret = NULL, updated_at = NOW() WHERE id = @id AND deleted_at IS NULL",
-        connection
+        connection,
+        transaction
     );
     command.Parameters.AddWithValue("id", userId);
     var affected = await command.ExecuteNonQueryAsync();
+
+    // 2FA kapanınca eski yedek kodlar da geçersiz olmalı (2FA yeniden açıldığında geçerli kalmasın).
+    await using var deleteBackup = new NpgsqlCommand(
+        "DELETE FROM totp_backup_codes WHERE user_id = @id",
+        connection,
+        transaction
+    );
+    deleteBackup.Parameters.AddWithValue("id", userId);
+    await deleteBackup.ExecuteNonQueryAsync();
+
+    await transaction.CommitAsync();
+    await bruteForce.ClearAsync(bfIdentity);
     return affected == 0 ? NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.") : Results.NoContent();
-});
+}).RequireRateLimiting("auth-strict");
 
 app.MapGet("/api/v1/users/me/sessions", async (
     HttpRequest httpRequest,
@@ -10310,16 +11009,19 @@ app.MapGet("/api/v1/users/{username}/posts", async (
     var ownerId = await ownerCmd.ExecuteScalarAsync();
     if (ownerId is null) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
 
+    // Anonim postlar kullanıcı adı altında listelenirse (isim gizlense bile) yazarı açığa çıkar;
+    // yalnızca sahibi kendi profilinde görür.
     await using var countCmd = new NpgsqlCommand(
-        "SELECT COUNT(*) FROM posts WHERE user_id = @ownerId AND status = 'active'",
+        "SELECT COUNT(*) FROM posts WHERE user_id = @ownerId AND status = 'active' AND (is_anonymous = FALSE OR user_id = @viewerId) AND is_unlisted = FALSE",
         connection
     );
     countCmd.Parameters.AddWithValue("ownerId", ownerId);
+    countCmd.Parameters.AddWithValue("viewerId", userParam);
     var total = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
 
     await using var cmd = new NpgsqlCommand(
         $"""
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.user_id = @userParam), p.is_edited,
@@ -10331,6 +11033,7 @@ app.MapGet("/api/v1/users/{username}/posts", async (
         JOIN users u ON u.id = p.user_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceParam
         WHERE p.user_id = @ownerId AND p.status = 'active'
+          AND (p.is_anonymous = FALSE OR p.user_id = @userParam) AND p.is_unlisted = FALSE
         ORDER BY {orderBy}
         LIMIT @limit OFFSET @offset
         """,
@@ -10450,6 +11153,7 @@ app.MapGet("/api/v1/users/{username}/comments", async (
         FROM comments cm
         JOIN posts p ON p.id = cm.post_id
         WHERE cm.user_id = @userId AND cm.status = 'active' AND p.status = 'active'
+          AND p.is_unlisted = FALSE AND NOT (p.is_anonymous AND p.user_id IS NOT DISTINCT FROM cm.user_id)
         """,
         connection
     );
@@ -10464,6 +11168,7 @@ app.MapGet("/api/v1/users/{username}/comments", async (
         FROM comments cm
         JOIN posts p ON p.id = cm.post_id
         WHERE cm.user_id = @userId AND cm.status = 'active' AND p.status = 'active'
+          AND p.is_unlisted = FALSE AND NOT (p.is_anonymous AND p.user_id IS NOT DISTINCT FROM cm.user_id)
         ORDER BY cm.created_at DESC
         LIMIT @limit OFFSET @offset
         """,
@@ -10799,7 +11504,7 @@ app.MapGet("/api/v1/users/me/posts", async (
 
     await using var cmd = new NpgsqlCommand(
         $"""
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                NULL::text, p.trend_score, p.created_at, TRUE,
                p.status, p.moderation_reason, p.is_anonymous
@@ -10839,7 +11544,7 @@ app.MapGet("/api/v1/users/me/saved", async (
     var offset = (page - 1) * limit;
     var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
     await using var connection = await db.OpenConnectionAsync();
-    var effectiveDeviceId = deviceId ?? await GetUserDeviceIdAsync(connection, userId);
+    var effectiveDeviceId = deviceId ?? await GetUserDeviceIdAsync(connection, userId, includeBannedDevice: true);
     var deviceParam = effectiveDeviceId ?? Guid.Empty;
 
     await using var countCmd = new NpgsqlCommand(
@@ -10856,10 +11561,10 @@ app.MapGet("/api/v1/users/me/saved", async (
 
     await using var cmd = new NpgsqlCommand(
         """
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM saved_posts sp
         JOIN posts p ON p.id = sp.post_id
@@ -10914,13 +11619,19 @@ app.MapPut("/api/v1/users/me/password", async (
         return BadRequest("WRONG_PASSWORD", "Mevcut şifre hatalı.");
 
     var newHash = PasswordService.Hash(request.NewPassword);
+    await using var transaction = await connection.BeginTransactionAsync();
     await using var updateCmd = new NpgsqlCommand(
         "UPDATE users SET password_hash = @hash, updated_at = NOW() WHERE id = @id",
-        connection
+        connection,
+        transaction
     );
     updateCmd.Parameters.AddWithValue("hash", newHash);
     updateCmd.Parameters.AddWithValue("id", userId);
     await updateCmd.ExecuteNonQueryAsync();
+
+    // Şifre değişince diğer oturumlar kapanır (istemcinin gönderdiği refresh token hariç).
+    await RevokeUserRefreshTokensAsync(connection, transaction, userId, request.RefreshToken);
+    await transaction.CommitAsync();
 
     return Results.NoContent();
 });
@@ -11030,13 +11741,17 @@ app.MapPost("/api/v1/auth/reset-password", async (
     await using var transaction = await connection.BeginTransactionAsync();
 
     await using var updateCmd = new NpgsqlCommand(
-        "UPDATE users SET password_hash = @hash, updated_at = NOW() WHERE email = @email AND auth_provider = 'password' AND deleted_at IS NULL",
+        "UPDATE users SET password_hash = @hash, updated_at = NOW() WHERE email = @email AND auth_provider = 'password' AND deleted_at IS NULL RETURNING id",
         connection,
         transaction
     );
     updateCmd.Parameters.AddWithValue("hash", newHash);
     updateCmd.Parameters.AddWithValue("email", email);
-    await updateCmd.ExecuteNonQueryAsync();
+    // Sıfırlama genelde hesap ele geçirildiği şüphesiyle yapılır: tüm açık oturumlar kapatılır.
+    if (await updateCmd.ExecuteScalarAsync() is Guid resetUserId)
+    {
+        await RevokeUserRefreshTokensAsync(connection, transaction, resetUserId);
+    }
 
     await using var cleanupCmd = new NpgsqlCommand(
         "DELETE FROM email_otps WHERE email = @email",
@@ -13387,12 +14102,23 @@ app.MapGet("/api/v1/admin/analytics/operations", async (
 app.MapPost("/api/v1/auth/2fa/backup-codes", async (
     HttpRequest httpRequest,
     Db db,
-    JwtService jwtService
+    JwtService jwtService,
+    RedisService redis,
+    BruteForceService bruteForce
 ) =>
 {
     var principal = GetJwtPrincipal(httpRequest, jwtService);
     if (principal is null) return Unauthorized();
     var userId = GetUserId(principal);
+
+    var codeRequest = await ReadOptionalJsonRequestAsync<TwoFactorCodeRequest>(httpRequest);
+
+    // Yanlış TOTP tahminleri hesap bazlı sayaca yazılır (IP/cihazdan bağımsız; step-up ile aynı anahtar).
+    var bfIdentity = BruteForceService.AccountIdentityFor("stepup", userId);
+    if (await bruteForce.IsLockedOutAsync(bfIdentity))
+    {
+        return TooManyRequests("ACCOUNT_LOCKED", "Çok fazla başarısız deneme. 15 dakika bekleyin.");
+    }
 
     var codes = Enumerable.Range(0, 8)
         .Select(_ => $"{GenerateBackupSegment()}-{GenerateBackupSegment()}")
@@ -13400,6 +14126,41 @@ app.MapPost("/api/v1/auth/2fa/backup-codes", async (
 
     await using var connection = await db.OpenConnectionAsync();
     await using var tx = await connection.BeginTransactionAsync();
+
+    await using var stateCmd = new NpgsqlCommand(
+        "SELECT is_2fa_enabled, totp_secret FROM users WHERE id = @userId AND deleted_at IS NULL FOR UPDATE",
+        connection, tx
+    );
+    stateCmd.Parameters.AddWithValue("userId", userId);
+    var is2faEnabled = false;
+    string? totpSecret = null;
+    await using (var stateReader = await stateCmd.ExecuteReaderAsync())
+    {
+        if (await stateReader.ReadAsync())
+        {
+            is2faEnabled = stateReader.GetBoolean(0);
+            totpSecret = stateReader.IsDBNull(1) ? null : stateReader.GetString(1);
+        }
+    }
+
+    // Yedek kod = TOTP'siz giriş; yalnızca geçerli TOTP kodu ya da az önce 2FA'yı açan oturum alabilir
+    // (ilk üretim de dahil: 2FA açık ama hiç kodu olmayan hesapta da çalınmış token yetmez).
+    var freshEnableGrant = string.IsNullOrWhiteSpace(codeRequest?.Code)
+        && is2faEnabled
+        && await redis.GetDb().KeyDeleteAsync($"2fa:fresh-enable:{userId}");
+    switch (AuthAccountPolicy.CheckBackupCodeIssue(is2faEnabled, totpSecret, codeRequest?.Code, freshEnableGrant))
+    {
+        case BackupCodeIssueCheck.NotEnabled:
+            await tx.RollbackAsync();
+            return Conflict("TWO_FACTOR_NOT_ENABLED", "Yedek kod için önce iki faktörlü doğrulamayı aç.");
+        case BackupCodeIssueCheck.SecondFactorRequired:
+            await tx.RollbackAsync();
+            return BadRequest("TWO_FACTOR_REQUIRED", "Yeni yedek kodlar için geçerli iki faktörlü doğrulama kodu gerekli.");
+        case BackupCodeIssueCheck.InvalidTotpCode:
+            await tx.RollbackAsync();
+            await bruteForce.RecordFailedAttemptAsync(bfIdentity);
+            return BadRequest("INVALID_TOTP_CODE", "Doğrulama kodu hatalı.");
+    }
 
     await using var deleteOld = new NpgsqlCommand(
         "DELETE FROM totp_backup_codes WHERE user_id = @userId",
@@ -13487,11 +14248,12 @@ app.MapPost("/api/v1/auth/change-email/request", async (
     if (await checkCmd.ExecuteScalarAsync() is not null)
         return Conflict("EMAIL_IN_USE", "Bu e-posta adresi zaten kullaniliyor.");
 
-    var dbKey = $"chgmail:{newEmail}";
+    // Bekleyen değişiklik talep eden hesaba bağlanır: confirm yalnızca aynı userId ile tüketebilir.
+    var dbKey = $"chgmail:{userId}:{newEmail}";
 
     // Redis: 3 dk cooldown, aynı pencerede aynı kod
     var (otp, tooSoon, waitSecs, isNewChgOtp) = await GetOrCreateCachedOtpAsync(
-        redis.GetDb(), $"otp:chgemail:{newEmail}",
+        redis.GetDb(), $"otp:chgemail:{userId}:{newEmail}",
         validFor: TimeSpan.FromMinutes(10),
         resendAfter: TimeSpan.FromMinutes(3));
 
@@ -13520,6 +14282,7 @@ app.MapPost("/api/v1/auth/change-email/confirm", async (
     HttpRequest httpRequest,
     Db db,
     JwtService jwtService,
+    EmailService emailService,
     RedisService redis
 ) =>
 {
@@ -13529,7 +14292,8 @@ app.MapPost("/api/v1/auth/change-email/confirm", async (
     var userId = GetUserId(principal);
 
     var newEmail = request.NewEmail.ToLowerInvariant();
-    var otpKey = $"chgmail:{newEmail}";
+    // Kod yalnızca talebi (şifre doğrulamasıyla) başlatan hesap tarafından tüketilebilir.
+    var otpKey = $"chgmail:{userId}:{newEmail}";
     var otpHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(request.Otp)));
 
     await using var connection = await db.OpenConnectionAsync();
@@ -13563,20 +14327,71 @@ app.MapPost("/api/v1/auth/change-email/confirm", async (
     }
 
     await using var tx = await connection.BeginTransactionAsync();
+
+    // Talep adımındaki kontroller confirm anında yeniden doğrulanır (Google hesabı, adres çakışması).
+    await using var userCmd = new NpgsqlCommand(
+        "SELECT email, auth_provider FROM users WHERE id = @userId AND deleted_at IS NULL FOR UPDATE",
+        connection, tx
+    );
+    userCmd.Parameters.AddWithValue("userId", userId);
+    await using var userReader = await userCmd.ExecuteReaderAsync();
+    if (!await userReader.ReadAsync())
+    {
+        await userReader.CloseAsync();
+        await tx.RollbackAsync();
+        return NotFound("USER_NOT_FOUND", "Kullanici bulunamadi.");
+    }
+    var oldEmail = userReader.GetString(0);
+    var currentProvider = userReader.GetString(1);
+    await userReader.CloseAsync();
+
+    if (currentProvider != "password")
+    {
+        await tx.RollbackAsync();
+        return BadRequest("GOOGLE_ACCOUNT", "Google ile giris yapan hesaplarda e-posta degistirilemez.");
+    }
+
+    await using var takenCmd = new NpgsqlCommand(
+        "SELECT 1 FROM users WHERE email = @email AND id <> @userId", connection, tx);
+    takenCmd.Parameters.AddWithValue("email", newEmail);
+    takenCmd.Parameters.AddWithValue("userId", userId);
+    if (await takenCmd.ExecuteScalarAsync() is not null)
+    {
+        await tx.RollbackAsync();
+        return Conflict("EMAIL_IN_USE", "Bu e-posta adresi zaten kullaniliyor.");
+    }
+
     await using var updateEmail = new NpgsqlCommand(
         "UPDATE users SET email = @email, updated_at = NOW() WHERE id = @userId AND deleted_at IS NULL",
         connection, tx
     );
     updateEmail.Parameters.AddWithValue("email", newEmail);
     updateEmail.Parameters.AddWithValue("userId", userId);
-    await updateEmail.ExecuteNonQueryAsync();
+    try
+    {
+        if (await updateEmail.ExecuteNonQueryAsync() != 1)
+        {
+            await tx.RollbackAsync();
+            return NotFound("USER_NOT_FOUND", "Kullanici bulunamadi.");
+        }
+    }
+    catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+    {
+        await tx.RollbackAsync();
+        return Conflict("EMAIL_IN_USE", "Bu e-posta adresi zaten kullaniliyor.");
+    }
 
     await using var deleteOtp = new NpgsqlCommand("DELETE FROM email_otps WHERE email = @key", connection, tx);
     deleteOtp.Parameters.AddWithValue("key", otpKey);
     await deleteOtp.ExecuteNonQueryAsync();
 
+    // E-posta (hesap kurtarma kanalı) değişince diğer oturumlar kapanır (gönderilen refresh token hariç).
+    await RevokeUserRefreshTokensAsync(connection, tx, userId, request.RefreshToken);
+
     await tx.CommitAsync();
-    await redis.GetDb().KeyDeleteAsync($"otp:chgemail:{newEmail}");
+    await redis.GetDb().KeyDeleteAsync($"otp:chgemail:{userId}:{newEmail}");
+    // Eski adrese bildirim: yetkisiz değişiklik fark edilebilsin.
+    _ = emailService.SendEmailChangedNoticeAsync(oldEmail);
     return Results.NoContent();
 }).RequireRateLimiting("auth-strict");
 
@@ -13782,7 +14597,7 @@ static string ToSlug(string title, Guid id)
 static string BuildOgHtml(
     Guid id, string slug, string title, string content,
     int hakli, int haksiz, string? customImageUrl,
-    string webBaseUrl, DateTimeOffset createdAt)
+    string webBaseUrl, DateTimeOffset createdAt, bool isUnlisted)
 {
     var total = hakli + haksiz;
     var hakliPct = total > 0 ? (int)Math.Round(hakli * 100.0 / total) : 0;
@@ -13791,16 +14606,19 @@ static string BuildOgHtml(
         ? $"{total} kişi oyladı · %{hakliPct} Haklı · Sen de karar ver"
         : TruncateForMeta(content, 160);
 
-    var postUrl = $"{webBaseUrl}/posts/{slug}";
+    // Liste dışı gönderi yalnızca paylaşılan id linkiyle açılır: slug yayınlanmaz ve sayfa indekslenmez.
+    var postUrl = isUnlisted ? $"{webBaseUrl}/posts/{id}" : $"{webBaseUrl}/posts/{slug}";
+    var robotsMeta = isUnlisted ? """<meta name="robots" content="noindex, nofollow">""" : "";
     var imageUrl = customImageUrl ?? $"{webBaseUrl}/api/v1/posts/{id}/share-image.png";
 
     var titleEncoded = WebUtility.HtmlEncode(title);
     var descEncoded = WebUtility.HtmlEncode(description);
     var imageEncoded = WebUtility.HtmlEncode(imageUrl);
     var urlEncoded = WebUtility.HtmlEncode(postUrl);
-    var jsonTitle = title.Replace("\\", "\\\\").Replace("\"", "\\\"");
+    // System.Text.Json default encoder escapes <, >, &, ' and control chars as \uXXXX, so UGC cannot close the <script> block.
+    var jsonTitle = JsonSerializer.Serialize(title);
     var dateStr = createdAt.ToString("yyyy-MM-dd");
-    var jsonLd = $"{{\"@context\":\"https://schema.org\",\"@type\":\"Question\",\"name\":\"{jsonTitle}\",\"answerCount\":{total},\"datePublished\":\"{dateStr}\",\"author\":{{\"@type\":\"Person\",\"name\":\"Anonim\"}}}}";
+    var jsonLd = $"{{\"@context\":\"https://schema.org\",\"@type\":\"Question\",\"name\":{jsonTitle},\"answerCount\":{total},\"datePublished\":\"{dateStr}\",\"author\":{{\"@type\":\"Person\",\"name\":\"Anonim\"}}}}";
 
     return $$"""
         <!DOCTYPE html>
@@ -13810,6 +14628,7 @@ static string BuildOgHtml(
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <title>{{titleEncoded}} - Karar</title>
           <meta name="description" content="{{descEncoded}}">
+          {{robotsMeta}}
           <link rel="canonical" href="{{urlEncoded}}">
           <meta property="og:type" content="article">
           <meta property="og:title" content="{{titleEncoded}} - Karar">
@@ -13973,7 +14792,7 @@ static async Task CheckPostVoteMilestoneAsync(
 {
     // post sahibi user_id ve device_id'yi çek
     await using var ownerCmd = new NpgsqlCommand(
-        "SELECT user_id, device_id FROM posts WHERE id = @postId",
+        "SELECT user_id, device_id, is_anonymous FROM posts WHERE id = @postId",
         connection,
         transaction
     );
@@ -13982,6 +14801,7 @@ static async Task CheckPostVoteMilestoneAsync(
     if (!await ownerReader.ReadAsync()) return;
     var userId = ownerReader.IsDBNull(0) ? (Guid?)null : ownerReader.GetGuid(0);
     var ownerDeviceId = ownerReader.GetGuid(1);
+    var isAnonymousPost = ownerReader.GetBoolean(2);
     await ownerReader.CloseAsync();
 
     // Milestone tablosu: eşik → karma_delta
@@ -14016,8 +14836,9 @@ static async Task CheckPostVoteMilestoneAsync(
     {
         if (oldTotal < threshold && newTotal >= threshold)
         {
-            // Karma güncelle (sadece kayıtlı kullanıcı ise)
-            if (userId.HasValue)
+            // Karma güncelle (sadece kayıtlı kullanıcı ise).
+            // Anonim postlar herkese açık karmaya yansımaz: eşikte oluşan karma sıçraması yazarı ele verir.
+            if (userId.HasValue && !isAnonymousPost)
             {
                 await using var karmaCmd = new NpgsqlCommand(
                     """
@@ -14074,8 +14895,15 @@ static async Task CheckCommentUpvoteMilestoneAsync(
     int newUpvotes
 )
 {
+    // Anonim post sahibinin kendi postundaki yorumları karma kazandırmaz (yazar kimliği sızmasın).
     await using var ownerCmd = new NpgsqlCommand(
-        "SELECT user_id FROM comments WHERE id = @commentId",
+        """
+        SELECT cm.user_id
+        FROM comments cm
+        JOIN posts p ON p.id = cm.post_id
+        WHERE cm.id = @commentId
+          AND NOT COALESCE(p.is_anonymous AND p.user_id = cm.user_id, FALSE)
+        """,
         connection,
         transaction
     );
@@ -14327,7 +15155,8 @@ static async Task<ReportThresholdDecision> EvaluateReportThresholdAsync(
                r.reporter_ip_block,
                r.reason,
                COALESCE(u.reporter_accurate_count, 0),
-               COALESCE(u.reporter_total_count,   0)
+               COALESCE(u.reporter_total_count,   0),
+               d.created_at
         FROM reports r
         JOIN devices d ON d.id = r.reporter_device_id
         LEFT JOIN users u ON u.id = r.reporter_user_id
@@ -14341,41 +15170,64 @@ static async Task<ReportThresholdDecision> EvaluateReportThresholdAsync(
     command.Parameters.AddWithValue("targetType", targetType);
     command.Parameters.AddWithValue("targetId", targetId);
 
-    // Raw rows: (fingerprint, ipBlock, reason, accurateCount, totalCount)
-    var rows = new List<(string Fingerprint, string? IpBlock, string Reason, int Accurate, int Total)>();
+    var now = DateTimeOffset.UtcNow;
+    var reporters = new List<ReporterSnapshot>();
     await using (var reader = await command.ExecuteReaderAsync())
     {
         while (await reader.ReadAsync())
         {
-            rows.Add((
+            reporters.Add(new ReporterSnapshot(
                 reader.GetString(0),
                 reader.IsDBNull(1) ? null : reader.GetString(1),
                 reader.GetString(2),
                 reader.GetInt32(3),
-                reader.GetInt32(4)
+                reader.GetInt32(4),
+                now - reader.GetFieldValue<DateTimeOffset>(5)
             ));
         }
     }
 
-    // Compute effective weight per reporter: fingerprint/IP uniqueness × reputation.
-    // Each reporter is compared against all other reporters (not against itself) so the
-    // first reporter from a given subnet is penalised only when there are other same-subnet
-    // reporters in the batch — i.e. when a coordinated cluster is actually present.
-    var allSignals = rows.Select(r => (r.Fingerprint, r.IpBlock)).ToList();
-    var reports = rows.Select((row, i) =>
-    {
-        var others = allSignals.Where((_, j) => j != i);
-        var ipFpWeight = ReportAbuseProtectionService.ComputeReportWeight(row.Fingerprint, row.IpBlock, others);
-        var reputationWeight = ReporterReputationService.ComputeWeight(row.Accurate, row.Total);
-        return new ReportSignal(row.Fingerprint, row.IpBlock, row.Reason, ipFpWeight * reputationWeight);
-    }).ToList();
+    // Ağ bloğu tekilliği × itibar ağırlığı; yalnızca yerleşik cihazlar otomatik gizlemeye sayılır.
+    return reportThresholdService.EvaluateReporters(targetType, reporters);
+}
 
-    var weightedReporters = reports.Sum(r => r.Weight);
-    var weightedCritical  = reports
-        .Where(r => reportThresholdService.IsCriticalReason(r.Reason))
-        .Sum(r => r.Weight);
-
-    return reportThresholdService.Evaluate(targetType, weightedReporters, weightedCritical);
+static async Task AlertAdminsAboutUntrustedReportsAsync(
+    NpgsqlConnection connection,
+    NpgsqlTransaction transaction,
+    string targetType,
+    Guid targetId,
+    ReportThresholdDecision decision
+)
+{
+    // Eşik yalnızca yeni cihazların raporlarıyla aşıldı: içerik gizlenmez, hedef başına tek açık uyarı.
+    await using var command = new NpgsqlCommand(
+        """
+        INSERT INTO admin_alerts (type, payload)
+        SELECT 'report_threshold_untrusted',
+               jsonb_build_object(
+                   'target_type', @targetType,
+                   'target_id', @targetId::text,
+                   'priority', @priority,
+                   'reason', @reason,
+                   'detected_at', NOW()
+               )
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM admin_alerts
+            WHERE type = 'report_threshold_untrusted'
+              AND is_resolved = FALSE
+              AND payload->>'target_type' = @targetType
+              AND payload->>'target_id' = @targetId::text
+        )
+        """,
+        connection,
+        transaction
+    );
+    command.Parameters.AddWithValue("targetType", targetType);
+    command.Parameters.AddWithValue("targetId", targetId);
+    command.Parameters.AddWithValue("priority", decision.Priority);
+    command.Parameters.AddWithValue("reason", decision.Reason ?? string.Empty);
+    await command.ExecuteNonQueryAsync();
 }
 
 static string? GetClientIpBlock(HttpRequest request)
@@ -14604,7 +15456,7 @@ static Task EnforceMinimumResponseTimeAsync(
     return remaining <= TimeSpan.Zero ? Task.CompletedTask : Task.Delay(remaining, cancellationToken);
 }
 
-static async Task<(string? OldVote, int OldTotal, int Hakli, int Haksiz, int CategoryId, DateTimeOffset CreatedAt)> GetVoteContextAsync(
+static async Task<(string? OldVote, int OldTotal, int Hakli, int Haksiz, int CategoryId, DateTimeOffset CreatedAt, bool IsUnlisted, bool IsSuppressed)> GetVoteContextAsync(
     NpgsqlConnection connection,
     NpgsqlTransaction transaction,
     Guid postId,
@@ -14613,7 +15465,11 @@ static async Task<(string? OldVote, int OldTotal, int Hakli, int Haksiz, int Cat
 {
     await using var command = new NpgsqlCommand(
         """
-        SELECT p.vote_count_hakli, p.vote_count_haksiz, v.vote_type, p.category_id, p.created_at
+        SELECT p.vote_count_hakli, p.vote_count_haksiz, v.vote_type, p.category_id, p.created_at, p.is_unlisted,
+               -- Mevcut satırın bastırması veya sil + yeniden oy için hatırlanan bastırma (UpsertVoteAsync
+               -- geri uygular): her iki durumda da yan etkiler (affinity, şehir trendi) atlanır.
+               COALESCE(v.is_suppressed, FALSE)
+                   OR EXISTS (SELECT 1 FROM vote_suppression_history h WHERE h.post_id = p.id AND h.device_id = @deviceId)
         FROM posts p
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
         WHERE p.id = @postId
@@ -14624,13 +15480,15 @@ static async Task<(string? OldVote, int OldTotal, int Hakli, int Haksiz, int Cat
     command.Parameters.AddWithValue("postId", postId);
     command.Parameters.AddWithValue("deviceId", deviceId);
     await using var reader = await command.ExecuteReaderAsync();
-    if (!await reader.ReadAsync()) return (null, 0, 0, 0, 0, DateTimeOffset.MinValue);
+    if (!await reader.ReadAsync()) return (null, 0, 0, 0, 0, DateTimeOffset.MinValue, false, false);
     var hakli = reader.GetInt32(0);
     var haksiz = reader.GetInt32(1);
     var oldVote = reader.IsDBNull(2) ? null : reader.GetString(2);
     var categoryId = reader.GetInt32(3);
     var createdAt = reader.GetFieldValue<DateTimeOffset>(4);
-    return (oldVote, hakli + haksiz, hakli, haksiz, categoryId, createdAt);
+    var isUnlisted = reader.GetBoolean(5);
+    var isSuppressed = reader.GetBoolean(6);
+    return (oldVote, hakli + haksiz, hakli, haksiz, categoryId, createdAt, isUnlisted, isSuppressed);
 }
 
 static async Task<(int Hakli, int Haksiz)> UpdateVoteCountersReturningAsync(
@@ -14692,6 +15550,9 @@ static async Task UpsertVoteAsync(
     string? voterRegion = null
 )
 {
+    // Brigade bastırması (is_suppressed) yapışkandır: oyu değiştirmek onu temizlemez. Guard penceresi
+    // created_at'e bağlı olduğundan, burada sıfırlanan bastırma 10 dk sonra yeniden uygulanmıyordu.
+    // Sil + yeniden oy yolu da vote_suppression_history ile kapatılır (aşağıda geri uygulanır).
     await using var command = new NpgsqlCommand(
         """
         INSERT INTO votes (post_id, device_id, vote_type, voter_ip_block, is_quarantined, voter_region, is_suppressed)
@@ -14701,10 +15562,7 @@ static async Task UpsertVoteAsync(
             vote_type = @voteType,
             voter_ip_block = COALESCE(@ipBlock, votes.voter_ip_block),
             voter_region = COALESCE(@voterRegion, votes.voter_region),
-            is_quarantined = @isQuarantined,
-            is_suppressed = FALSE,
-            suppression_reason = NULL,
-            suppressed_at = NULL,
+            is_quarantined = @isQuarantined OR votes.is_suppressed,
             updated_at = NOW()
         """,
         connection,
@@ -14717,6 +15575,28 @@ static async Task UpsertVoteAsync(
     command.Parameters.AddWithValue("isQuarantined", isQuarantined);
     command.Parameters.AddWithValue("voterRegion", (object?)voterRegion ?? DBNull.Value);
     await command.ExecuteNonQueryAsync();
+
+    // Sil + yeniden oy: daha önce bastırılmış (post, cihaz) için bastırmayı geri uygula.
+    await using var reapplySuppression = new NpgsqlCommand(
+        """
+        UPDATE votes v
+        SET is_suppressed = TRUE,
+            suppression_reason = h.suppression_reason,
+            suppressed_at = h.suppressed_at,
+            is_quarantined = TRUE
+        FROM vote_suppression_history h
+        WHERE v.post_id = @postId
+          AND v.device_id = @deviceId
+          AND h.post_id = v.post_id
+          AND h.device_id = v.device_id
+          AND v.is_suppressed = FALSE
+        """,
+        connection,
+        transaction
+    );
+    reapplySuppression.Parameters.AddWithValue("postId", postId);
+    reapplySuppression.Parameters.AddWithValue("deviceId", deviceId);
+    await reapplySuppression.ExecuteNonQueryAsync();
 }
 
 static async Task UpdateVoteCountersAsync(
@@ -14762,6 +15642,50 @@ static async Task UpdateVoteCountersAsync(
     );
     command.Parameters.AddWithValue("postId", postId);
     await command.ExecuteNonQueryAsync();
+}
+
+// Banlanan cihazın oyları görünür sayaçlardan çıkarılır (ban kaldırılınca yalnızca bu oylar geri gelir);
+// etkilenen her gönderinin sayaçları aynı transaction içinde DB durumundan yeniden hesaplanır.
+static async Task SetBannedDeviceVoteSuppressionAsync(
+    NpgsqlConnection connection,
+    NpgsqlTransaction transaction,
+    Guid deviceId,
+    bool suppress
+)
+{
+    var sql = suppress
+        ? """
+          UPDATE votes
+          SET is_suppressed = TRUE,
+              suppression_reason = 'device_banned',
+              suppressed_at = NOW()
+          WHERE device_id = @deviceId AND is_suppressed = FALSE
+          RETURNING post_id
+          """
+        : """
+          UPDATE votes
+          SET is_suppressed = FALSE,
+              suppression_reason = NULL,
+              suppressed_at = NULL
+          WHERE device_id = @deviceId AND suppression_reason = 'device_banned'
+          RETURNING post_id
+          """;
+
+    var postIds = new List<Guid>();
+    await using (var command = new NpgsqlCommand(sql, connection, transaction))
+    {
+        command.Parameters.AddWithValue("deviceId", deviceId);
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            postIds.Add(reader.GetGuid(0));
+        }
+    }
+
+    foreach (var postId in postIds)
+    {
+        await UpdateVoteCountersAsync(connection, transaction, postId, null, null);
+    }
 }
 
 static async Task<VoteResponse> GetVoteResponseAsync(
@@ -14839,11 +15763,21 @@ static Guid? GetOptionalUserId(HttpRequest request, JwtService jwtService)
 static async Task<Guid?> GetUserDeviceIdAsync(
     NpgsqlConnection connection,
     Guid userId,
-    NpgsqlTransaction? transaction = null
+    NpgsqlTransaction? transaction = null,
+    bool includeBannedDevice = false
 )
 {
+    // X-Device-Token düşürülüp yalnızca JWT gönderildiğinde banlı cihaza geri düşülmez. Yalnızca
+    // kullanıcının kendi geçmişini okuyan/itiraz eden endpoint'ler banlı cihazı da çözer.
     await using var command = new NpgsqlCommand(
-        "SELECT device_id FROM users WHERE id = @userId AND deleted_at IS NULL",
+        includeBannedDevice
+            ? "SELECT device_id FROM users WHERE id = @userId AND deleted_at IS NULL"
+            : """
+              SELECT u.device_id
+              FROM users u
+              JOIN devices d ON d.id = u.device_id
+              WHERE u.id = @userId AND u.deleted_at IS NULL AND d.is_banned = FALSE
+              """,
         connection,
         transaction
     );
@@ -14852,6 +15786,31 @@ static async Task<Guid?> GetUserDeviceIdAsync(
     return result is Guid deviceId ? deviceId : null;
 }
 
+// Hesabın kullanıldığı cihazı kaydeder (blok kontrolleri JWT'siz isteklerde bunu kullanır).
+static async Task LinkUserDeviceAsync(
+    NpgsqlConnection connection,
+    NpgsqlTransaction? transaction,
+    Guid userId,
+    Guid deviceId
+)
+{
+    await using var command = new NpgsqlCommand(
+        """
+        INSERT INTO user_device_links (user_id, device_id)
+        VALUES (@userId, @deviceId)
+        ON CONFLICT (user_id, device_id) DO NOTHING
+        """,
+        connection,
+        transaction
+    );
+    command.Parameters.AddWithValue("userId", userId);
+    command.Parameters.AddWithValue("deviceId", deviceId);
+    await command.ExecuteNonQueryAsync();
+}
+
+// Self-vote guard. A logged-in caller is the author only of guest content from their device or of
+// their own account's posts (another account's post made on a shared device is not theirs). A
+// logged-out caller on the author's device is still treated as the author so self-voting stays blocked.
 static async Task<bool> IsPostOwnerAsync(
     NpgsqlConnection connection,
     NpgsqlTransaction transaction,
@@ -14867,7 +15826,7 @@ static async Task<bool> IsPostOwnerAsync(
             FROM posts
             WHERE id = @postId
               AND status != 'deleted'
-              AND (device_id = @deviceId OR user_id = @userId)
+              AND ((CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END) OR (@isGuest AND device_id = @deviceId))
         )
         """,
         connection,
@@ -14876,16 +15835,21 @@ static async Task<bool> IsPostOwnerAsync(
     command.Parameters.AddWithValue("postId", postId);
     command.Parameters.AddWithValue("deviceId", deviceId);
     command.Parameters.AddWithValue("userId", (object?)userId ?? DBNull.Value);
+    command.Parameters.AddWithValue("isGuest", userId is null);
     return (bool)(await command.ExecuteScalarAsync() ?? false);
 }
 
-// Returns true when the post author has blocked actorUserId.
-// Only meaningful for registered users — anonymous devices are not in blocked_users.
+// Returns true when the post author has blocked the actor.
+// JWT'siz (yalnızca cihaz) isteklerde aktör, cihaza bağlı hesaplar üzerinden çözülür
+// (user_device_links); böylece Authorization header'ını düşürmek engeli atlatmaz.
+// Cihaz engelleyenin kendisine de bağlıysa (paylaşılan cihaz) cihaz eşlemesi uygulanmaz.
+// Anonim postlarda uygulanmaz: BLOCKED_BY_AUTHOR yanıtı anonim yazarın kimliğini sızdırır.
 static async Task<bool> IsBlockedByPostAuthorAsync(
     NpgsqlConnection connection,
     NpgsqlTransaction? transaction,
     Guid postId,
-    Guid actorUserId
+    Guid? actorUserId,
+    Guid actorDeviceId
 )
 {
     await using var command = new NpgsqlCommand(
@@ -14895,15 +15859,32 @@ static async Task<bool> IsBlockedByPostAuthorAsync(
             FROM blocked_users bu
             JOIN posts p ON p.user_id = bu.blocker_user_id
             WHERE p.id = @postId
-              AND bu.blocked_user_id = @actorUserId
               AND p.user_id IS NOT NULL
+              AND p.is_anonymous = FALSE
+              AND (
+                  bu.blocked_user_id = @actorUserId
+                  OR (
+                      @actorUserId IS NULL
+                      AND EXISTS (
+                          SELECT 1 FROM user_device_links udl
+                          WHERE udl.device_id = @actorDeviceId
+                            AND udl.user_id = bu.blocked_user_id
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM user_device_links own
+                          WHERE own.device_id = @actorDeviceId
+                            AND own.user_id = bu.blocker_user_id
+                      )
+                  )
+              )
         )
         """,
         connection,
         transaction
     );
     command.Parameters.AddWithValue("postId", postId);
-    command.Parameters.AddWithValue("actorUserId", actorUserId);
+    command.Parameters.Add("actorUserId", NpgsqlDbType.Uuid).Value = (object?)actorUserId ?? DBNull.Value;
+    command.Parameters.AddWithValue("actorDeviceId", actorDeviceId);
     return (bool)(await command.ExecuteScalarAsync() ?? false);
 }
 
@@ -14965,6 +15946,98 @@ static async Task<DeleteAccountRequest?> ReadOptionalDeleteAccountRequestAsync(H
     return await request.ReadFromJsonAsync<DeleteAccountRequest>();
 }
 
+// Hassas işlemler için yeniden doğrulama (step-up). null → doğrulandı; aksi halde döndürülecek hata.
+// Tahminler hesap bazlı brute-force sayacına yazılır (IP/cihazdan bağımsız).
+static async Task<IResult?> RequireStepUpAsync(
+    NpgsqlConnection connection,
+    BruteForceService bruteForce,
+    Guid userId,
+    string? password,
+    string? totpCode
+)
+{
+    var bfIdentity = BruteForceService.AccountIdentityFor("stepup", userId);
+    if (await bruteForce.IsLockedOutAsync(bfIdentity))
+    {
+        return TooManyRequests("ACCOUNT_LOCKED", "Çok fazla başarısız deneme. 15 dakika bekleyin.");
+    }
+
+    await using var command = new NpgsqlCommand(
+        "SELECT password_hash, is_2fa_enabled, totp_secret FROM users WHERE id = @id AND deleted_at IS NULL",
+        connection
+    );
+    command.Parameters.AddWithValue("id", userId);
+    await using var reader = await command.ExecuteReaderAsync();
+    if (!await reader.ReadAsync())
+    {
+        return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
+    }
+    var passwordHash = reader.IsDBNull(0) ? null : reader.GetString(0);
+    var is2faEnabled = reader.GetBoolean(1);
+    var totpSecret = reader.IsDBNull(2) ? null : reader.GetString(2);
+    await reader.CloseAsync();
+
+    switch (StepUpAuthPolicy.Evaluate(passwordHash, is2faEnabled, totpSecret, password, totpCode))
+    {
+        case StepUpAuthPolicy.Result.Ok:
+            await bruteForce.ClearAsync(bfIdentity);
+            return null;
+        case StepUpAuthPolicy.Result.PasswordRequired:
+            return BadRequest("PASSWORD_REQUIRED", "Bu işlem için şifrenizi tekrar girin.");
+        case StepUpAuthPolicy.Result.InvalidPassword:
+            await bruteForce.RecordFailedAttemptAsync(bfIdentity);
+            return BadRequest("INVALID_PASSWORD", "Şifre hatalı.");
+        case StepUpAuthPolicy.Result.TwoFactorRequired:
+            return BadRequest("TWO_FACTOR_REQUIRED", "Bu işlem için iki faktörlü doğrulama kodunu girin.");
+        case StepUpAuthPolicy.Result.InvalidTwoFactor:
+            await bruteForce.RecordFailedAttemptAsync(bfIdentity);
+            return BadRequest("INVALID_TOTP_CODE", "Doğrulama kodu hatalı.");
+        default:
+            return BadRequest("REAUTH_UNAVAILABLE", "Bu işlem için hesabınızda şifre veya iki faktörlü doğrulama tanımlı olmalı.");
+    }
+}
+
+// Kimlik bilgisi değişince (şifre sıfırlama/değiştirme, e-posta değişikliği) açık oturumlar kapatılır.
+// İstemci kendi refresh token'ını gönderirse yalnızca o oturum korunur.
+static async Task RevokeUserRefreshTokensAsync(
+    NpgsqlConnection connection,
+    NpgsqlTransaction transaction,
+    Guid userId,
+    string? keepRefreshToken = null
+)
+{
+    await using var command = new NpgsqlCommand(
+        "UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = @userId AND revoked_at IS NULL",
+        connection,
+        transaction
+    );
+    command.Parameters.AddWithValue("userId", userId);
+    if (!string.IsNullOrWhiteSpace(keepRefreshToken))
+    {
+        command.CommandText += " AND token_hash <> @keepHash";
+        command.Parameters.AddWithValue("keepHash", JwtService.HashRefreshToken(keepRefreshToken));
+    }
+    await command.ExecuteNonQueryAsync();
+}
+
+// Gövdesi isteğe bağlı JSON uç noktaları: boş/JSON olmayan/bozuk gövde → null (500 yerine).
+static async Task<T?> ReadOptionalJsonRequestAsync<T>(HttpRequest request) where T : class
+{
+    if (request.ContentLength is null or 0 || !request.HasJsonContentType())
+    {
+        return null;
+    }
+
+    try
+    {
+        return await request.ReadFromJsonAsync<T>();
+    }
+    catch (System.Text.Json.JsonException)
+    {
+        return null;
+    }
+}
+
 static async Task<CommentDto?> ReadCommentDtoAsync(
     NpgsqlConnection connection,
     Guid commentId,
@@ -14972,11 +16045,16 @@ static async Task<CommentDto?> ReadCommentDtoAsync(
     Guid? userId
 )
 {
+    // Yorum listesiyle aynı redaksiyon uygulanır: anonim postta OP yorumunun ve silinme/kurtarma
+    // sürecindeki hesabın kullanıcı adı ve userId'si tepki yanıtlarından da sızmamalı.
     await using var command = new NpgsqlCommand(
         """
         SELECT cm.id, cm.content, cm.upvote_count, cm.downvote_count, cu.comment_id IS NOT NULL, cd.comment_id IS NOT NULL,
-               (cm.device_id = @deviceId OR cm.user_id = @userId), cm.created_at,
-               cm.is_pinned, u.username, cm.user_id, cm.is_edited,
+               COALESCE((CASE WHEN cm.user_id IS NULL THEN cm.device_id = @deviceId ELSE cm.user_id = @userId END), FALSE), cm.created_at,
+               cm.is_pinned,
+               CASE WHEN (p.is_anonymous = TRUE AND cm.user_id = p.user_id) OR u.deleted_at IS NOT NULL THEN NULL ELSE u.username END AS username,
+               CASE WHEN (p.is_anonymous = TRUE AND cm.user_id = p.user_id) OR u.deleted_at IS NOT NULL THEN NULL ELSE cm.user_id END AS author_id,
+               cm.is_edited,
                ((cm.user_id IS NOT NULL AND cm.user_id = p.user_id) OR (cm.user_id IS NULL AND cm.device_id = p.device_id)) AS is_post_owner,
                (SELECT COUNT(*)::int FROM comment_upvotes cu_h
                 JOIN votes v_h ON v_h.device_id = cu_h.device_id AND v_h.post_id = cm.post_id AND v_h.vote_type = 'hakli'

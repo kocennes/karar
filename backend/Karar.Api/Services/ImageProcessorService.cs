@@ -13,6 +13,18 @@ public sealed class ImageProcessorService(ILogger<ImageProcessorService> logger)
     internal const int MaxSourceDimension = 10_000;
     internal const long MaxSourcePixels = 40_000_000;
 
+    // A decoded 40 MP image is ~160 MB of pixels: cap concurrent decodes so a burst of uploads cannot
+    // multiply that, and bound how long one request may queue or decode (#23, 7024039).
+    private const int MaxConcurrentDecodes = 2;
+    private static readonly TimeSpan DecodeQueueTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan DecodeTimeout = TimeSpan.FromSeconds(10);
+    private static readonly SemaphoreSlim DecodeGate = new(MaxConcurrentDecodes, MaxConcurrentDecodes);
+
+    internal static bool IsWithinDecodeLimits(int width, int height) =>
+        width is > 0 and <= MaxSourceDimension &&
+        height is > 0 and <= MaxSourceDimension &&
+        (long)width * height <= MaxSourcePixels;
+
     private static readonly SKColorSpace Srgb = SKColorSpace.CreateSrgb();
 
     // 2x2 box average when the scale is exactly 1/2; used for the progressive pre-shrink steps.
@@ -26,9 +38,21 @@ public sealed class ImageProcessorService(ILogger<ImageProcessorService> logger)
     /// </summary>
     public async Task<MemoryStream?> ProcessAsync(Stream inputStream, CancellationToken ct = default)
     {
+        var gateEntered = false;
         try
         {
-            var encoded = await ReadBoundedAsync(inputStream, MaxInputBytes, ct);
+            gateEntered = await DecodeGate.WaitAsync(DecodeQueueTimeout, ct);
+            if (!gateEntered)
+            {
+                logger.LogWarning("Image processing skipped: decode queue is saturated");
+                return null;
+            }
+
+            using var decodeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            decodeCts.CancelAfter(DecodeTimeout);
+            var decodeToken = decodeCts.Token;
+
+            var encoded = await ReadBoundedAsync(inputStream, MaxInputBytes, decodeToken);
             if (encoded is null)
             {
                 logger.LogWarning("Image rejected: input exceeds {MaxBytes} bytes", MaxInputBytes);
@@ -61,9 +85,7 @@ public sealed class ImageProcessorService(ILogger<ImageProcessorService> logger)
 
             var sourceWidth = codec.Info.Width;
             var sourceHeight = codec.Info.Height;
-            if (sourceWidth <= 0 || sourceHeight <= 0 ||
-                sourceWidth > MaxSourceDimension || sourceHeight > MaxSourceDimension ||
-                (long)sourceWidth * sourceHeight > MaxSourcePixels)
+            if (!IsWithinDecodeLimits(sourceWidth, sourceHeight))
             {
                 logger.LogWarning(
                     "Image rejected: dimensions {Width}x{Height} exceed decode limits",
@@ -77,6 +99,8 @@ public sealed class ImageProcessorService(ILogger<ImageProcessorService> logger)
             var targetWidth = Math.Max(1, (int)Math.Round(sourceWidth * scale));
             var targetHeight = Math.Max(1, (int)Math.Round(sourceHeight * scale));
 
+            // SKCodec.GetPixels is synchronous: honour the request/decode deadline at each stage boundary.
+            decodeToken.ThrowIfCancellationRequested();
             using var decoded = Decode(codec, scale);
             if (decoded is null)
             {
@@ -103,6 +127,7 @@ public sealed class ImageProcessorService(ILogger<ImageProcessorService> logger)
                     working = next;
                 }
 
+                decodeToken.ThrowIfCancellationRequested();
                 var origin = codec.EncodedOrigin;
                 var (outputWidth, outputHeight) = SwapsAxes(origin)
                     ? (targetHeight, targetWidth)
@@ -144,10 +169,21 @@ public sealed class ImageProcessorService(ILogger<ImageProcessorService> logger)
                 shrunk?.Dispose();
             }
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return null;
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "Image processing failed");
             return null;
+        }
+        finally
+        {
+            if (gateEntered)
+            {
+                DecodeGate.Release();
+            }
         }
     }
 

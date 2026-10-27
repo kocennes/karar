@@ -164,9 +164,11 @@ public sealed class ContentModerationService
             return ModerationDecision.Reject("CONTENT_REJECTED", "İçerik politikası gereği bu metin yayınlanamaz.");
         }
 
-        // Doxxing: telefon / e-posta — bu kalıplar da ham metinde aranır. Normalizer rakamları ve '@'
-        // işaretini harfe çevirdiğinden (0→o, 5→s, @→a) normalize metinde hiçbir zaman eşleşemezler.
-        if (TurkishPhonePattern.IsMatch(text) || EmailPattern.IsMatch(text))
+        // Doxxing: telefon / e-posta — normalizer rakamları ve '@' işaretini harfe çevirdiğinden
+        // (0→o, 5→s, @→a) bu kalıplar normalize metinde hiç eşleşmez. Yalnızca NFKC uygulanmış ham
+        // metinde kontrol edilir (tam genişlikli rakamlar ASCII'ye iner).
+        var piiText = text.Normalize(System.Text.NormalizationForm.FormKC);
+        if (TurkishPhonePattern.IsMatch(piiText) || EmailPattern.IsMatch(piiText))
         {
             return ModerationDecision.Review("Kişisel bilgi olabilecek veri tespit edildi.", isCrisis);
         }

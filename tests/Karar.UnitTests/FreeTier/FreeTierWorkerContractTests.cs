@@ -22,6 +22,7 @@ public sealed class FreeTierWorkerContractTests
         "AuditLogExportJob.cs",
         "PoliticalNarrativeClusterJob.cs",
         "DataRetentionService.cs",
+        "PostImageCleanupJob.cs", // added by #23 (fix/guvenlik-denetimi); gated at integration
     ];
 
     // Idle => the whole DB-touching cycle is skipped with a single Debug log.
@@ -33,6 +34,7 @@ public sealed class FreeTierWorkerContractTests
         "PostDistributionJob.cs",
         "BrigadeCoordinatedDetectorJob.cs",
         "ViralNotificationJob.cs",
+        "PostImageCleanupJob.cs",
     ];
 
     // Keep their schedule (rare) or have a Redis-only signal for pending work; never skipped.

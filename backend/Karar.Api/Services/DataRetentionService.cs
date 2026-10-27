@@ -42,6 +42,10 @@ public sealed class DataRetentionService(
                     _lastWeeklyDecay = DateTime.UtcNow;
                     logger.LogInformation("Applied weekly affinity decay");
                 }
+
+                var purgedRegistrations = await PurgeStaleUnverifiedRegistrationsAsync(stoppingToken);
+                if (purgedRegistrations > 0)
+                    logger.LogInformation("Purged {Count} unverified registrations older than 24h", purgedRegistrations);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -55,42 +59,71 @@ public sealed class DataRetentionService(
     private async Task<int> AnonymizeDeletedUsersAsync(int thresholdDays, CancellationToken ct)
     {
         await using var connection = await db.OpenConnectionAsync();
+
+        var dueUserIds = new List<Guid>();
+        await using (var select = new NpgsqlCommand(
+            """
+            SELECT id
+            FROM users
+            WHERE deleted_at IS NOT NULL
+              AND deleted_at < NOW() - (@thresholdDays * INTERVAL '1 day')
+              AND email NOT LIKE 'deleted-%@deleted.karar.local'
+            LIMIT 500
+            """,
+            connection))
+        {
+            select.Parameters.AddWithValue("thresholdDays", thresholdDays);
+            await using var reader = await select.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                dueUserIds.Add(reader.GetGuid(0));
+            }
+        }
+
+        // Admin KVKK silme ile aynı rutin (UserDataErasure); her kullanıcı kendi transaction'ında.
+        foreach (var userId in dueUserIds)
+        {
+            await using var transaction = await connection.BeginTransactionAsync(ct);
+            await UserDataErasure.EraseAsync(connection, transaction, userId, ct);
+            await transaction.CommitAsync(ct);
+        }
+
+        return dueUserIds.Count;
+    }
+
+    // Doğrulanmamış şifreli kayıtlar e-posta/kullanıcı adını süresiz rezerve etmesin (başkasının
+    // e-postasıyla açılan kayıt sahibin kaydını engeller). Hiç oturum açılamamış bu satırların bağlı
+    // verisi olmaz; yine de NO ACTION FK'li tablolarda kayıt varsa satır atlanır.
+    private async Task<int> PurgeStaleUnverifiedRegistrationsAsync(CancellationToken ct)
+    {
+        await using var connection = await db.OpenConnectionAsync();
         await using var command = new NpgsqlCommand(
             """
-            WITH due_users AS (
-                SELECT id, device_id
-                FROM users
-                WHERE deleted_at IS NOT NULL
-                  AND deleted_at < NOW() - (@thresholdDays * INTERVAL '1 day')
-                  AND email NOT LIKE 'deleted-%@deleted.karar.local'
-                LIMIT 500
+            WITH stale_users AS (
+                DELETE FROM users
+                WHERE id IN (
+                    SELECT u.id
+                    FROM users u
+                    WHERE u.email_verified = FALSE
+                      AND u.auth_provider = 'password'
+                      AND u.deleted_at IS NULL
+                      AND u.created_at < NOW() - INTERVAL '24 hours'
+                      AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.user_id = u.id)
+                      AND NOT EXISTS (SELECT 1 FROM account_recovery_tokens r WHERE r.user_id = u.id)
+                      AND NOT EXISTS (SELECT 1 FROM admin_roles ar WHERE ar.user_id = u.id)
+                    LIMIT 500
+                )
+                RETURNING email
             ),
-            anonymized_users AS (
-                UPDATE users u
-                SET username = 'silinen_' || substring(replace(u.id::text, '-', '') from 1 for 12),
-                    email = 'deleted-' || replace(u.id::text, '-', '') || '@deleted.karar.local',
-                    password_hash = NULL,
-                    google_id = NULL,
-                    ban_reason = NULL,
-                    updated_at = NOW()
-                FROM due_users d
-                WHERE u.id = d.id
-                RETURNING d.device_id
-            ),
-            anonymized_devices AS (
-                UPDATE devices d
-                SET fingerprint = 'deleted-' || replace(d.id::text, '-', ''),
-                    app_version = 'deleted',
-                    last_seen_at = NOW()
-                FROM anonymized_users u
-                WHERE d.id = u.device_id
-                RETURNING d.id
+            stale_otps AS (
+                DELETE FROM email_otps o
+                USING stale_users s
+                WHERE o.email = s.email
+                RETURNING o.id
             )
-            SELECT (SELECT COUNT(*) FROM anonymized_users)
+            SELECT COUNT(*) FROM stale_users
             """,
-            connection
-        );
-        command.Parameters.AddWithValue("thresholdDays", thresholdDays);
+            connection);
         return Convert.ToInt32(await command.ExecuteScalarAsync(ct));
     }
 

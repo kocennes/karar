@@ -8,6 +8,10 @@ on:
   schedule:
     - cron: '0 6 * * 1'
 
+# Varsayılan GITHUB_TOKEN kapsamı salt okunur; yazma izni gereken job kendi bloğunda açar.
+permissions:
+  contents: read
+
 jobs:
   analyze:
     name: CodeQL Analysis (C#)
