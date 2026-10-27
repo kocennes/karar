@@ -1033,15 +1033,25 @@ app.MapGet("/api/v1/moderation/transparency", async (Db db, RedisService redis) 
 
     await using var connection = await db.OpenConnectionAsync();
 
+    // Kaldırılan içerik = moderasyonla gizlenen (auto_hidden) ya da admin işlemiyle silinen (deleted + admin_actions kaydı).
+    // Yazarın kendi sildiği içerik sayılmaz. Şemada posts.status='removed', comments.is_deleted ve reports.updated_at yoktur.
     await using var cmd = new NpgsqlCommand(
         """
         SELECT
             (SELECT COUNT(*) FROM posts  WHERE created_at >= NOW() - INTERVAL '30 days')                    AS posts_created,
-            (SELECT COUNT(*) FROM posts  WHERE status = 'removed' AND updated_at >= NOW() - INTERVAL '30 days') AS posts_removed,
+            (SELECT COUNT(*) FROM posts p
+              WHERE p.updated_at >= NOW() - INTERVAL '30 days'
+                AND (p.status = 'auto_hidden'
+                     OR (p.status = 'deleted' AND EXISTS (
+                         SELECT 1 FROM admin_actions aa WHERE aa.target_type = 'post' AND aa.target_id = p.id)))) AS posts_removed,
             (SELECT COUNT(*) FROM comments WHERE created_at >= NOW() - INTERVAL '30 days')                  AS comments_created,
-            (SELECT COUNT(*) FROM comments WHERE is_deleted = true AND updated_at >= NOW() - INTERVAL '30 days') AS comments_removed,
+            (SELECT COUNT(*) FROM comments c
+              WHERE c.updated_at >= NOW() - INTERVAL '30 days'
+                AND (c.status = 'auto_hidden'
+                     OR (c.status = 'deleted' AND EXISTS (
+                         SELECT 1 FROM admin_actions aa WHERE aa.target_type = 'comment' AND aa.target_id = c.id)))) AS comments_removed,
             (SELECT COUNT(*) FROM reports WHERE created_at >= NOW() - INTERVAL '30 days')                   AS reports_received,
-            (SELECT COUNT(*) FROM reports WHERE status IN ('resolved','actioned') AND updated_at >= NOW() - INTERVAL '30 days') AS reports_actioned,
+            (SELECT COUNT(*) FROM reports WHERE status = 'actioned' AND created_at >= NOW() - INTERVAL '30 days') AS reports_actioned,
             (SELECT COUNT(*) FROM reports r WHERE r.created_at >= NOW() - INTERVAL '30 days' AND r.reason = 'harassment')    AS reason_harassment,
             (SELECT COUNT(*) FROM reports r WHERE r.created_at >= NOW() - INTERVAL '30 days' AND r.reason = 'hate_speech')   AS reason_hate_speech,
             (SELECT COUNT(*) FROM reports r WHERE r.created_at >= NOW() - INTERVAL '30 days' AND r.reason = 'spam')          AS reason_spam,
