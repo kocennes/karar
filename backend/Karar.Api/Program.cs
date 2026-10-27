@@ -3815,8 +3815,21 @@ app.MapDelete("/api/v1/posts/{id:guid}/vote", async (
 
     if (oldVote is not null)
     {
+        // Brigade bastırması silmeyle aklanamaz: bastırılmış oy silinirken (post, cihaz) hafızaya alınır,
+        // aynı cihaz yeniden oy verdiğinde UpsertVoteAsync bastırmayı geri uygular.
         await using var delete = new NpgsqlCommand(
-            "DELETE FROM votes WHERE post_id = @postId AND device_id = @deviceId",
+            """
+            WITH removed AS (
+                DELETE FROM votes
+                WHERE post_id = @postId AND device_id = @deviceId
+                RETURNING post_id, device_id, is_suppressed, suppression_reason, suppressed_at
+            )
+            INSERT INTO vote_suppression_history (post_id, device_id, suppression_reason, suppressed_at)
+            SELECT post_id, device_id, suppression_reason, COALESCE(suppressed_at, NOW())
+            FROM removed
+            WHERE is_suppressed
+            ON CONFLICT (post_id, device_id) DO NOTHING
+            """,
             connection,
             transaction
         );
@@ -14680,6 +14693,8 @@ static async Task UpsertVoteAsync(
     string? voterRegion = null
 )
 {
+    // Brigade bastırması yapışkandır: oy değiştirmek bastırmayı temizlemez. VoteBrigadeGuard yalnızca
+    // son 10 dakikada oluşturulan oyları sayar; eski satırın bastırması silinirse küme bir daha yakalanmaz.
     await using var command = new NpgsqlCommand(
         """
         INSERT INTO votes (post_id, device_id, vote_type, voter_ip_block, is_quarantined, voter_region, is_suppressed)
@@ -14689,10 +14704,7 @@ static async Task UpsertVoteAsync(
             vote_type = @voteType,
             voter_ip_block = COALESCE(@ipBlock, votes.voter_ip_block),
             voter_region = COALESCE(@voterRegion, votes.voter_region),
-            is_quarantined = @isQuarantined,
-            is_suppressed = FALSE,
-            suppression_reason = NULL,
-            suppressed_at = NULL,
+            is_quarantined = @isQuarantined OR votes.is_suppressed,
             updated_at = NOW()
         """,
         connection,
@@ -14705,6 +14717,28 @@ static async Task UpsertVoteAsync(
     command.Parameters.AddWithValue("isQuarantined", isQuarantined);
     command.Parameters.AddWithValue("voterRegion", (object?)voterRegion ?? DBNull.Value);
     await command.ExecuteNonQueryAsync();
+
+    // Sil + yeniden oy: daha önce bastırılmış (post, cihaz) için bastırmayı geri uygula.
+    await using var reapplySuppression = new NpgsqlCommand(
+        """
+        UPDATE votes v
+        SET is_suppressed = TRUE,
+            suppression_reason = h.suppression_reason,
+            suppressed_at = h.suppressed_at,
+            is_quarantined = TRUE
+        FROM vote_suppression_history h
+        WHERE v.post_id = @postId
+          AND v.device_id = @deviceId
+          AND h.post_id = v.post_id
+          AND h.device_id = v.device_id
+          AND v.is_suppressed = FALSE
+        """,
+        connection,
+        transaction
+    );
+    reapplySuppression.Parameters.AddWithValue("postId", postId);
+    reapplySuppression.Parameters.AddWithValue("deviceId", deviceId);
+    await reapplySuppression.ExecuteNonQueryAsync();
 }
 
 static async Task UpdateVoteCountersAsync(

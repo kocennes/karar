@@ -53,7 +53,7 @@ public sealed class VoteEndpointSecurityTests
     }
 
     [Fact]
-    public void VoteUpsert_ResetsSuppressionBeforeReevaluationButKeepsUniqueConstraint()
+    public void VoteUpsert_KeepsSuppressionStickyAndKeepsUniqueConstraint()
     {
         var programText = ReadProgram();
         var upsertBlock = SliceBlock(
@@ -62,9 +62,11 @@ public sealed class VoteEndpointSecurityTests
             "static async Task UpdateVoteCountersAsync");
 
         upsertBlock.Should().Contain("ON CONFLICT (post_id, device_id)");
-        upsertBlock.Should().Contain("is_suppressed = FALSE");
-        upsertBlock.Should().Contain("suppression_reason = NULL");
-        upsertBlock.Should().Contain("suppressed_at = NULL");
+        // Resetting suppression on a vote change let brigade clusters launder their votes once
+        // the guard's 10-minute created_at window had passed (see VoteSuppressionStickinessTests).
+        upsertBlock.Should().NotContain("suppression_reason = NULL");
+        upsertBlock.Should().NotContain("suppressed_at = NULL");
+        upsertBlock.Should().Contain("is_quarantined = @isQuarantined OR votes.is_suppressed");
     }
 
     // ── Suspicious device quarantine ───────────────────────────────────────
