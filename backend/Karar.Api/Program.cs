@@ -1387,7 +1387,7 @@ app.MapGet("/api/v1/posts", async (
                 SELECT p.id, p.title, p.content, p.image_url, c.id AS cat_id, c.name AS cat_name, c.emoji,
                        p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                        v.vote_type, p.trend_score, p.created_at,
-                       (p.device_id = @deviceId OR p.user_id = @userId),
+                       (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END) AS is_owner,
                        p.is_anonymous,
                        ROW_NUMBER() OVER (PARTITION BY p.category_id ORDER BY p.trend_score DESC, p.created_at DESC) AS cat_rank,
                        ROW_NUMBER() OVER (PARTITION BY COALESCE(p.user_id::text, p.device_id::text) ORDER BY p.trend_score DESC, p.created_at DESC) AS author_rank
@@ -1430,7 +1430,7 @@ app.MapGet("/api/v1/posts", async (
             SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                    p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                    v.vote_type, p.trend_score, p.created_at,
-                   (p.device_id = @deviceId OR p.user_id = @userId),
+                   (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                    p.is_unlisted, p.is_anonymous, p.tags, p.content_source
             FROM posts p
             JOIN categories c ON c.id = p.category_id
@@ -1482,7 +1482,7 @@ app.MapGet("/api/v1/posts", async (
             SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                    p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                    v.vote_type, p.trend_score, p.created_at,
-                   (p.device_id = @deviceId OR p.user_id = @userId),
+                   (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                    p.is_unlisted, p.is_anonymous, p.tags, p.content_source
             FROM posts p
             JOIN categories c ON c.id = p.category_id
@@ -1533,7 +1533,7 @@ app.MapGet("/api/v1/posts", async (
                 SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                        p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                        v.vote_type, p.trend_score, p.created_at,
-                       (p.device_id = @deviceId OR p.user_id = @userId),
+                       (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                        p.is_anonymous
                 FROM posts p
                 JOIN categories c ON c.id = p.category_id
@@ -1629,7 +1629,7 @@ app.MapGet("/api/v1/posts/discover", async (
         SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
@@ -1665,7 +1665,7 @@ app.MapGet("/api/v1/posts/discover", async (
         SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
@@ -1702,7 +1702,7 @@ app.MapGet("/api/v1/posts/discover", async (
         SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
@@ -1745,7 +1745,7 @@ app.MapGet("/api/v1/posts/discover", async (
                 SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                        p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                        v.vote_type, p.trend_score, p.created_at,
-                       (p.device_id = @deviceId OR p.user_id = @userId),
+                       (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                        p.is_anonymous
                 FROM posts p
                 JOIN categories c ON c.id = p.category_id
@@ -1779,7 +1779,7 @@ app.MapGet("/api/v1/posts/discover", async (
         SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
@@ -1886,7 +1886,7 @@ app.MapGet("/api/v1/posts/discover/feed", async (
                    c.id AS c_id, c.name AS c_name, c.emoji,
                    p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                    v.vote_type, p.trend_score, p.created_at,
-                   (p.device_id = @deviceId OR p.user_id = @userId) AS is_owner,
+                   (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END) AS is_owner,
                    p.is_unlisted, p.is_anonymous, p.tags, p.content_source,
                    COALESCE(p.user_id, p.device_id) AS ranking_author_key,
                    ROW_NUMBER() OVER (
@@ -1993,7 +1993,7 @@ app.MapGet("/api/v1/posts/discover/feed", async (
                c.id AS c_id, c.name AS c_name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId) AS is_owner,
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END) AS is_owner,
                p.is_unlisted, p.is_anonymous, p.tags, p.content_source,
                COALESCE(p.user_id, p.device_id) AS ranking_author_key
         FROM posts p
@@ -2170,7 +2170,7 @@ app.MapGet("/api/v1/posts/discover/feed", async (
                    c.id AS c_id, c.name AS c_name, c.emoji,
                    p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                    v.vote_type, p.trend_score, p.created_at,
-                   (p.device_id = @deviceId OR p.user_id = @userId) AS is_owner,
+                   (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END) AS is_owner,
                    p.is_unlisted, p.is_anonymous, p.tags, p.content_source,
                    COALESCE(p.user_id, p.device_id) AS ranking_author_key
             FROM posts p
@@ -2301,7 +2301,7 @@ app.MapGet("/api/v1/posts/{id:guid}/stats", async (
     await using var connection = await db.OpenConnectionAsync();
     // Check ownership
     await using var ownerCmd = new NpgsqlCommand(
-        "SELECT 1 FROM posts WHERE id = @id AND (device_id = @deviceId OR user_id = @userId)",
+        "SELECT 1 FROM posts WHERE id = @id AND (CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END)",
         connection
     );
     ownerCmd.Parameters.AddWithValue("id", id);
@@ -2364,7 +2364,7 @@ app.MapGet("/api/v1/posts/{id:guid}/similar", async (
         SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
@@ -2443,7 +2443,7 @@ app.MapGet("/api/v1/posts/weekly-featured", async (
         SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
@@ -2483,7 +2483,7 @@ app.MapGet("/api/v1/posts/today", async (
         SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
@@ -2532,7 +2532,7 @@ app.MapGet("/api/v1/posts/trending/city", async (
         SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
@@ -2847,7 +2847,7 @@ app.MapGet("/api/v1/posts/{id:guid}", async (
         SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                p.is_unlisted, p.is_anonymous, p.tags, p.ai_summary, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
@@ -2976,7 +2976,7 @@ app.MapPost("/api/v1/posts/{id:guid}/ai-summary", async (
         SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                p.is_unlisted, p.is_anonymous, p.tags, p.ai_summary, p.content_source
         FROM posts p
         JOIN categories c ON c.id = p.category_id
@@ -3024,7 +3024,7 @@ app.MapDelete("/api/v1/posts/{id:guid}", async (
         UPDATE posts
         SET status = 'deleted', updated_at = NOW()
         WHERE id = @id
-          AND (device_id = @deviceId OR user_id = @userId)
+          AND (CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END)
           AND status != 'deleted'
         """,
         connection
@@ -3168,7 +3168,7 @@ app.MapPut("/api/v1/posts/{id:guid}", async (
         WHERE id = @id
           AND status = 'active'
           AND created_at > NOW() - INTERVAL '15 minutes'
-          AND (device_id = @deviceId OR user_id = @userId)
+          AND (CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END)
         """,
         connection,
         transaction
@@ -3496,7 +3496,7 @@ app.MapGet("/api/v1/search", async (
         SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                COUNT(*) OVER() AS total_count,
                ts_rank(to_tsvector('simple', coalesce(p.title, '') || ' ' || coalesce(p.content, '')), plainto_tsquery('simple', @query)) as rank,
                p.tags
@@ -3976,7 +3976,7 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
 
     const string commentSelectColumns = """
         cm.id, cm.content, cm.upvote_count, cm.downvote_count, cu.comment_id IS NOT NULL, cd.comment_id IS NOT NULL,
-               (cm.device_id = @deviceId OR cm.user_id = @userId), cm.created_at,
+               (CASE WHEN cm.user_id IS NULL THEN cm.device_id = @deviceId ELSE cm.user_id = @userId END), cm.created_at,
                cm.is_pinned,
                CASE WHEN p.is_anonymous = TRUE AND cm.user_id = p.user_id THEN NULL ELSE u.username END AS username,
                CASE WHEN p.is_anonymous = TRUE AND cm.user_id = p.user_id THEN NULL ELSE cm.user_id END AS author_id,
@@ -4381,7 +4381,7 @@ app.MapDelete("/api/v1/comments/{id:guid}", async (
         UPDATE comments
         SET status = 'deleted', updated_at = NOW()
         WHERE id = @id
-          AND (device_id = @deviceId OR user_id = @userId)
+          AND (CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END)
           AND status = 'active'
         RETURNING post_id
         """,
@@ -4449,7 +4449,7 @@ app.MapPut("/api/v1/comments/{id:guid}", async (
             is_edited = TRUE,
             updated_at = NOW()
         WHERE id = @id
-          AND (device_id = @deviceId OR user_id = @userId)
+          AND (CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END)
           AND status = 'active'
           AND created_at > NOW() - INTERVAL '5 minutes'
         """,
@@ -9847,7 +9847,7 @@ app.MapPost("/api/v1/users/me/moderation-appeals", async (
         SELECT status
         FROM {table}
         WHERE id = @targetId
-          AND (user_id = @userId OR device_id = @deviceId)
+          AND (CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END)
           AND status IN ('auto_hidden', 'deleted')
         """,
         connection
@@ -10878,7 +10878,7 @@ app.MapGet("/api/v1/users/me/saved", async (
         SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
-               (p.device_id = @deviceId OR p.user_id = @userId),
+               (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
                p.is_unlisted, p.is_anonymous, p.tags, p.content_source
         FROM saved_posts sp
         JOIN posts p ON p.id = sp.post_id
@@ -14881,6 +14881,9 @@ static async Task<Guid?> GetUserDeviceIdAsync(
     return result is Guid deviceId ? deviceId : null;
 }
 
+// Self-vote guard. A logged-in caller is the author only of guest content from their device or of
+// their own account's posts (another account's post made on a shared device is not theirs). A
+// logged-out caller on the author's device is still treated as the author so self-voting stays blocked.
 static async Task<bool> IsPostOwnerAsync(
     NpgsqlConnection connection,
     NpgsqlTransaction transaction,
@@ -14896,7 +14899,7 @@ static async Task<bool> IsPostOwnerAsync(
             FROM posts
             WHERE id = @postId
               AND status != 'deleted'
-              AND (device_id = @deviceId OR user_id = @userId)
+              AND ((CASE WHEN user_id IS NULL THEN device_id = @deviceId ELSE user_id = @userId END) OR (@isGuest AND device_id = @deviceId))
         )
         """,
         connection,
@@ -14905,6 +14908,7 @@ static async Task<bool> IsPostOwnerAsync(
     command.Parameters.AddWithValue("postId", postId);
     command.Parameters.AddWithValue("deviceId", deviceId);
     command.Parameters.AddWithValue("userId", (object?)userId ?? DBNull.Value);
+    command.Parameters.AddWithValue("isGuest", userId is null);
     return (bool)(await command.ExecuteScalarAsync() ?? false);
 }
 
@@ -15005,7 +15009,7 @@ static async Task<CommentDto?> ReadCommentDtoAsync(
     await using var command = new NpgsqlCommand(
         """
         SELECT cm.id, cm.content, cm.upvote_count, cm.downvote_count, cu.comment_id IS NOT NULL, cd.comment_id IS NOT NULL,
-               (cm.device_id = @deviceId OR cm.user_id = @userId), cm.created_at,
+               (CASE WHEN cm.user_id IS NULL THEN cm.device_id = @deviceId ELSE cm.user_id = @userId END), cm.created_at,
                cm.is_pinned,
                CASE WHEN p.is_anonymous = TRUE AND cm.user_id = p.user_id THEN NULL ELSE u.username END AS username,
                CASE WHEN p.is_anonymous = TRUE AND cm.user_id = p.user_id THEN NULL ELSE cm.user_id END AS author_id,
