@@ -121,6 +121,7 @@ var hostedServicesEnabled = !builder.Environment.IsEnvironment("Testing")
 if (hostedServicesEnabled)
 {
     builder.Services.AddHostedService<ImageModerationWorker>();
+    builder.Services.AddHostedService<PostImageCleanupJob>();
 }
 builder.Services.AddSingleton<ReportThresholdService>();
 builder.Services.AddSingleton<ReporterReputationService>();
@@ -705,7 +706,9 @@ app.MapGet("/posts/{id:guid}", async (
     await using var connection = await db.OpenConnectionAsync();
     await using var command = new NpgsqlCommand(
         """
-        SELECT title, content, image_url, vote_count_hakli, vote_count_haksiz,
+        SELECT title, content,
+               CASE WHEN image_moderation_status IS NULL OR image_moderation_status = 'approved' THEN image_url END,
+               vote_count_hakli, vote_count_haksiz,
                COALESCE(slug, id::text), created_at, is_unlisted
         FROM posts
         WHERE id = @id AND status = 'active'
@@ -756,7 +759,9 @@ app.MapGet("/posts/{slug}", async (
     await using var connection = await db.OpenConnectionAsync();
     await using var command = new NpgsqlCommand(
         """
-        SELECT id, title, content, image_url, vote_count_hakli, vote_count_haksiz, created_at
+        SELECT id, title, content,
+               CASE WHEN image_moderation_status IS NULL OR image_moderation_status = 'approved' THEN image_url END,
+               vote_count_hakli, vote_count_haksiz, created_at
         FROM posts
         WHERE slug = @slug AND status = 'active' AND is_unlisted = FALSE
         """,
@@ -776,7 +781,8 @@ app.MapGet("/posts/{slug}", async (
     var haksiz = reader.GetInt32(5);
     var createdAt = reader.GetFieldValue<DateTimeOffset>(6);
 
-    var html = BuildOgHtml(id, slug, title, content, hakli, haksiz, customImageUrl, webBaseUrl, createdAt);
+    // Slug sayfası liste dışı gönderileri hiç sunmaz (WHERE is_unlisted = FALSE); bayrak her zaman false.
+    var html = BuildOgHtml(id, slug, title, content, hakli, haksiz, customImageUrl, webBaseUrl, createdAt, isUnlisted: false);
     await redis.SetAsync(cacheKey, html, TimeSpan.FromMinutes(5));
     return Results.Content(html, "text/html; charset=utf-8");
 });
@@ -896,20 +902,19 @@ app.MapPost("/api/v1/devices/register", async (
         return BadRequest("INVALID_PLATFORM", "Platform android, ios veya web olmalı.");
     }
 
-    // /24 subnet rate limit: max 5 registrations per hour per subnet
-    var subnetBlock = GetClientIpBlock(httpRequest);
-    if (subnetBlock is not null)
+    // Ağ bloğu rate limit (saatlik): IPv4 /24 → 5; IPv6 /64 → 5, /56 → 20, /48 → 50.
+    // Geniş IPv6 kovaları, tek abonenin /64'leri döndürerek sınırsız cihaz (ve oy) üretmesini engeller.
+    foreach (var bucket in DeviceRegistrationRateLimit.GetBuckets(httpRequest.HttpContext.Connection.RemoteIpAddress))
     {
-        var rateLimitKey = $"device_reg:subnet:{subnetBlock}";
         var db2 = redis.GetDb();
-        var count = await db2.StringIncrementAsync(rateLimitKey);
+        var count = await db2.StringIncrementAsync(bucket.Key);
         if (count == 1)
         {
-            await db2.KeyExpireAsync(rateLimitKey, TimeSpan.FromHours(1));
+            await db2.KeyExpireAsync(bucket.Key, DeviceRegistrationRateLimit.Window);
         }
-        if (count > 5)
+        if (count > bucket.Limit)
         {
-            log.LogWarning("DeviceRegister: /24 subnet rate limit aşıldı. Subnet={S}", subnetBlock);
+            log.LogWarning("DeviceRegister: ağ bloğu kayıt limiti aşıldı. Bucket={B}", bucket.Key);
             return TooManyRequests("SUBNET_RATE_LIMIT", "Bu ağdan çok fazla kayıt yapıldı. Lütfen bir saat sonra tekrar deneyin.");
         }
     }
@@ -2371,7 +2376,7 @@ app.MapGet("/api/v1/posts/{id:guid}/similar", async (
         WITH target AS (
             SELECT category_id, title FROM posts WHERE id = @id
         )
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
@@ -2450,7 +2455,7 @@ app.MapGet("/api/v1/posts/weekly-featured", async (
     // Logic: highest comment count in last 7 days among posts with > 50 votes.
     await using var command = new NpgsqlCommand(
         """
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
@@ -2490,7 +2495,7 @@ app.MapGet("/api/v1/posts/today", async (
     await using var connection = await db.OpenConnectionAsync();
     await using var command = new NpgsqlCommand(
         """
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
@@ -2539,7 +2544,7 @@ app.MapGet("/api/v1/posts/trending/city", async (
     await using var connection = await db.OpenConnectionAsync();
     await using var cmd = new NpgsqlCommand(
         """
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
@@ -2575,7 +2580,8 @@ app.MapPost("/api/v1/posts", async (
     BusinessMetricsService metrics,
     SloMetrics sloMetrics,
     DeviceTrustService deviceTrust,
-    AppAttestationService appAttestation
+    AppAttestationService appAttestation,
+    SafeSearchService safeSearch
 ) =>
 {
     var (request, imageFile) = await ReadCreatePostRequestWithImageAsync(httpRequest);
@@ -2601,6 +2607,10 @@ app.MapPost("/api/v1/posts", async (
         using var stream = imageFile.OpenReadStream();
         if (ImageValidator.DetectFormat(stream) is null)
             return BadRequest("INVALID_IMAGE_FORMAT", "Desteklenmeyen görsel formatı. jpg, png veya webp kullanın.");
+
+        // Fail closed: SafeSearch yapılandırılmamışsa görsel hiç denetlenemez; herkese açık depoya yüklenmez.
+        if (storageService.IsEnabled && !safeSearch.IsEnabled)
+            return BadRequest("IMAGE_MODERATION_UNAVAILABLE", "Görsel denetimi şu anda kullanılamıyor. Görseli kaldırıp tekrar dene.");
     }
 
     var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
@@ -2854,7 +2864,7 @@ app.MapGet("/api/v1/posts/{id:guid}", async (
     await using var connection = await db.OpenConnectionAsync();
     await using var command = new NpgsqlCommand(
         """
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
@@ -2983,7 +2993,7 @@ app.MapPost("/api/v1/posts/{id:guid}/ai-summary", async (
 
     await using var postCmd = new NpgsqlCommand(
         """
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
@@ -3583,7 +3593,7 @@ app.MapGet("/api/v1/search", async (
     await using var connection = await db.OpenConnectionAsync();
     await using var command = new NpgsqlCommand(
         $"""
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
@@ -4334,7 +4344,7 @@ app.MapPost("/api/v1/posts/{id:guid}/comments", async (
         if (!(bool)(await parentCheck.ExecuteScalarAsync() ?? false))
         {
             await transaction.RollbackAsync();
-            return BadRequest("INVALID_PARENT", "Yanıtlanan yorum bu gönderiye ait değil.");
+            return BadRequest("INVALID_PARENT", "Yanıtlanan yorum bulunamadı veya bu gönderiye ait değil.");
         }
     }
 
@@ -6129,6 +6139,7 @@ app.MapPost("/api/v1/admin/devices/{id:guid}/ban", async (
     command.Parameters.AddWithValue("reason", request.Reason);
     command.Parameters.AddWithValue("expiresAt", (object?)expiresAt ?? DBNull.Value);
     await command.ExecuteNonQueryAsync();
+    await SetBannedDeviceVoteSuppressionAsync(connection, transaction, id, suppress: true);
 
     await LogAdminActionAsync(connection, transaction, adminEmail, "ban_device", "device", id, request.Reason);
     await transaction.CommitAsync();
@@ -6163,6 +6174,7 @@ app.MapPost("/api/v1/admin/devices/{id:guid}/unban", async (
         await transaction.RollbackAsync();
         return NotFound("DEVICE_NOT_FOUND", "Cihaz bulunamadı.");
     }
+    await SetBannedDeviceVoteSuppressionAsync(connection, transaction, id, suppress: false);
 
     await LogAdminActionAsync(connection, transaction, adminEmail, "unban_device", "device", id, null);
     await transaction.CommitAsync();
@@ -10541,7 +10553,7 @@ app.MapGet("/api/v1/users/{username}/posts", async (
 
     await using var cmd = new NpgsqlCommand(
         $"""
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.user_id = @userParam), p.is_edited,
@@ -11024,7 +11036,7 @@ app.MapGet("/api/v1/users/me/posts", async (
 
     await using var cmd = new NpgsqlCommand(
         $"""
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                NULL::text, p.trend_score, p.created_at, TRUE,
                p.status, p.moderation_reason, p.is_anonymous
@@ -11081,7 +11093,7 @@ app.MapGet("/api/v1/users/me/saved", async (
 
     await using var cmd = new NpgsqlCommand(
         """
-        SELECT p.id, p.title, p.content, p.image_url, c.id, c.name, c.emoji,
+        SELECT p.id, p.title, p.content, CASE WHEN p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved' THEN p.image_url END AS image_url, c.id, c.name, c.emoji,
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (CASE WHEN p.user_id IS NULL THEN p.device_id = @deviceId ELSE p.user_id = @userId END),
@@ -14018,7 +14030,7 @@ static string ToSlug(string title, Guid id)
 static string BuildOgHtml(
     Guid id, string slug, string title, string content,
     int hakli, int haksiz, string? customImageUrl,
-    string webBaseUrl, DateTimeOffset createdAt, bool isUnlisted = false)
+    string webBaseUrl, DateTimeOffset createdAt, bool isUnlisted)
 {
     var total = hakli + haksiz;
     var hakliPct = total > 0 ? (int)Math.Round(hakli * 100.0 / total) : 0;
@@ -15026,6 +15038,50 @@ static async Task UpdateVoteCountersAsync(
     );
     command.Parameters.AddWithValue("postId", postId);
     await command.ExecuteNonQueryAsync();
+}
+
+// Banlanan cihazın oyları görünür sayaçlardan çıkarılır (ban kaldırılınca yalnızca bu oylar geri gelir);
+// etkilenen her gönderinin sayaçları aynı transaction içinde DB durumundan yeniden hesaplanır.
+static async Task SetBannedDeviceVoteSuppressionAsync(
+    NpgsqlConnection connection,
+    NpgsqlTransaction transaction,
+    Guid deviceId,
+    bool suppress
+)
+{
+    var sql = suppress
+        ? """
+          UPDATE votes
+          SET is_suppressed = TRUE,
+              suppression_reason = 'device_banned',
+              suppressed_at = NOW()
+          WHERE device_id = @deviceId AND is_suppressed = FALSE
+          RETURNING post_id
+          """
+        : """
+          UPDATE votes
+          SET is_suppressed = FALSE,
+              suppression_reason = NULL,
+              suppressed_at = NULL
+          WHERE device_id = @deviceId AND suppression_reason = 'device_banned'
+          RETURNING post_id
+          """;
+
+    var postIds = new List<Guid>();
+    await using (var command = new NpgsqlCommand(sql, connection, transaction))
+    {
+        command.Parameters.AddWithValue("deviceId", deviceId);
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            postIds.Add(reader.GetGuid(0));
+        }
+    }
+
+    foreach (var postId in postIds)
+    {
+        await UpdateVoteCountersAsync(connection, transaction, postId, null, null);
+    }
 }
 
 static async Task<VoteResponse> GetVoteResponseAsync(

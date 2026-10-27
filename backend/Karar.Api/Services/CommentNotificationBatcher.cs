@@ -97,9 +97,10 @@ public sealed class CommentNotificationBatcher(
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand(
-            "SELECT device_id, user_id FROM comments WHERE id = @parentId AND status = 'active'",
+            "SELECT device_id, user_id FROM comments WHERE id = @parentId AND post_id = @postId AND status = 'active'",
             connection);
         command.Parameters.AddWithValue("parentId", parentCommentId);
+        command.Parameters.AddWithValue("postId", postId);
         await using var reader = await command.ExecuteReaderAsync();
         if (!await reader.ReadAsync())
             return;
