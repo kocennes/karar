@@ -3981,8 +3981,8 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
         cm.id, cm.content, cm.upvote_count, cm.downvote_count, cu.comment_id IS NOT NULL, cd.comment_id IS NOT NULL,
                (cm.device_id = @deviceId OR cm.user_id = @userId), cm.created_at,
                cm.is_pinned,
-               CASE WHEN p.is_anonymous = TRUE AND cm.user_id = p.user_id THEN NULL ELSE u.username END AS username,
-               CASE WHEN p.is_anonymous = TRUE AND cm.user_id = p.user_id THEN NULL ELSE cm.user_id END AS author_id,
+               CASE WHEN (p.is_anonymous = TRUE AND cm.user_id = p.user_id) OR u.deleted_at IS NOT NULL THEN NULL ELSE u.username END AS username,
+               CASE WHEN (p.is_anonymous = TRUE AND cm.user_id = p.user_id) OR u.deleted_at IS NOT NULL THEN NULL ELSE cm.user_id END AS author_id,
                cm.is_edited,
                ((cm.user_id IS NOT NULL AND cm.user_id = p.user_id) OR (cm.user_id IS NULL AND cm.device_id = p.device_id)) AS is_post_owner,
                (SELECT COUNT(*)::int FROM comment_upvotes cu_h
@@ -6819,8 +6819,10 @@ app.MapPost("/api/v1/admin/users/{id:guid}/delete", async (
     await using var connection = await db.OpenConnectionAsync();
     await using var transaction = await connection.BeginTransactionAsync();
 
+    // Kullanıcı kendi hesabını silmiş olsa bile (30 günlük kurtarma süresi) KVKK silme
+    // talebi hemen uygulanabilmeli; yalnızca zaten anonimleştirilmiş hesaplar reddedilir.
     var exists = await new NpgsqlCommand(
-        "SELECT EXISTS(SELECT 1 FROM users WHERE id = @id AND deleted_at IS NULL)",
+        "SELECT EXISTS(SELECT 1 FROM users WHERE id = @id AND email NOT LIKE 'deleted-%@deleted.karar.local')",
         connection,
         transaction
     ) { Parameters = { new("id", id) } }.ExecuteScalarAsync();
@@ -6831,23 +6833,8 @@ app.MapPost("/api/v1/admin/users/{id:guid}/delete", async (
         return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı veya zaten silinmiş.");
     }
 
-    // KVKK hard delete: kişisel verileri anonimleştir
-    await using var anonCmd = new NpgsqlCommand(
-        """
-        UPDATE users SET
-            username        = 'deleted_' || SUBSTR(id::text, 1, 8),
-            email           = NULL,
-            password_hash   = NULL,
-            totp_secret     = NULL,
-            bio             = NULL,
-            deleted_at      = NOW()
-        WHERE id = @id
-        """,
-        connection,
-        transaction
-    );
-    anonCmd.Parameters.AddWithValue("id", id);
-    await anonCmd.ExecuteNonQueryAsync();
+    // KVKK silme: kişisel verileri anonimleştir (DataRetentionService ile aynı rutin)
+    await UserDataErasure.EraseAsync(connection, transaction, id);
 
     await LogAdminActionAsync(connection, transaction, adminEmail, "kvkk_delete", "user", id, null);
     await transaction.CommitAsync();
@@ -9471,7 +9458,13 @@ app.MapGet("/api/v1/users/me/data-export", async (
     }
 
     await using var userCmd = new NpgsqlCommand(
-        "SELECT username, email, karma, created_at FROM users WHERE id = @id AND deleted_at IS NULL",
+        """
+        SELECT username, email, karma, created_at,
+               bio, to_char(date_of_birth, 'YYYY-MM-DD'), gender, auth_provider,
+               notification_preferences::text, email_verified, is_2fa_enabled,
+               terms_version_accepted, privacy_version_accepted
+        FROM users WHERE id = @id AND deleted_at IS NULL
+        """,
         connection);
     ApplyDataExportBudget(userCmd);
     userCmd.Parameters.AddWithValue("id", userId);
@@ -9483,7 +9476,16 @@ app.MapGet("/api/v1/users/me/data-export", async (
         username = userReader.GetString(0),
         email = userReader.GetString(1),
         karma = userReader.GetInt32(2),
-        joinedAt = userReader.GetFieldValue<DateTimeOffset>(3)
+        joinedAt = userReader.GetFieldValue<DateTimeOffset>(3),
+        bio = userReader.IsDBNull(4) ? null : userReader.GetString(4),
+        dateOfBirth = userReader.IsDBNull(5) ? null : userReader.GetString(5),
+        gender = userReader.IsDBNull(6) ? null : userReader.GetString(6),
+        authProvider = userReader.GetString(7),
+        notificationPreferences = JsonSerializer.Deserialize<JsonElement>(userReader.GetString(8)),
+        emailVerified = userReader.GetBoolean(9),
+        twoFactorEnabled = userReader.GetBoolean(10),
+        termsVersionAccepted = userReader.GetInt16(11),
+        privacyVersionAccepted = userReader.GetInt16(12)
     };
     await userReader.CloseAsync();
 
@@ -9515,12 +9517,78 @@ app.MapGet("/api/v1/users/me/data-export", async (
         }
     }
 
+    // KVKK md. 11: hesaba bağlı diğer kişisel veri kategorileri
+    async Task<List<Dictionary<string, object?>>> ReadExportRowsAsync(string sql)
+    {
+        await using var command = new NpgsqlCommand(sql, connection);
+        ApplyDataExportBudget(command);
+        command.Parameters.AddWithValue("id", userId);
+        var rows = new List<Dictionary<string, object?>>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var row = new Dictionary<string, object?>(reader.FieldCount);
+            for (var i = 0; i < reader.FieldCount; i++)
+            {
+                row[reader.GetName(i)] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+            }
+            rows.Add(row);
+        }
+        return rows;
+    }
+
+    var votes = await ReadExportRowsAsync(
+        """
+        SELECT post_id AS "postId", vote_type AS "voteType", voter_region AS "voterRegion",
+               voter_ip_block AS "voterIpBlock", created_at AS "createdAt"
+        FROM votes WHERE user_id = @id ORDER BY created_at DESC
+        """);
+    var reports = await ReadExportRowsAsync(
+        """
+        SELECT target_type AS "targetType", target_id AS "targetId", reason, description, status,
+               reporter_ip_block AS "reporterIpBlock", created_at AS "createdAt"
+        FROM reports WHERE reporter_user_id = @id ORDER BY created_at DESC
+        """);
+    var savedPosts = await ReadExportRowsAsync(
+        """SELECT post_id AS "postId", created_at AS "createdAt" FROM saved_posts WHERE user_id = @id ORDER BY created_at DESC""");
+    var followedCategories = await ReadExportRowsAsync(
+        """SELECT category_id AS "categoryId", created_at AS "createdAt" FROM followed_categories WHERE user_id = @id""");
+    var mutedCategories = await ReadExportRowsAsync(
+        """SELECT category_id AS "categoryId", created_at AS "createdAt" FROM muted_categories WHERE user_id = @id""");
+    var blockedUsers = await ReadExportRowsAsync(
+        """SELECT blocked_user_id AS "blockedUserId", created_at AS "createdAt" FROM blocked_users WHERE blocker_user_id = @id""");
+    var linkedDevices = await ReadExportRowsAsync(
+        """SELECT device_id AS "deviceId", first_seen_at AS "firstSeenAt" FROM user_device_links WHERE user_id = @id""");
+    var moderationAppeals = await ReadExportRowsAsync(
+        """
+        SELECT target_type AS "targetType", target_id AS "targetId", message, status,
+               created_at AS "createdAt", reviewed_at AS "reviewedAt", review_note AS "reviewNote"
+        FROM moderation_appeals WHERE user_id = @id ORDER BY created_at DESC
+        """);
+    var strikes = await ReadExportRowsAsync(
+        """SELECT reason, severity, created_at AS "createdAt" FROM user_strikes WHERE user_id = @id ORDER BY created_at DESC""");
+    var feedback = await ReadExportRowsAsync(
+        """
+        SELECT type, subject, message, contact_email AS "contactEmail", status, created_at AS "createdAt"
+        FROM feedback_items WHERE user_id = @id ORDER BY created_at DESC
+        """);
+
     var exportedAt = DateTimeOffset.UtcNow;
     var exportData = new
     {
         user = userData,
         posts = posts,
         comments = comments,
+        votes,
+        reports,
+        savedPosts,
+        followedCategories,
+        mutedCategories,
+        blockedUsers,
+        linkedDevices,
+        moderationAppeals,
+        strikes,
+        feedback,
         exportedAt = exportedAt,
         notice = "Bu veriler KVKK/GDPR kapsamında talebiniz üzerine üretilmiştir."
     };
@@ -14995,7 +15063,10 @@ static async Task<CommentDto?> ReadCommentDtoAsync(
         """
         SELECT cm.id, cm.content, cm.upvote_count, cm.downvote_count, cu.comment_id IS NOT NULL, cd.comment_id IS NOT NULL,
                (cm.device_id = @deviceId OR cm.user_id = @userId), cm.created_at,
-               cm.is_pinned, u.username, cm.user_id, cm.is_edited,
+               cm.is_pinned,
+               CASE WHEN (p.is_anonymous = TRUE AND cm.user_id = p.user_id) OR u.deleted_at IS NOT NULL THEN NULL ELSE u.username END,
+               CASE WHEN (p.is_anonymous = TRUE AND cm.user_id = p.user_id) OR u.deleted_at IS NOT NULL THEN NULL ELSE cm.user_id END,
+               cm.is_edited,
                ((cm.user_id IS NOT NULL AND cm.user_id = p.user_id) OR (cm.user_id IS NULL AND cm.device_id = p.device_id)) AS is_post_owner,
                (SELECT COUNT(*)::int FROM comment_upvotes cu_h
                 JOIN votes v_h ON v_h.device_id = cu_h.device_id AND v_h.post_id = cm.post_id AND v_h.vote_type = 'hakli'

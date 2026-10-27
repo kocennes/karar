@@ -50,43 +50,36 @@ public sealed class DataRetentionService(
     private async Task<int> AnonymizeDeletedUsersAsync(int thresholdDays, CancellationToken ct)
     {
         await using var connection = await db.OpenConnectionAsync();
-        await using var command = new NpgsqlCommand(
+
+        var dueUserIds = new List<Guid>();
+        await using (var select = new NpgsqlCommand(
             """
-            WITH due_users AS (
-                SELECT id, device_id
-                FROM users
-                WHERE deleted_at IS NOT NULL
-                  AND deleted_at < NOW() - (@thresholdDays * INTERVAL '1 day')
-                  AND email NOT LIKE 'deleted-%@deleted.karar.local'
-                LIMIT 500
-            ),
-            anonymized_users AS (
-                UPDATE users u
-                SET username = 'silinen_' || substring(replace(u.id::text, '-', '') from 1 for 12),
-                    email = 'deleted-' || replace(u.id::text, '-', '') || '@deleted.karar.local',
-                    password_hash = NULL,
-                    google_id = NULL,
-                    ban_reason = NULL,
-                    updated_at = NOW()
-                FROM due_users d
-                WHERE u.id = d.id
-                RETURNING d.device_id
-            ),
-            anonymized_devices AS (
-                UPDATE devices d
-                SET fingerprint = 'deleted-' || replace(d.id::text, '-', ''),
-                    app_version = 'deleted',
-                    last_seen_at = NOW()
-                FROM anonymized_users u
-                WHERE d.id = u.device_id
-                RETURNING d.id
-            )
-            SELECT (SELECT COUNT(*) FROM anonymized_users)
+            SELECT id
+            FROM users
+            WHERE deleted_at IS NOT NULL
+              AND deleted_at < NOW() - (@thresholdDays * INTERVAL '1 day')
+              AND email NOT LIKE 'deleted-%@deleted.karar.local'
+            LIMIT 500
             """,
-            connection
-        );
-        command.Parameters.AddWithValue("thresholdDays", thresholdDays);
-        return Convert.ToInt32(await command.ExecuteScalarAsync(ct));
+            connection))
+        {
+            select.Parameters.AddWithValue("thresholdDays", thresholdDays);
+            await using var reader = await select.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                dueUserIds.Add(reader.GetGuid(0));
+            }
+        }
+
+        // Admin KVKK silme ile aynı rutin (UserDataErasure); her kullanıcı kendi transaction'ında.
+        foreach (var userId in dueUserIds)
+        {
+            await using var transaction = await connection.BeginTransactionAsync(ct);
+            await UserDataErasure.EraseAsync(connection, transaction, userId, ct);
+            await transaction.CommitAsync(ct);
+        }
+
+        return dueUserIds.Count;
     }
 
     // Purge admin_actions older than retention period. AuditLogExportJob archives to GCS first.
