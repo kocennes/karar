@@ -8218,6 +8218,12 @@ app.MapPost("/api/v1/auth/register", async (
         return validationError;
     }
 
+    // users.gender CHECK (V31): başka bir değer INSERT'te 23514 ile 500 döndürüyordu.
+    if (request.Gender is not ("male" or "female" or "other" or "prefer_not_to_say"))
+    {
+        return BadRequest("INVALID_GENDER", "Geçersiz cinsiyet değeri.");
+    }
+
     var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
     if (deviceId is null)
     {
