@@ -12750,7 +12750,8 @@ app.MapGet("/api/v1/admin/analytics/feed-quality/posts", async (
         """,
         connection);
     cmd.Parameters.AddWithValue("days", days);
-    cmd.Parameters.AddWithValue("rankingReason", rankingReason as object ?? DBNull.Value);
+    // Typed: "@rankingReason IS NULL" alone gives Postgres no type for an untyped NULL (42P08).
+    cmd.Parameters.Add("rankingReason", NpgsqlDbType.Text).Value = (object?)rankingReason ?? DBNull.Value;
 
     var posts = new List<object>();
     await using var reader = await cmd.ExecuteReaderAsync();
