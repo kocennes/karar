@@ -9100,13 +9100,20 @@ app.MapPost("/api/v1/users/me/migrate-guest-data", async (
         return Unauthorized();
     }
 
+    // Misafir içerik yazarsız yayınlandı; hesaba bağlanması onu kamuya açık şekilde kullanıcı adına
+    // atfetmemeli. Postlar sahibine bağlanır ama anonim kalır (profil listesi anonim postları
+    // başkalarına göstermez); yalnızca hesap oluşturulmadan önce yazılanlar taşınır (paylaşılan
+    // cihazda sonradan başkasının yazdığı içerik hesaba eklenmez). Yorumlarda anonimlik bayrağı
+    // olmadığından (liste u.username döner) misafir yorumlar cihaz sahipliğinde, yazarsız kalır.
     await using var updatePosts = new NpgsqlCommand(
         """
         UPDATE posts
         SET user_id = @userId,
+            is_anonymous = TRUE,
             updated_at = NOW()
         WHERE device_id = @deviceId
           AND user_id IS NULL
+          AND created_at < (SELECT u.created_at FROM users u WHERE u.id = @userId)
         """,
         connection,
         transaction
@@ -9114,21 +9121,6 @@ app.MapPost("/api/v1/users/me/migrate-guest-data", async (
     updatePosts.Parameters.AddWithValue("userId", userId);
     updatePosts.Parameters.AddWithValue("deviceId", deviceId);
     await updatePosts.ExecuteNonQueryAsync();
-
-    await using var updateComments = new NpgsqlCommand(
-        """
-        UPDATE comments
-        SET user_id = @userId,
-            updated_at = NOW()
-        WHERE device_id = @deviceId
-          AND user_id IS NULL
-        """,
-        connection,
-        transaction
-    );
-    updateComments.Parameters.AddWithValue("userId", userId);
-    updateComments.Parameters.AddWithValue("deviceId", deviceId);
-    await updateComments.ExecuteNonQueryAsync();
 
     await using var updateVotes = new NpgsqlCommand(
         """
@@ -9966,7 +9958,7 @@ app.MapGet("/api/v1/users/{username}/profile", async (
                u.created_at,
                u.bio,
                u.username_changed_at,
-               (SELECT COUNT(*) FROM posts p WHERE p.user_id = u.id AND p.status != 'deleted') AS post_count,
+               (SELECT COUNT(*) FROM posts p WHERE p.user_id = u.id AND p.status != 'deleted' AND p.is_anonymous = FALSE) AS post_count,
                (SELECT COUNT(*) FROM comments cm WHERE cm.user_id = u.id AND cm.status != 'deleted') AS comment_count
         FROM users u
         WHERE lower(u.username) = lower(@username) AND u.deleted_at IS NULL
@@ -10290,11 +10282,14 @@ app.MapGet("/api/v1/users/{username}/posts", async (
     var ownerId = await ownerCmd.ExecuteScalarAsync();
     if (ownerId is null) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
 
+    // Anonim postlar kullanıcı adı altında listelenirse (isim gizlense bile) yazarı açığa çıkar;
+    // yalnızca sahibi kendi profilinde görür.
     await using var countCmd = new NpgsqlCommand(
-        "SELECT COUNT(*) FROM posts WHERE user_id = @ownerId AND status = 'active'",
+        "SELECT COUNT(*) FROM posts WHERE user_id = @ownerId AND status = 'active' AND (is_anonymous = FALSE OR user_id = @viewerId)",
         connection
     );
     countCmd.Parameters.AddWithValue("ownerId", ownerId);
+    countCmd.Parameters.AddWithValue("viewerId", userParam);
     var total = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
 
     await using var cmd = new NpgsqlCommand(
@@ -10311,6 +10306,7 @@ app.MapGet("/api/v1/users/{username}/posts", async (
         JOIN users u ON u.id = p.user_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceParam
         WHERE p.user_id = @ownerId AND p.status = 'active'
+          AND (p.is_anonymous = FALSE OR p.user_id = @userParam)
         ORDER BY {orderBy}
         LIMIT @limit OFFSET @offset
         """,
