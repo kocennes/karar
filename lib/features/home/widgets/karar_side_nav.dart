@@ -12,8 +12,8 @@ import '../../../shared/widgets/karar_logo.dart';
 import '../../../shared/widgets/karar_pressable.dart';
 import '../../../shared/widgets/karma_badge.dart';
 
-/// Desktop side navigation (spec §5.2): canvas background, no divider,
-/// 248 px expanded (≥ 1263 px) / 80 px collapsed.
+/// Desktop side navigation (spec §5.2): canvas background with a 1 px
+/// `outlineVariant` divider, 248 px expanded (≥ 1263 px) / 80 px collapsed.
 ///
 /// Branch indices used by the shell:
 /// Feed=0, Create=1, Notifications=2, Profile=3, Search=4, Discover=5.
@@ -47,11 +47,18 @@ class KararSideNav extends ConsumerWidget {
       duration: KararMotion.d(context, KararMotion.nav),
       curve: KararMotion.standard,
       width: collapsed ? collapsedWidth : expandedWidth,
-      color: kc.canvas,
+      // One structure in both themes: canvas + a 1 px divider, so the nav
+      // has an edge in dark too (it used to blend into the #0D0C12 page).
+      decoration: BoxDecoration(
+        color: kc.canvas,
+        border: Border(right: BorderSide(color: kc.outlineVariant)),
+      ),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final compact = constraints.maxWidth < _labelThreshold;
           return CustomScrollView(
+            // Lets the CTA's shadow / focus ring paint up to the nav edge.
+            clipBehavior: Clip.none,
             slivers: [
               SliverFillRemaining(
                 hasScrollBody: false,
@@ -342,7 +349,7 @@ class _CountBadge extends StatelessWidget {
           '$count',
           textScaler: TextScaler.noScaling,
           style: AppTypography.micro.copyWith(
-            color: Colors.white,
+            color: kc.onColor,
             height: 1,
             letterSpacing: 0,
             fontFeatures: AppTypography.tabular,
@@ -355,8 +362,11 @@ class _CountBadge extends StatelessWidget {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// "Oluştur" CTA: ink pill (52 tall, radius 26, float shadow); compact: a
-/// 52 px ink circle. A 2 px `primary` ring marks the active create branch.
+/// "Oluştur" CTA: `ink` pill (52 tall, radius 26) — near-black in light,
+/// brand violet in dark (never an off-white block); compact: a 52 px ink
+/// circle. The active create branch gets a soft brand glow (no outline
+/// ring). Shadows stay inside the 12 px nav gutter: the page to the right
+/// paints over anything that bleeds past the nav edge.
 class _CreateButton extends StatelessWidget {
   const _CreateButton({
     required this.compact,
@@ -371,18 +381,25 @@ class _CreateButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final kc = context.kc;
-    final brightness = Theme.of(context).brightness;
     final decoration = BoxDecoration(
       color: kc.ink,
       borderRadius: KararRadius.all(26),
-      boxShadow: KararShadow.float(brightness),
-      border: isSelected
-          ? Border.all(
-              color: kc.primary,
-              width: 2,
-              strokeAlign: BorderSide.strokeAlignOutside,
-            )
-          : null,
+      boxShadow: [
+        if (!kc.isDark)
+          BoxShadow(
+            color: kc.ink.withValues(alpha: 0.22),
+            offset: const Offset(0, 6),
+            blurRadius: 14,
+            spreadRadius: -4,
+          ),
+        if (isSelected)
+          BoxShadow(
+            color: kc.primaryFill.withValues(alpha: kc.isDark ? 0.55 : 0.45),
+            offset: const Offset(0, 4),
+            blurRadius: 14,
+            spreadRadius: -3,
+          ),
+      ],
     );
 
     final child = compact

@@ -214,10 +214,16 @@ class VerdictPanel extends StatelessWidget {
 
 /// One 56 px vote pill.
 ///
-/// * nothing chosen: tonal (soft vote tint, vote text colour, outlined icon)
-/// * chosen: solid vote fill, white label, filled icon, coloured glow (light)
+/// * nothing chosen: tonal (soft vote tint, vote text colour, outlined icon).
+///   Dark: the vote fill at 30 % over the panel surface plus a 1 px
+///   vote-colour rim, so the pills read as the screen's call to action
+///   instead of muddy near-black blobs (green 1.36:1 / red 1.35:1 against
+///   the panel; label 7.6:1 / 5.3:1).
+/// * chosen: solid vote fill, white label, filled icon, coloured glow
+///   (softer in dark)
 /// * the other side chosen: transparent with a 1.5 px vote-colour outline
-/// * disabled (closed): 40 % opacity
+/// * disabled (closed): muted fill + `text3` label (never dark-on-dark);
+///   the user's own vote keeps its solid fill so it stays legible.
 class _VotePill extends StatelessWidget {
   const _VotePill({
     required this.hakli,
@@ -231,33 +237,63 @@ class _VotePill extends StatelessWidget {
   final bool otherSelected;
   final VoidCallback? onTap;
 
+  /// Dark tonal tint: vote fill alpha over the panel surface.
+  static const _darkTintAlpha = 0.30;
+
+  /// Dark tonal rim: vote text colour alpha.
+  static const _darkRimAlpha = 0.40;
+
   @override
   Widget build(BuildContext context) {
     final kc = context.kc;
     final label = hakli ? 'Haklı' : 'Haksız';
     final fill = kc.voteFill(hakli);
     final text = kc.voteText(hakli);
-    final isLight = !kc.isDark;
+    final isDark = kc.isDark;
+    final enabled = onTap != null;
     final duration = KararMotion.d(context, KararMotion.base);
 
     final Color bg;
     final Color fg;
+    final Color rim;
+    final double rimWidth;
     if (selected) {
       bg = fill;
-      fg = Colors.white;
+      fg = kc.onColor;
+      rim = fill.withValues(alpha: 0);
+      rimWidth = 1.5;
+    } else if (!enabled) {
+      bg = kc.muted;
+      fg = kc.text3;
+      rim = kc.muted.withValues(alpha: 0);
+      rimWidth = 1.5;
     } else if (otherSelected) {
       bg = fill.withValues(alpha: 0);
       fg = text;
+      rim = (isDark ? text : fill).withValues(alpha: 0.45);
+      rimWidth = 1.5;
+    } else if (isDark) {
+      bg = Color.alphaBlend(
+        fill.withValues(alpha: _darkTintAlpha),
+        kc.surface,
+      );
+      fg = text;
+      rim = text.withValues(alpha: _darkRimAlpha);
+      rimWidth = 1;
     } else {
       bg = kc.voteSoft(hakli);
       fg = text;
+      rim = fill.withValues(alpha: 0);
+      rimWidth = 1.5;
     }
+
+    final glowAlpha = selected && enabled ? (isDark ? 0.32 : 0.45) : 0.0;
 
     final icon = hakli
         ? (selected ? Icons.check_circle_rounded : Icons.check_circle_outline_rounded)
         : (selected ? Icons.cancel_rounded : Icons.cancel_outlined);
 
-    Widget pill = AnimatedContainer(
+    final pill = AnimatedContainer(
       duration: duration,
       curve: KararMotion.standard,
       constraints: const BoxConstraints(minHeight: 56),
@@ -265,29 +301,15 @@ class _VotePill extends StatelessWidget {
       decoration: BoxDecoration(
         color: bg,
         borderRadius: KararRadius.all(28),
-        border: Border.all(
-          color: otherSelected
-              ? fill.withValues(alpha: 0.45)
-              : fill.withValues(alpha: 0),
-          width: 1.5,
-        ),
-        boxShadow: selected && isLight
-            ? [
-                BoxShadow(
-                  color: fill.withValues(alpha: 0.45),
-                  offset: const Offset(0, 10),
-                  blurRadius: 22,
-                  spreadRadius: -8,
-                ),
-              ]
-            : [
-                BoxShadow(
-                  color: fill.withValues(alpha: 0),
-                  offset: const Offset(0, 10),
-                  blurRadius: 22,
-                  spreadRadius: -8,
-                ),
-              ],
+        border: Border.all(color: rim, width: rimWidth),
+        boxShadow: [
+          BoxShadow(
+            color: fill.withValues(alpha: glowAlpha),
+            offset: const Offset(0, 10),
+            blurRadius: 22,
+            spreadRadius: -8,
+          ),
+        ],
       ),
       alignment: Alignment.center,
       child: FittedBox(
@@ -318,8 +340,6 @@ class _VotePill extends StatelessWidget {
         ),
       ),
     );
-
-    if (onTap == null) pill = Opacity(opacity: 0.4, child: pill);
 
     return KararPressable(
       onTap: onTap,
@@ -377,7 +397,14 @@ class _VoteDetailRow extends StatelessWidget {
           child: LinearProgressIndicator(
             value: percent / 100,
             color: kc.voteFill(hakli),
-            backgroundColor: kc.voteSoft(hakli),
+            // Dark: the soft tokens are near-black on the dialog; tint the
+            // dialog colour instead so the track stays visible.
+            backgroundColor: kc.isDark
+                ? Color.alphaBlend(
+                    kc.voteFill(hakli).withValues(alpha: 0.22),
+                    kc.sheet,
+                  )
+                : kc.voteSoft(hakli),
             minHeight: 12,
           ),
         ),

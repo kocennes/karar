@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../../core/theme/karar_tokens.dart';
 import 'post_image.dart';
 
 class PostCarousel extends StatefulWidget {
@@ -33,6 +35,7 @@ class _PostCarouselState extends State<PostCarousel> {
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
     if (widget.imageUrls.isEmpty) return const SizedBox.shrink();
     if (widget.imageUrls.length == 1) {
       return PostImage(
@@ -79,13 +82,13 @@ class _PostCarouselState extends State<PostCarousel> {
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: _currentPage == index
-                          ? Colors.white
-                          : Colors.white.withValues(alpha: 0.5),
-                      boxShadow: const [
+                          ? kc.onColor
+                          : kc.onColor.withValues(alpha: 0.5),
+                      boxShadow: [
                         BoxShadow(
-                          color: Colors.black26,
+                          color: kc.photoVeil,
                           blurRadius: 4,
-                          offset: Offset(0, 1),
+                          offset: const Offset(0, 1),
                         ),
                       ],
                     ),
@@ -99,13 +102,13 @@ class _PostCarouselState extends State<PostCarousel> {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: Colors.black54,
+                  color: KararGlass.chipOnPhoto,
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(
                   '${_currentPage + 1}/${widget.imageUrls.length}',
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: kc.onColor,
                     fontSize: 10,
                     fontWeight: FontWeight.bold,
                   ),

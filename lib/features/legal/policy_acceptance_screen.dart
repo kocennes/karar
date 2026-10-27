@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/auth/auth_service.dart';
-import '../../core/theme/app_colors.dart';
+import '../../core/theme/karar_tokens.dart';
 
 class PolicyAcceptanceScreen extends StatefulWidget {
   const PolicyAcceptanceScreen({
@@ -66,7 +66,7 @@ class _PolicyAcceptanceScreenState extends State<PolicyAcceptanceScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const SizedBox(height: 24),
-                Icon(Icons.policy_rounded, size: 48, color: AppColors.primary),
+                Icon(Icons.policy_rounded, size: 48, color: context.kc.primary),
                 const SizedBox(height: 20),
                 Text(
                   'Politikalarımızı Güncelledik',
@@ -79,7 +79,7 @@ class _PolicyAcceptanceScreenState extends State<PolicyAcceptanceScreen> {
                   'Kullanım Koşullarımız veya Gizlilik Politikamız güncellendi. '
                   'Uygulamayı kullanmaya devam etmek için güncel politikaları kabul etmen gerekiyor.',
                   style: theme.textTheme.bodyMedium?.copyWith(
-                    color: AppColors.textSecondary,
+                    color: context.kc.text2,
                     height: 1.5,
                   ),
                 ),
@@ -113,19 +113,20 @@ class _PolicyAcceptanceScreenState extends State<PolicyAcceptanceScreen> {
                   child: FilledButton(
                     onPressed: _canSubmit ? _accept : null,
                     style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.primary,
+                      backgroundColor: context.kc.primaryFill,
+                      foregroundColor: context.kc.onColor,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
                     ),
                     child: _loading
-                        ? const SizedBox(
+                        ? SizedBox(
                             height: 20,
                             width: 20,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              color: Colors.white,
+                              color: context.kc.onColor,
                             ),
                           )
                         : const Text(
@@ -144,7 +145,7 @@ class _PolicyAcceptanceScreenState extends State<PolicyAcceptanceScreen> {
                     child: Text(
                       'Kabul etmiyorum — Çıkış yap',
                       style: TextStyle(
-                        color: AppColors.textSecondary,
+                        color: context.kc.text2,
                         fontSize: 13,
                       ),
                     ),
@@ -174,21 +175,23 @@ class _PolicyCheckTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
     return Container(
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(12),
+        color: kc.muted,
+        borderRadius: KararRadius.all(KararRadius.input),
         border: Border.all(
           color: accepted
-              ? AppColors.primary.withValues(alpha: 0.4)
-              : Colors.transparent,
+              ? kc.primary.withValues(alpha: 0.6)
+              : kc.primary.withValues(alpha: 0),
         ),
       ),
       child: CheckboxListTile(
         value: accepted,
         onChanged: onChanged,
         controlAffinity: ListTileControlAffinity.leading,
-        activeColor: AppColors.primary,
+        activeColor: kc.primaryFill,
+        checkColor: kc.onColor,
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         title: RichText(
@@ -204,9 +207,9 @@ class _PolicyCheckTile extends StatelessWidget {
                   child: Text(
                     'kabul ediyorum',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: AppColors.primary,
+                          color: kc.primaryText,
                           decoration: TextDecoration.underline,
-                          decorationColor: AppColors.primary,
+                          decorationColor: kc.primaryText,
                         ),
                   ),
                 ),

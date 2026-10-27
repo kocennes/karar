@@ -9,7 +9,7 @@ import '../../core/theme/karar_tokens.dart';
 /// * [outlined] — 1.5 px outline pill, text1.
 /// * [text] — `primaryText` text button.
 /// * [tonal] — `primaryContainer` / `onPrimaryContainer`.
-/// * [ink] — `ink` / `onInk` (inverse in dark).
+/// * [ink] — `ink` / `onInk` (near-black in light, brand violet in dark).
 /// * [danger] — `haksizFill` / white (destructive confirms).
 enum KararButtonVariant { filled, outlined, text, tonal, ink, danger }
 
@@ -46,12 +46,12 @@ class KararButton extends StatelessWidget {
         : AppTypography.label;
 
     final (Color? bg, Color fg) = switch (variant) {
-      KararButtonVariant.filled => (kc.primaryFill, Colors.white),
+      KararButtonVariant.filled => (kc.primaryFill, kc.onColor),
       KararButtonVariant.outlined => (null, kc.text1),
       KararButtonVariant.text => (null, kc.primaryText),
       KararButtonVariant.tonal => (kc.primaryContainer, kc.onPrimaryContainer),
       KararButtonVariant.ink => (kc.ink, kc.onInk),
-      KararButtonVariant.danger => (kc.haksizFill, Colors.white),
+      KararButtonVariant.danger => (kc.haksizFill, kc.onColor),
     };
 
     final child = AnimatedSwitcher(

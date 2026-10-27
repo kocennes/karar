@@ -20,6 +20,7 @@ import '../../core/theme/karar_tokens.dart';
 import '../feed/categories_provider.dart';
 import '../../shared/widgets/centered_content.dart';
 import '../../shared/widgets/karar_sheet.dart';
+import '../profile/widgets/column_app_bar.dart';
 import 'widgets/settings_group.dart';
 
 enum SettingsInitialSection { top, notifications }
@@ -65,8 +66,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final kc = context.kc;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Ayarlar'),
+      // Desktop: back button and title line up with the 680 px column.
+      appBar: const ColumnAppBar(
+        title: Text('Ayarlar'),
         centerTitle: true,
       ),
       body: CenteredContent(
@@ -983,7 +985,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           FilledButton(
             style: FilledButton.styleFrom(
               backgroundColor: ctx.kc.haksizFill,
-              foregroundColor: Colors.white,
+              foregroundColor: ctx.kc.onColor,
             ),
             onPressed: () async {
               Navigator.pop(ctx);
@@ -1122,14 +1124,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 onPressed: isDeleting ? null : submit,
                 style: FilledButton.styleFrom(
                   backgroundColor: ctx.kc.haksizFill,
-                  foregroundColor: Colors.white,
+                  foregroundColor: ctx.kc.onColor,
                 ),
                 icon: isDeleting
-                    ? const SizedBox(
+                    ? SizedBox(
                         width: 18,
                         height: 18,
                         child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white))
+                            strokeWidth: 2, color: ctx.kc.onColor))
                     : const Icon(Icons.delete_forever_rounded),
                 label: const Text('Hesabı sil'),
               ),

@@ -2,6 +2,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/theme/karar_tokens.dart';
+
 class MentionText extends StatelessWidget {
   const MentionText({
     super.key,
@@ -15,8 +17,10 @@ class MentionText extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // primaryText: #6438E0 (6.6:1) in light, #A98BFF in dark — the brand
+    // fill #7D50F0 is too light for small text on tinted surfaces.
     final mentionStyle = (style ?? theme.textTheme.bodyMedium)?.copyWith(
-      color: theme.colorScheme.primary,
+      color: context.kc.primaryText,
       fontWeight: FontWeight.bold,
     );
 

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../../core/layout/breakpoints.dart';
@@ -28,20 +30,19 @@ class VerdictTile extends StatelessWidget {
   final Post post;
   final VoidCallback onTap;
 
-  /// Optional 44 × 44 control in the top-right corner (owner "…" menu).
+  /// Optional 48 × 48 control in the top-right corner (owner "…" menu)
+  /// whose visual is a [menuDiameter] circle. Only the first title line
+  /// makes room for it.
   final Widget? trailingAction;
 
   /// Replaces the bottom [CountPill] (e.g. a moderation status panel).
   final Widget? footer;
 
-  /// Extra top scrim for photo tiles: the title sits at the top of the tile,
-  /// so it needs more than the card's 26 % top scrim to stay readable.
-  static const _photoTitleScrim = LinearGradient(
-    begin: Alignment.topCenter,
-    end: Alignment.bottomCenter,
-    colors: [Color(0x73000000), Color(0x00000000)],
-    stops: [0, 0.62],
-  );
+  /// Visual diameter of the [trailingAction] circle.
+  static const double menuDiameter = 30;
+
+  /// Space the first title line leaves for the [trailingAction] circle.
+  static const double _menuInset = 28;
 
   /// Grid delegate for verdict tiles: 2 columns below 600 px (aspect 0.8),
   /// 3 columns from 600 px (aspect 0.72), 8 px gaps.
@@ -67,7 +68,11 @@ class VerdictTile extends StatelessWidget {
     }
     final p = post.hakliPercent;
     if (p >= 50) {
-      return (label: '${formatPercent(p)} Haklı', icon: Icons.check_rounded, hakli: true);
+      return (
+        label: '${formatPercent(p)} Haklı',
+        icon: Icons.check_rounded,
+        hakli: true
+      );
     }
     return (
       label: '${formatPercent(100 - p)} Haksız',
@@ -82,9 +87,15 @@ class VerdictTile extends StatelessWidget {
     final verdict = verdictOf(post);
     final isPhoto = PostSurface.isPhotoPost(post);
     final radius = KararRadius.all(KararRadius.tile);
+    final titleStyle = AppTypography.labelS.copyWith(
+      fontSize: 14,
+      height: 1.3,
+      fontWeight: FontWeight.w800,
+      color: kc.onColor,
+    );
 
     final content = Padding(
-      padding: EdgeInsets.fromLTRB(14, 14, trailingAction != null ? 40 : 14, 12),
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -92,16 +103,10 @@ class VerdictTile extends StatelessWidget {
             child: ClipRect(
               child: Align(
                 alignment: AlignmentDirectional.topStart,
-                child: Text(
-                  post.title,
-                  maxLines: 5,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTypography.labelS.copyWith(
-                    fontSize: 14,
-                    height: 1.3,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white,
-                  ),
+                child: _TileTitle(
+                  text: post.title,
+                  style: titleStyle,
+                  firstLineInset: trailingAction != null ? _menuInset : 0,
                 ),
               ),
             ),
@@ -114,7 +119,9 @@ class VerdictTile extends StatelessWidget {
                   icon: verdict.icon,
                   iconColor: verdict.hakli == null
                       ? null
-                      : (verdict.hakli! ? kc.onCapsuleHakli : kc.onCapsuleHaksiz),
+                      : (verdict.hakli!
+                          ? kc.onCapsuleHakli
+                          : kc.onCapsuleHaksiz),
                 ),
               ),
         ],
@@ -128,14 +135,28 @@ class VerdictTile extends StatelessWidget {
         post: post,
         radius: KararRadius.tile,
         showQuote: false,
+        showRailSheen: false,
         child: Stack(
           fit: StackFit.expand,
           children: [
+            // Photo tiles: a light veil behind the title only. The card
+            // already carries the §2.4 top/bottom scrims; the old 45 % extra
+            // scrim turned most photos into a grey slab.
             if (isPhoto)
-              const IgnorePointer(
+              IgnorePointer(
                 child: ExcludeSemantics(
                   child: DecoratedBox(
-                    decoration: BoxDecoration(gradient: _photoTitleScrim),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          kc.photoVeil,
+                          kc.photoVeil.withValues(alpha: 0),
+                        ],
+                        stops: const [0, 0.45],
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -149,17 +170,107 @@ class VerdictTile extends StatelessWidget {
                 child: InkWell(
                   onTap: onTap,
                   borderRadius: radius,
-                  splashColor: Colors.white.withValues(alpha: 0.12),
-                  highlightColor: Colors.white.withValues(alpha: 0.06),
+                  splashColor: kc.splashOnColor,
+                  highlightColor: kc.highlightOnColor,
                   child: content,
                 ),
               ),
             ),
             if (trailingAction != null)
-              Positioned(top: 0, right: 0, child: trailingAction!),
+              Positioned(top: -2, right: -2, child: trailingAction!),
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Tile title that fills the available height (max lines are computed from
+/// the space above the pill) and leaves [firstLineInset] free only beside
+/// the first line, so a corner button does not narrow the whole title.
+class _TileTitle extends StatelessWidget {
+  const _TileTitle({
+    required this.text,
+    required this.style,
+    this.firstLineInset = 0,
+  });
+
+  final String text;
+  final TextStyle style;
+  final double firstLineInset;
+
+  @override
+  Widget build(BuildContext context) {
+    final scaler = MediaQuery.textScalerOf(context);
+    final direction = Directionality.of(context);
+    // Measure with the same effective style the Text widgets render with.
+    final effective = DefaultTextStyle.of(context).style.merge(style);
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final probe = TextPainter(
+          text: TextSpan(text: 'Ağ', style: effective),
+          textDirection: direction,
+          textScaler: scaler,
+          maxLines: 1,
+        )..layout();
+        final lineHeight = math.max(1.0, probe.height);
+        probe.dispose();
+
+        final maxLines = constraints.maxHeight.isFinite
+            ? math.max(1, (constraints.maxHeight / lineHeight).floor())
+            : 5;
+
+        Text plain(String value, int lines) => Text(
+              value,
+              maxLines: lines,
+              overflow: TextOverflow.ellipsis,
+              style: style,
+            );
+
+        final width = constraints.maxWidth;
+        if (firstLineInset <= 0 || !width.isFinite || maxLines < 2) {
+          return plain(text, maxLines);
+        }
+
+        // Break the first line at the narrower width, then let the rest
+        // run at the full width.
+        final first = TextPainter(
+          text: TextSpan(text: text, style: effective),
+          textDirection: direction,
+          textScaler: scaler,
+        )..layout(maxWidth: math.max(1.0, width - firstLineInset));
+        final boundary = first.getLineBoundary(const TextPosition(offset: 0));
+        final lineCount = first.computeLineMetrics().length;
+        first.dispose();
+
+        final head = text.substring(0, boundary.end).trimRight();
+        final tail = text.substring(boundary.end).trimLeft();
+        if (lineCount <= 1 || head.isEmpty || tail.isEmpty) {
+          return Padding(
+            padding: EdgeInsetsDirectional.only(end: firstLineInset),
+            child: plain(text, maxLines),
+          );
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: EdgeInsetsDirectional.only(end: firstLineInset),
+              child: Text(
+                head,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
+                style: style,
+              ),
+            ),
+            plain(tail, maxLines - 1),
+          ],
+        );
+      },
     );
   }
 }
@@ -180,6 +291,7 @@ class TileStatusPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final onColor = context.kc.onColor;
     return Container(
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
       decoration: BoxDecoration(
@@ -192,14 +304,14 @@ class TileStatusPanel extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(icon, size: 14, color: Colors.white),
+              Icon(icon, size: 14, color: onColor),
               const SizedBox(width: 6),
               Flexible(
                 child: Text(
                   label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: AppTypography.micro.copyWith(color: Colors.white),
+                  style: AppTypography.micro.copyWith(color: onColor),
                 ),
               ),
             ],
@@ -211,7 +323,7 @@ class TileStatusPanel extends StatelessWidget {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: AppTypography.meta.copyWith(
-                color: Colors.white,
+                color: onColor,
                 fontSize: 11,
                 height: 1.3,
               ),

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/api/api_exception.dart';
 import '../../core/providers.dart';
+import '../../core/theme/karar_tokens.dart';
 import '../../shared/widgets/centered_content.dart';
 
 class ChangePasswordScreen extends ConsumerStatefulWidget {
@@ -188,11 +189,11 @@ class _ChangePasswordScreenState extends ConsumerState<ChangePasswordScreen> {
                       minimumSize: const Size.fromHeight(56),
                     ),
                     child: _isLoading
-                        ? const SizedBox(
+                        ? SizedBox(
                             width: 24,
                             height: 24,
                             child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.white))
+                                strokeWidth: 2, color: context.kc.onColor))
                         : const Text('Şifreyi Güncelle'),
                   ),
                 ],

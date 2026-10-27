@@ -16,6 +16,7 @@ import '../../shared/widgets/karar_button.dart';
 import '../../shared/widgets/karar_chip.dart';
 import '../../shared/widgets/karar_circle_button.dart';
 import '../../shared/widgets/karar_surface.dart';
+import '../../shared/widgets/karar_top_bar.dart';
 import '../../shared/widgets/login_nudge.dart';
 import '../../shared/widgets/on_color_chip.dart';
 import '../../shared/widgets/post_surface.dart';
@@ -196,12 +197,18 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
     final kc = context.kc;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message, style: const TextStyle(color: Colors.white)),
+        content: Text(
+          message,
+          style: AppTypography.bodyS.copyWith(
+            color: kc.onColor,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
         backgroundColor: kc.haksizFill,
         action: message.contains('paylaşılamadı')
             ? SnackBarAction(
                 label: 'Tekrar Dene',
-                textColor: Colors.white,
+                textColor: kc.onColor,
                 onPressed: _submit,
               )
             : null,
@@ -225,6 +232,10 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
     final postCategories = allCategories.where((c) => c.id != 0).toList();
     final currentUser = ref.watch(currentUserProvider);
     final kc = context.kc;
+    // The body extends behind the app bar (frosted bar): content starts
+    // below the status bar + toolbar.
+    final barInset = MediaQuery.paddingOf(context).top +
+        (Theme.of(context).appBarTheme.toolbarHeight ?? kToolbarHeight);
 
     Category? selectedCategory;
     for (final c in postCategories) {
@@ -285,15 +296,39 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
         }
       },
       child: Scaffold(
+        // The form scrolls under a frosted bar (spec §2.8): canvas at rest,
+        // canvas @ 88 % + blur + hairline once content is beneath it.
+        extendBodyBehindAppBar: true,
         appBar: AppBar(
           centerTitle: false,
-          title: Text(
-            'Durumunu anlat',
-            style: AppTypography.screenTitle.copyWith(color: kc.text1),
+          backgroundColor: Colors.transparent,
+          scrolledUnderElevation: 0,
+          flexibleSpace: const KararTopBarBackground(),
+          // The title lives in the same centred column as the form, so on
+          // wide screens it lines up with the form's left edge instead of
+          // sitting next to the side nav.
+          titleSpacing: 0,
+          title: CenteredContent(
+            alignment: Alignment.center,
+            child: SizedBox(
+              width: double.infinity,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: KararSpace.gutter,
+                ),
+                child: Text(
+                  'Durumunu anlat',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTypography.screenTitle.copyWith(color: kc.text1),
+                ),
+              ),
+            ),
           ),
         ),
         body: state.isDailyPostLimit
             ? _DailyLimitView(
+                topInset: barInset,
                 onDone: () {
                   ref.read(createPostProvider.notifier).clearError();
                   context.go('/');
@@ -303,7 +338,7 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
                 child: ListView(
                   padding: EdgeInsets.fromLTRB(
                     0,
-                    8,
+                    barInset + KararSpace.s8,
                     0,
                     context.navBottomInset + 24,
                   ),
@@ -411,11 +446,13 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
                     ),
                     const SizedBox(height: KararSpace.s20),
 
-                    // Anonymous + unlisted toggles
+                    // Anonymous + unlisted toggles: rows run edge to edge
+                    // inside the (clipping) surface, so hover/press fill
+                    // the whole row instead of an inset tile.
                     _Gutter(
                       child: KararSurface(
                         radius: KararRadius.surface,
-                        padding: const EdgeInsets.all(KararSpace.s4),
+                        padding: EdgeInsets.zero,
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -431,8 +468,8 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
                               ),
                               Divider(
                                 height: 1,
-                                indent: KararSpace.s16,
-                                endIndent: KararSpace.s16,
+                                indent: _ToggleRow.inset,
+                                endIndent: _ToggleRow.inset,
                                 color: kc.outlineVariant,
                               ),
                             ],
@@ -453,44 +490,15 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
 
                     // Policy acceptance
                     _Gutter(
-                      child: CheckboxListTile(
+                      child: _PolicyTile(
                         value: _acceptedPolicy,
                         onChanged: state.isLoading
                             ? null
-                            : (value) => setState(
-                                  () => _acceptedPolicy = value ?? false,
-                                ),
-                        controlAffinity: ListTileControlAffinity.leading,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: KararSpace.s8,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: KararRadius.all(KararRadius.input),
-                        ),
-                        title: Text(
-                          'Kullanım Koşulları ve Topluluk Kurallarını kabul ediyorum.',
-                          style: AppTypography.bodyS.copyWith(color: kc.text1),
-                        ),
+                            : (value) =>
+                                setState(() => _acceptedPolicy = value),
                       ),
                     ),
-                    _Gutter(
-                      child: Wrap(
-                        alignment: WrapAlignment.center,
-                        spacing: KararSpace.s4,
-                        children: [
-                          TextButton(
-                            onPressed: () => context.push('/legal/terms'),
-                            child: const Text('Kullanım Koşulları'),
-                          ),
-                          // Community guidelines link
-                          TextButton(
-                            onPressed: () => context.push('/legal/community'),
-                            child: const Text('Topluluk Kurallarını oku'),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: KararSpace.s12),
+                    const SizedBox(height: KararSpace.s20),
 
                     // Submit
                     _Gutter(
@@ -551,11 +559,13 @@ class _ComposeCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final onColor = context.kc.onColor;
     final showAnonymous = anonymous || username == null;
     final handle = showAnonymous ? '@anonim' : '@$username';
 
     return PostSurface.tinted(
       style: style,
+      showRailSheen: false,
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 230),
         child: Padding(
@@ -590,7 +600,7 @@ class _ComposeCard extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: AppTypography.bodyS.copyWith(
-                              color: Colors.white,
+                              color: onColor,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
@@ -610,9 +620,9 @@ class _ComposeCard extends StatelessWidget {
                   Theme(
                     data: theme.copyWith(
                       textSelectionTheme: TextSelectionThemeData(
-                        cursorColor: Colors.white,
-                        selectionColor: Colors.white.withValues(alpha: 0.32),
-                        selectionHandleColor: Colors.white,
+                        cursorColor: onColor,
+                        selectionColor: onColor.withValues(alpha: 0.32),
+                        selectionHandleColor: onColor,
                       ),
                     ),
                     child: TextField(
@@ -628,9 +638,9 @@ class _ComposeCard extends StatelessWidget {
                       inputFormatters: [
                         FilteringTextInputFormatter.deny(RegExp(r'[\r\n]')),
                       ],
-                      cursorColor: Colors.white,
+                      cursorColor: onColor,
                       style: AppTypography.cardTitle.copyWith(
-                        color: Colors.white,
+                        color: onColor,
                       ),
                       buildCounter: (_,
                               {required int currentLength,
@@ -641,7 +651,7 @@ class _ComposeCard extends StatelessWidget {
                         hintText: 'Ne oldu kısaca?',
                         hintMaxLines: 2,
                         hintStyle: AppTypography.cardTitle.copyWith(
-                          color: Colors.white,
+                          color: onColor,
                           fontWeight: FontWeight.w500,
                         ),
                         filled: false,
@@ -666,7 +676,7 @@ class _ComposeCard extends StatelessWidget {
                   child: Text(
                     '${value.text.characters.length}/$_maxTitle',
                     style: AppTypography.meta.copyWith(
-                      color: Colors.white,
+                      color: onColor,
                       fontWeight: FontWeight.w700,
                       fontFeatures: AppTypography.tabular,
                     ),
@@ -707,8 +717,9 @@ class _ContentField extends StatelessWidget {
         hintText: 'Durumu anlat... Diğer taraf ne yaptı?',
         alignLabelWithHint: true,
         contentPadding: const EdgeInsets.all(KararSpace.s16),
-        border: border(kc.outlineVariant, 1),
-        enabledBorder: border(kc.outlineVariant, 1),
+        // Theme field border: visible on the light canvas, hairline in dark.
+        border: border(kc.fieldBorder, 1),
+        enabledBorder: border(kc.fieldBorder, 1),
         focusedBorder: border(kc.primary, 2),
         counterStyle: AppTypography.meta.copyWith(
           color: nearLimit ? kc.haksizText : kc.text3,
@@ -758,7 +769,9 @@ class _ToxicityWarning extends StatelessWidget {
   }
 }
 
-/// One 64 px switch row of the toggles group.
+/// One 64 px switch row of the toggles group. Square-cornered: the group
+/// surface clips it, so the hover / press tint (brand 6 %) fills the row
+/// edge to edge.
 class _ToggleRow extends StatelessWidget {
   const _ToggleRow({
     required this.title,
@@ -766,6 +779,9 @@ class _ToggleRow extends StatelessWidget {
     required this.value,
     required this.onChanged,
   });
+
+  /// Horizontal inset of the row content (and of the divider between rows).
+  static const inset = KararSpace.s20;
 
   final String title;
   final String subtitle;
@@ -795,12 +811,107 @@ class _ToggleRow extends StatelessWidget {
         value: value,
         onChanged: onChanged,
         contentPadding: const EdgeInsets.symmetric(
-          horizontal: KararSpace.s16,
-          vertical: KararSpace.s4,
+          horizontal: inset,
+          vertical: KararSpace.s6,
         ),
-        shape: RoundedRectangleBorder(
-          borderRadius: KararRadius.all(KararRadius.tile),
-        ),
+        hoverColor: kc.primary.withValues(alpha: 0.06),
+        shape: const RoundedRectangleBorder(),
+      ),
+    );
+  }
+}
+
+/// Policy acceptance (spec §6.4.10): one radius-16 surface with the
+/// checkbox row and, aligned under the first letter of its label, the two
+/// policy links. The checkbox square lines up with the toggle rows' text.
+class _PolicyTile extends StatelessWidget {
+  const _PolicyTile({required this.value, required this.onChanged});
+
+  final bool value;
+
+  /// Null while a submit is in flight (checkbox disabled).
+  final ValueChanged<bool>? onChanged;
+
+  /// The checkbox is an 18 px square centred in a 40 px box (list tiles
+  /// shrink-wrap it: the whole row is the tap target).
+  static const _checkboxBox = 40.0;
+  static const _checkboxSlack = (_checkboxBox - 18) / 2;
+
+  /// Row start padding: the square's visual edge sits at the toggle inset.
+  static const _start = _ToggleRow.inset - _checkboxSlack;
+
+  /// Label start (11 px visual gap after the square).
+  static const _labelStart = _start + _checkboxBox;
+
+  /// TextButton horizontal padding (theme value, set explicitly below).
+  static const _linkPadding = KararSpace.s12;
+
+  @override
+  Widget build(BuildContext context) {
+    final kc = context.kc;
+    final theme = Theme.of(context);
+    final linkStyle = TextButton.styleFrom(
+      padding: const EdgeInsets.symmetric(
+        horizontal: _linkPadding,
+        vertical: KararSpace.s8,
+      ),
+      minimumSize: const Size(KararSpace.minTap, KararSpace.minTap),
+      textStyle: AppTypography.labelS.copyWith(fontSize: 14, height: 20 / 14),
+    );
+
+    return KararSurface(
+      radius: KararRadius.input,
+      padding: EdgeInsets.zero,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Theme(
+            data: theme.copyWith(
+              hoverColor: kc.primary.withValues(alpha: 0.06),
+            ),
+            child: CheckboxListTile(
+              value: value,
+              onChanged: onChanged == null
+                  ? null
+                  : (checked) => onChanged!(checked ?? false),
+              controlAffinity: ListTileControlAffinity.leading,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              contentPadding: const EdgeInsetsDirectional.only(
+                start: _start,
+                end: _ToggleRow.inset,
+              ),
+              horizontalTitleGap: 0,
+              shape: const RoundedRectangleBorder(),
+              title: Text(
+                'Kullanım Koşulları ve Topluluk Kurallarını kabul ediyorum.',
+                style: AppTypography.bodyS.copyWith(color: kc.text1),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsetsDirectional.only(
+              start: _labelStart - _linkPadding,
+              end: KararSpace.s8,
+              bottom: KararSpace.s6,
+            ),
+            child: Wrap(
+              children: [
+                TextButton(
+                  onPressed: () => context.push('/legal/terms'),
+                  style: linkStyle,
+                  child: const Text('Kullanım Koşulları'),
+                ),
+                // Community guidelines link
+                TextButton(
+                  onPressed: () => context.push('/legal/community'),
+                  style: linkStyle,
+                  child: const Text('Topluluk Kurallarını oku'),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -808,9 +919,12 @@ class _ToggleRow extends StatelessWidget {
 
 /// Daily post limit reached (spec §6.4.12): `EmptyState`-style disc.
 class _DailyLimitView extends StatelessWidget {
-  const _DailyLimitView({required this.onDone});
+  const _DailyLimitView({required this.onDone, required this.topInset});
 
   final VoidCallback onDone;
+
+  /// Height of the app bar the body extends behind.
+  final double topInset;
 
   @override
   Widget build(BuildContext context) {
@@ -819,7 +933,7 @@ class _DailyLimitView extends StatelessWidget {
       child: SingleChildScrollView(
         padding: EdgeInsets.fromLTRB(
           KararSpace.s32,
-          KararSpace.s32,
+          topInset + KararSpace.s32,
           KararSpace.s32,
           context.navBottomInset + KararSpace.s32,
         ),
@@ -1037,16 +1151,33 @@ class _TagInputState extends State<_TagInput> {
                 onSubmitted: (_) => _submit(),
                 textInputAction: TextInputAction.done,
                 decoration: InputDecoration(
+                  // One fixed brand "#" at the content field's text start
+                  // (16 padding + 4 outline gap = 20), in front of the hint
+                  // and of the typed tag: no second "#" once focused.
                   hintText: canAdd
-                      ? '#etiket ekle (maks. ${CreatePostState.maxTags})'
+                      ? 'etiket ekle (maks. ${CreatePostState.maxTags})'
                       : 'Maksimum etiket sayısına ulaştın',
-                  prefixText: '#',
+                  prefixIcon: canAdd
+                      ? Padding(
+                          padding: const EdgeInsetsDirectional.only(
+                            start: KararSpace.s20,
+                          ),
+                          child: Text(
+                            '#',
+                            style: AppTypography.body.copyWith(
+                              color: kc.primaryText,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        )
+                      : null,
+                  prefixIconConstraints: const BoxConstraints(),
                   contentPadding: const EdgeInsets.symmetric(
-                    horizontal: KararSpace.s20,
+                    horizontal: KararSpace.s16,
                     vertical: 14,
                   ),
-                  border: pill(kc.outlineVariant, 1),
-                  enabledBorder: pill(kc.outlineVariant, 1),
+                  border: pill(kc.fieldBorder, 1),
+                  enabledBorder: pill(kc.fieldBorder, 1),
                   disabledBorder:
                       pill(kc.outlineVariant.withValues(alpha: 0.5), 1),
                   focusedBorder: pill(kc.primary, 2),

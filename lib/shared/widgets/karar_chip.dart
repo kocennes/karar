@@ -11,7 +11,8 @@ import 'karar_pressable.dart';
 class KararChipTone {
   const KararChipTone._(this.category);
 
-  /// Unselected muted/text2, selected ink/onInk.
+  /// Unselected muted/text2, selected ink/onInk (near-black in light,
+  /// brand violet in dark — never an off-white block).
   static const neutral = KararChipTone._(null);
 
   /// Selected = the category gradient + white label/icon.
@@ -53,12 +54,16 @@ class KararChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final kc = context.kc;
     final category = tone.category;
-    final fg = selected ? (category != null ? Colors.white : kc.onInk) : kc.text2;
+    final brightness = Theme.of(context).brightness;
+    final fg =
+        selected ? (category != null ? kc.onColor : kc.onInk) : kc.text2;
     final decoration = BoxDecoration(
       color: selected
           ? (category != null ? null : kc.ink)
           : kc.muted,
-      gradient: selected && category != null ? category.gradient : null,
+      gradient: selected && category != null
+          ? category.gradientFor(brightness: brightness)
+          : null,
       borderRadius: KararRadius.all(KararRadius.pill),
     );
 

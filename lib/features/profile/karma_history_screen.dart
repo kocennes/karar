@@ -11,6 +11,7 @@ import '../../shared/widgets/karar_sheet.dart';
 import '../../shared/widgets/karar_surface.dart';
 import '../../shared/widgets/karma_badge.dart';
 import '../../shared/widgets/centered_content.dart';
+import 'widgets/column_app_bar.dart';
 
 final karmaHistoryProvider =
     FutureProvider.autoDispose<List<KarmaHistory>>((ref) async {
@@ -26,8 +27,8 @@ class KarmaHistoryScreen extends ConsumerWidget {
     final kc = context.kc;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Karma Geçmişi'),
+      appBar: const ColumnAppBar(
+        title: Text('Karma Geçmişi'),
         centerTitle: true,
       ),
       body: CenteredContent(
@@ -57,8 +58,8 @@ class KarmaHistoryScreen extends ConsumerWidget {
                       Text(
                         'Henüz karma kazanmadın.',
                         textAlign: TextAlign.center,
-                        style: AppTypography.bodyStrong
-                            .copyWith(color: kc.text1),
+                        style:
+                            AppTypography.bodyStrong.copyWith(color: kc.text1),
                       ),
                       const SizedBox(height: 8),
                       Text(
@@ -81,8 +82,8 @@ class KarmaHistoryScreen extends ConsumerWidget {
                 .fold(0, (sum, i) => sum + i.karmaDelta);
 
             return ListView(
-              padding: EdgeInsets.fromLTRB(
-                  16, 8, 16, context.navBottomInset + 24),
+              padding:
+                  EdgeInsets.fromLTRB(16, 8, 16, context.navBottomInset + 24),
               children: [
                 _KarmaHero(
                   total: totalKarma,
@@ -182,15 +183,22 @@ class _KarmaHero extends StatelessWidget {
                   ],
                 ),
               ),
+              // Gold disc + solid ink star in both themes (the cut-out
+              // `stars_rounded` showed the disc through it, and the dark
+              // warnSoft disc read olive).
               ExcludeSemantics(
                 child: Container(
                   width: 52,
                   height: 52,
-                  decoration: BoxDecoration(
-                    color: kc.warnSoft,
+                  decoration: const BoxDecoration(
+                    gradient: KararGradients.streak,
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(Icons.stars_rounded, size: 28, color: kc.gold),
+                  child: Icon(
+                    Icons.star_rounded,
+                    size: 28,
+                    color: kc.onCapsuleText,
+                  ),
                 ),
               ),
             ],
@@ -314,7 +322,11 @@ class _KarmaHistoryTile extends StatelessWidget {
                     isPositive
                         ? Icons.trending_up_rounded
                         : Icons.trending_down_rounded,
-                    color: kc.voteFill(isPositive),
+                    // Dark: the fill tone is 3.1:1 on its dark tint; the
+                    // text tone reads 8.9:1 / 6.6:1.
+                    color: kc.isDark
+                        ? kc.voteText(isPositive)
+                        : kc.voteFill(isPositive),
                     size: 22,
                   ),
                 ),
@@ -415,12 +427,9 @@ class _BadgeProgressionRow extends StatelessWidget {
                     for (final b in _badges)
                       Expanded(
                         child: Center(
-                          child: Opacity(
-                            opacity: karma >= b.threshold ? 1 : 0.35,
-                            child: Text(
-                              b.emoji,
-                              style: const TextStyle(fontSize: 24),
-                            ),
+                          child: _LevelEmoji(
+                            emoji: b.emoji,
+                            locked: karma < b.threshold,
                           ),
                         ),
                       ),
@@ -479,8 +488,9 @@ class _BadgeProgressionRow extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                           textAlign: TextAlign.center,
                           style: AppTypography.meta.copyWith(
-                            fontWeight:
-                                i == currentIndex ? FontWeight.w800 : FontWeight.w600,
+                            fontWeight: i == currentIndex
+                                ? FontWeight.w800
+                                : FontWeight.w600,
                             color: i == currentIndex
                                 ? kc.goldText
                                 : (karma >= _badges[i].threshold
@@ -496,6 +506,33 @@ class _BadgeProgressionRow extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// A level emoji on the track. Locked levels are greyscale at 55 % (a plain
+/// 35 % fade blended the colour emoji into muddy brown/olive on the dark
+/// hero and washed them out in light).
+class _LevelEmoji extends StatelessWidget {
+  const _LevelEmoji({required this.emoji, required this.locked});
+
+  final String emoji;
+  final bool locked;
+
+  static const _greyscale = ColorFilter.matrix(<double>[
+    0.2126, 0.7152, 0.0722, 0, 0, //
+    0.2126, 0.7152, 0.0722, 0, 0, //
+    0.2126, 0.7152, 0.0722, 0, 0, //
+    0, 0, 0, 1, 0, //
+  ]);
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Text(emoji, style: const TextStyle(fontSize: 24));
+    if (!locked) return text;
+    return Opacity(
+      opacity: 0.55,
+      child: ColorFiltered(colorFilter: _greyscale, child: text),
     );
   }
 }

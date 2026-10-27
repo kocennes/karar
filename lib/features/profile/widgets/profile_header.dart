@@ -1,12 +1,22 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/auth/auth_service.dart';
+import '../../../core/layout/breakpoints.dart';
 import '../../../core/theme/app_typography.dart';
 import '../../../core/theme/karar_tokens.dart';
 import '../../../shared/widgets/karar_avatar.dart';
 import '../../../shared/widgets/karar_pressable.dart';
 import '../../../shared/widgets/karar_sheet.dart';
+import '../../../shared/widgets/karar_surface.dart';
 import '../../../shared/widgets/karma_badge.dart';
+
+/// "dd.MM.yyyy" for the "… tarihinden beri üye" meta line (date only: the
+/// time of day is noise in a "member since" line).
+String formatJoinedDate(DateTime date) {
+  final d = date.toLocal();
+  return '${d.day.toString().padLeft(2, '0')}.'
+      '${d.month.toString().padLeft(2, '0')}.${d.year}';
+}
 
 /// One value/label pair of the profile stats row.
 class ProfileStat {
@@ -32,51 +42,56 @@ class ProfileHeader extends StatelessWidget {
   final AuthUser user;
   final List<ProfileStat> stats;
 
-  /// e.g. "14.03.2025 12:30 tarihinden beri üye · E-posta".
+  /// e.g. "14.03.2025 tarihinden beri üye · E-posta".
   final String? metaLine;
 
   /// Buttons under the stats row ("Profili Düzenle" + weekly circle).
   final Widget? actions;
 
+  /// Max width of the stats row: three values spread over a 680 px desktop
+  /// column read as unrelated numbers.
+  static const double _statsMaxWidth = 420;
+
   @override
   Widget build(BuildContext context) {
     final kc = context.kc;
     final bio = (user.bio ?? '').trim();
+    final desktop = context.isDesktop;
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          KararAvatar(
-            username: user.username,
-            radius: 52,
-            fontSize: 42,
-            ring: KararAvatarRing.gradient,
-          ),
-          const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Flexible(
-                child: Text(
-                  '@${user.username}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTypography.headline.copyWith(
-                    fontSize: 22,
-                    height: 28 / 22,
-                    color: kc.text1,
-                  ),
+    final column = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        KararAvatar(
+          username: user.username,
+          radius: 52,
+          fontSize: 42,
+          ring: KararAvatarRing.gradient,
+        ),
+        const SizedBox(height: 12),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Flexible(
+              child: Text(
+                '@${user.username}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppTypography.headline.copyWith(
+                  fontSize: 22,
+                  height: 28 / 22,
+                  color: kc.text1,
                 ),
               ),
-              const SizedBox(width: 2),
-              KarmaBadgeButton(karma: user.karma, size: 20),
-            ],
-          ),
-          if (bio.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Padding(
+            ),
+            const SizedBox(width: 2),
+            KarmaBadgeButton(karma: user.karma, size: 20),
+          ],
+        ),
+        if (bio.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480),
+            child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
               child: Text(
                 bio,
@@ -86,18 +101,21 @@ class ProfileHeader extends StatelessWidget {
                 style: AppTypography.bodyS.copyWith(color: kc.text2),
               ),
             ),
-          ],
-          if (metaLine != null) ...[
-            const SizedBox(height: 6),
-            Text(
-              metaLine!,
-              textAlign: TextAlign.center,
-              style: AppTypography.meta.copyWith(color: kc.text3),
-            ),
-          ],
-          if (stats.isNotEmpty) ...[
-            const SizedBox(height: 18),
-            Padding(
+          ),
+        ],
+        if (metaLine != null) ...[
+          const SizedBox(height: 6),
+          Text(
+            metaLine!,
+            textAlign: TextAlign.center,
+            style: AppTypography.meta.copyWith(color: kc.text3),
+          ),
+        ],
+        if (stats.isNotEmpty) ...[
+          const SizedBox(height: 18),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: _statsMaxWidth),
+            child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4),
               child: Row(
                 children: [
@@ -106,13 +124,29 @@ class ProfileHeader extends StatelessWidget {
                 ],
               ),
             ),
-          ],
-          if (actions != null) ...[
-            const SizedBox(height: 16),
-            actions!,
-          ],
+          ),
         ],
-      ),
+        if (actions != null) ...[
+          const SizedBox(height: 16),
+          actions!,
+        ],
+      ],
+    );
+
+    // Desktop: the header sits on a hero surface card instead of floating
+    // on the empty canvas.
+    if (desktop) {
+      return KararSurface(
+        margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+        radius: KararRadius.panel,
+        padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+        child: SizedBox(width: double.infinity, child: column),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+      child: column,
     );
   }
 }

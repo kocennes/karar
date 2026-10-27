@@ -160,9 +160,18 @@ class _ReportBottomSheetState extends ConsumerState<ReportBottomSheet> {
                               tileColor: kc.muted.withValues(alpha: 0),
                               selectedTileColor: kc.primaryContainer,
                               selected: _selectedReason == r.$1,
+                              // Dark: primaryContainer is only 1.1:1 off
+                              // the sheet, so the chosen row also gets a
+                              // brand rim.
                               shape: RoundedRectangleBorder(
                                 borderRadius:
                                     KararRadius.all(KararRadius.input),
+                                side: kc.isDark && _selectedReason == r.$1
+                                    ? BorderSide(
+                                        color:
+                                            kc.primary.withValues(alpha: 0.5),
+                                      )
+                                    : BorderSide.none,
                               ),
                             ),
                           ),

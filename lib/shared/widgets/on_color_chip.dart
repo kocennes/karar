@@ -39,6 +39,7 @@ class OnColorChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final onColor = context.kc.onColor;
     final highContrast = MediaQuery.maybeHighContrastOf(context) ?? false;
     final useBlur = blur && !highContrast;
     final fill = highContrast
@@ -52,7 +53,7 @@ class OnColorChip extends StatelessWidget {
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: AppTypography.meta.copyWith(
-        color: Colors.white,
+        color: onColor,
         fontWeight: FontWeight.w800,
         letterSpacing: 0,
       ),
@@ -88,7 +89,7 @@ class OnColorChip extends StatelessWidget {
             const SizedBox(width: 6),
           ],
           if (icon != null) ...[
-            Icon(icon, size: 16, color: Colors.white),
+            Icon(icon, size: 16, color: onColor),
             const SizedBox(width: 5),
           ],
           text,

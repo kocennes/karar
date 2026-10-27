@@ -7,18 +7,20 @@ import '../../core/providers.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/theme/category_style.dart';
 import '../../core/theme/karar_tokens.dart';
+import '../../core/theme/motion.dart';
 import '../../shared/models/post.dart';
 import '../../shared/widgets/centered_content.dart';
 import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/karar_pressable.dart';
+import '../../shared/widgets/karar_surface.dart';
 import '../../shared/widgets/karar_text_tabs.dart';
 import '../../shared/widgets/login_nudge.dart';
-import '../../shared/widgets/post_surface.dart';
 import 'categories_provider.dart';
 import 'category_feed_provider.dart';
 import 'post_card.dart';
 import 'widgets/feed_skeletons.dart';
+import 'widgets/horizontal_bleed_clip.dart';
 
 class CategoryScreen extends ConsumerWidget {
   const CategoryScreen({super.key, required this.categoryId});
@@ -54,7 +56,9 @@ class CategoryScreen extends ConsumerWidget {
   }
 }
 
-/// Gradient banner (icon disc, name, follow / mute pills) + sort tabs.
+/// Category header + sort tabs. The header is a surface card (56 px
+/// gradient tile, name, follow / mute pills) rather than a second gradient
+/// slab, so it reads as the page's header and not as another post card.
 class _CategoryHeader extends StatelessWidget {
   const _CategoryHeader({required this.categoryId, required this.category});
 
@@ -63,6 +67,8 @@ class _CategoryHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
+    final brightness = Theme.of(context).brightness;
     final style = category != null
         ? CategoryStyle.of(category!)
         : CategoryStyle.resolve(id: categoryId);
@@ -72,54 +78,53 @@ class _CategoryHeader extends StatelessWidget {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-          child: PostSurface.tinted(
-            style: style,
-            showQuote: false,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(
-                minHeight: 150,
-                minWidth: double.infinity,
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    ExcludeSemantics(
-                      child: Container(
-                        width: 48,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.20),
-                          shape: BoxShape.circle,
-                        ),
-                        alignment: Alignment.center,
-                        child: Icon(style.icon, size: 26, color: Colors.white),
-                      ),
+          child: KararSurface(
+            radius: KararRadius.surface,
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                ExcludeSemantics(
+                  child: Container(
+                    width: 56,
+                    height: 56,
+                    decoration: BoxDecoration(
+                      gradient: style.gradientFor(brightness: brightness),
+                      borderRadius: KararRadius.all(KararRadius.navItem),
                     ),
-                    const SizedBox(height: 12),
-                    Semantics(
-                      header: true,
-                      child: Text(
-                        category?.name ?? 'Kategori',
-                        style: AppTypography.titleXL.copyWith(
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 4,
-                      children: [
-                        _FollowButton(categoryId: categoryId),
-                        _MuteButton(categoryId: categoryId),
-                      ],
-                    ),
-                  ],
+                    alignment: Alignment.center,
+                    child: Icon(style.icon, size: 28, color: kc.onColor),
+                  ),
                 ),
-              ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Semantics(
+                        header: true,
+                        child: Text(
+                          category?.name ?? 'Kategori',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTypography.screenTitle.copyWith(
+                            color: kc.text1,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 0,
+                        children: [
+                          _FollowButton(categoryId: categoryId),
+                          _MuteButton(categoryId: categoryId),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -129,47 +134,63 @@ class _CategoryHeader extends StatelessWidget {
   }
 }
 
-/// White pill on the banner (#15131F text in both themes).
-class _BannerPill extends StatelessWidget {
-  const _BannerPill({
+enum _HeaderPillTone {
+  /// Brand CTA: primaryFill + white.
+  primary,
+
+  /// Selected / on state: primaryContainer + onPrimaryContainer.
+  tonal,
+
+  /// Secondary action: muted + text2.
+  muted,
+}
+
+/// 40 px pill on the header card (44 px hit box).
+class _HeaderPill extends StatelessWidget {
+  const _HeaderPill({
     required this.icon,
     required this.label,
     required this.onTap,
-    this.light = true,
-    this.iconColor,
+    required this.tone,
     this.selected,
   });
 
   final IconData icon;
   final String label;
   final VoidCallback onTap;
-
-  /// true: light capsule + dark text; false: black 22 % + white text.
-  final bool light;
-  final Color? iconColor;
+  final _HeaderPillTone tone;
   final bool? selected;
 
   @override
   Widget build(BuildContext context) {
     final kc = context.kc;
-    final fg = light ? kc.onCapsuleText : Colors.white;
+    final (bg, fg, iconColor) = switch (tone) {
+      _HeaderPillTone.primary => (kc.primaryFill, kc.onColor, kc.onColor),
+      _HeaderPillTone.tonal => (
+          kc.primaryContainer,
+          kc.onPrimaryContainer,
+          kc.primary,
+        ),
+      _HeaderPillTone.muted => (kc.muted, kc.text2, kc.text2),
+    };
     return KararPressable(
       onTap: onTap,
       semanticLabel: label,
       selected: selected,
       focusRadius: 20,
-      child: Container(
+      child: AnimatedContainer(
+        duration: KararMotion.d(context, KararMotion.fast),
+        curve: KararMotion.standard,
         constraints: const BoxConstraints(minHeight: 40),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
-          color: light ? kc.capsule : KararGlass.chipOnColor,
+          color: bg,
           borderRadius: KararRadius.all(20),
-          boxShadow: light ? KararShadow.capsule : null,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 18, color: iconColor ?? fg),
+            Icon(icon, size: 18, color: iconColor),
             const SizedBox(width: 6),
             Flexible(
               child: Text(
@@ -196,7 +217,8 @@ class _FollowButton extends ConsumerWidget {
     final followedCategories = ref.watch(followedCategoriesProvider);
     final isFollowed = followedCategories.contains(categoryId);
 
-    return _BannerPill(
+    return _HeaderPill(
+      tone: isFollowed ? _HeaderPillTone.tonal : _HeaderPillTone.primary,
       onTap: () {
         final user = ref.read(currentUserProvider);
         if (user == null) {
@@ -219,7 +241,6 @@ class _FollowButton extends ConsumerWidget {
         );
       },
       icon: isFollowed ? Icons.star_rounded : Icons.star_border_rounded,
-      iconColor: isFollowed ? context.kc.primaryFill : null,
       label: isFollowed ? 'Takip ediliyor' : 'Takip Et',
       selected: isFollowed,
     );
@@ -236,8 +257,8 @@ class _MuteButton extends ConsumerWidget {
     final mutedCategories = ref.watch(mutedCategoriesProvider);
     final isMuted = mutedCategories.contains(categoryId);
 
-    return _BannerPill(
-      light: false,
+    return _HeaderPill(
+      tone: _HeaderPillTone.muted,
       onTap: () {
         final user = ref.read(currentUserProvider);
         if (user == null) {
@@ -383,37 +404,46 @@ class _CategoryFeedListState extends ConsumerState<_CategoryFeedList> {
       );
     }
 
-    return RefreshIndicator(
-      onRefresh: () =>
-          ref.read(categoryFeedProvider(widget.categoryId).notifier).refresh(),
-      child: BackdropGroup(
-        child: ListView.separated(
-          controller: _scrollController,
-          padding: EdgeInsets.only(bottom: bottomPadding),
-          itemCount:
-              1 + feedState.posts.length + (feedState.isLoadingMore ? 1 : 0),
-          separatorBuilder: (_, index) =>
-              SizedBox(height: index == 0 ? 8 : KararSpace.feedGap),
-          itemBuilder: (context, index) {
-            if (index == 0) return widget.header;
-            final i = index - 1;
-            if (i == feedState.posts.length) {
-              return const Padding(
-                padding: EdgeInsets.symmetric(vertical: 16),
-                child: Center(
-                  child: CircularProgressIndicator(strokeWidth: 2),
+    // Card shadows may bleed sideways past the 680 px column; the list is
+    // still cut at its top and bottom edges.
+    return HorizontalBleedClip(
+      child: RefreshIndicator(
+        onRefresh: () => ref
+            .read(categoryFeedProvider(widget.categoryId).notifier)
+            .refresh(),
+        child: BackdropGroup(
+          child: ListView.separated(
+            clipBehavior: Clip.none,
+            controller: _scrollController,
+            padding: EdgeInsets.only(bottom: bottomPadding),
+            itemCount:
+                1 + feedState.posts.length + (feedState.isLoadingMore ? 1 : 0),
+            separatorBuilder: (_, index) =>
+                SizedBox(height: index == 0 ? 8 : KararSpace.feedGap),
+            itemBuilder: (context, index) {
+              if (index == 0) return widget.header;
+              final i = index - 1;
+              if (i == feedState.posts.length) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 16),
+                  child: Center(
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                );
+              }
+              final post = feedState.posts[i];
+              return Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: KararSpace.gutter),
+                // Every card here is in this category: no category chip.
+                child: PostCard(
+                  post: post,
+                  showCategory: false,
+                  onTap: () => context.push('/posts/${post.id}', extra: post),
                 ),
               );
-            }
-            final post = feedState.posts[i];
-            return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: KararSpace.gutter),
-              child: PostCard(
-                post: post,
-                onTap: () => context.push('/posts/${post.id}', extra: post),
-              ),
-            );
-          },
+            },
+          ),
         ),
       ),
     );

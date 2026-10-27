@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../core/theme/app_colors.dart';
+import '../../core/theme/karar_tokens.dart';
 
 class KvkkBanner extends StatefulWidget {
   const KvkkBanner({super.key});
@@ -43,8 +43,9 @@ class _KvkkBannerState extends State<KvkkBanner> {
     if (!_isVisible) return const SizedBox.shrink();
 
     final theme = Theme.of(context);
+    final kc = context.kc;
     final linkStyle = TextStyle(
-      color: theme.colorScheme.primary,
+      color: kc.primaryText,
       fontWeight: FontWeight.bold,
       decoration: TextDecoration.underline,
     );
@@ -52,13 +53,13 @@ class _KvkkBannerState extends State<KvkkBanner> {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHigh,
+        color: kc.sheet,
         border: Border(
-          top: BorderSide(color: theme.dividerColor.withValues(alpha: 0.1)),
+          top: BorderSide(color: kc.outlineVariant),
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
+            color: theme.colorScheme.shadow.withValues(alpha: 0.06),
             blurRadius: 10,
             offset: const Offset(0, -2),
           ),
@@ -73,7 +74,10 @@ class _KvkkBannerState extends State<KvkkBanner> {
             RichText(
               textAlign: TextAlign.center,
               text: TextSpan(
-                style: theme.textTheme.bodySmall?.copyWith(height: 1.5),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  height: 1.5,
+                  color: kc.text2,
+                ),
                 children: [
                   const TextSpan(
                     text: 'Karar\'ı kullanarak ',
@@ -102,10 +106,6 @@ class _KvkkBannerState extends State<KvkkBanner> {
               width: double.infinity,
               child: FilledButton(
                 onPressed: _accept,
-                style: FilledButton.styleFrom(
-                  backgroundColor: AppColors.accent,
-                  visualDensity: VisualDensity.compact,
-                ),
                 child: const Text('Anladım'),
               ),
             ),

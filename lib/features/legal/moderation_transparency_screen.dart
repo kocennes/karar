@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/api/api_endpoints.dart';
 import '../../core/providers.dart';
-import '../../core/theme/app_colors.dart';
+import '../../core/theme/karar_tokens.dart';
 import '../../shared/widgets/centered_content.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_indicator.dart';
@@ -45,6 +45,7 @@ class _TransparencyContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
     return CenteredContent(
       child: ListView(
         padding: const EdgeInsets.all(20),
@@ -60,7 +61,8 @@ class _TransparencyContent extends StatelessWidget {
                   label: 'Oluşturulan\ngönderi',
                   value: _fmt(data.postsCreated),
                   icon: Icons.article_outlined,
-                  color: AppColors.primary,
+                  color: kc.primaryText,
+                  tint: kc.primaryContainer,
                 ),
               ),
               const SizedBox(width: 12),
@@ -69,7 +71,8 @@ class _TransparencyContent extends StatelessWidget {
                   label: 'Kaldırılan\ngönderi',
                   value: '${_fmt(data.postsRemoved)} (%${data.postRemovalRatePercent.toStringAsFixed(1)})',
                   icon: Icons.remove_circle_outline,
-                  color: AppColors.haksiz,
+                  color: kc.haksizText,
+                  tint: kc.haksizSoft,
                 ),
               ),
             ],
@@ -82,7 +85,8 @@ class _TransparencyContent extends StatelessWidget {
                   label: 'Oluşturulan\nyorum',
                   value: _fmt(data.commentsCreated),
                   icon: Icons.chat_bubble_outline,
-                  color: AppColors.primary,
+                  color: kc.primaryText,
+                  tint: kc.primaryContainer,
                 ),
               ),
               const SizedBox(width: 12),
@@ -91,7 +95,8 @@ class _TransparencyContent extends StatelessWidget {
                   label: 'Kaldırılan\nyorum',
                   value: '${_fmt(data.commentsRemoved)} (%${data.commentRemovalRatePercent.toStringAsFixed(1)})',
                   icon: Icons.remove_circle_outline,
-                  color: AppColors.haksiz,
+                  color: kc.haksizText,
+                  tint: kc.haksizSoft,
                 ),
               ),
             ],
@@ -106,7 +111,8 @@ class _TransparencyContent extends StatelessWidget {
                   label: 'Alınan\nrapor',
                   value: _fmt(data.reportsReceived),
                   icon: Icons.flag_outlined,
-                  color: Colors.orange,
+                  color: kc.warnText,
+                  tint: kc.warnSoft,
                 ),
               ),
               const SizedBox(width: 12),
@@ -115,7 +121,8 @@ class _TransparencyContent extends StatelessWidget {
                   label: 'İşlem yapılan\nrapor',
                   value: '${_fmt(data.reportsActioned)} (%${data.reportActionRatePercent.toStringAsFixed(0)})',
                   icon: Icons.check_circle_outline,
-                  color: AppColors.hakli,
+                  color: kc.hakliText,
+                  tint: kc.hakliSoft,
                 ),
               ),
             ],
@@ -130,7 +137,7 @@ class _TransparencyContent extends StatelessWidget {
           Text(
             'Bu rapor her 6 saatte bir güncellenir.',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: AppColors.textTertiary,
+                  color: kc.text3,
                 ),
             textAlign: TextAlign.center,
           ),
@@ -153,27 +160,29 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.primary.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
+        color: kc.primaryContainer,
+        borderRadius: KararRadius.all(KararRadius.surface),
       ),
       child: Column(
         children: [
-          const Icon(Icons.shield_outlined, size: 40),
+          Icon(Icons.shield_outlined, size: 40, color: kc.onPrimaryContainer),
           const SizedBox(height: 8),
           Text(
             'Topluluk Güveni',
             style: Theme.of(context).textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.w800,
+                  color: kc.text1,
                 ),
           ),
           const SizedBox(height: 4),
           Text(
             'Son $periodDays günde platformdaki moderasyon faaliyetleri',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: AppColors.textSecondary,
+                  color: kc.text2,
                 ),
             textAlign: TextAlign.center,
           ),
@@ -194,7 +203,7 @@ class _SectionTitle extends StatelessWidget {
       text,
       style: Theme.of(context).textTheme.titleSmall?.copyWith(
             fontWeight: FontWeight.w700,
-            color: AppColors.textSecondary,
+            color: context.kc.text2,
           ),
     );
   }
@@ -206,21 +215,26 @@ class _StatCard extends StatelessWidget {
     required this.value,
     required this.icon,
     required this.color,
+    required this.tint,
   });
 
   final String label;
   final String value;
   final IconData icon;
+
+  /// Icon and value colour (a `*Text` token, AA on [tint] in both themes).
   final Color color;
+
+  /// Tile background (the matching soft/container token).
+  final Color tint;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.07),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withValues(alpha: 0.15)),
+        color: tint,
+        borderRadius: KararRadius.all(KararRadius.tile),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -238,7 +252,7 @@ class _StatCard extends StatelessWidget {
           Text(
             label,
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: AppColors.textSecondary,
+                  color: context.kc.text2,
                 ),
           ),
         ],
@@ -289,10 +303,9 @@ class _ReasonBars extends StatelessWidget {
                 child: LinearProgressIndicator(
                   value: pct,
                   minHeight: 6,
-                  backgroundColor: Theme.of(context)
-                      .colorScheme
-                      .surfaceContainerHighest,
-                  valueColor: const AlwaysStoppedAnimation<Color>(AppColors.haksiz),
+                  backgroundColor: context.kc.muted,
+                  valueColor:
+                      AlwaysStoppedAnimation<Color>(context.kc.haksizFill),
                 ),
               ),
             ],

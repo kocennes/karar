@@ -21,9 +21,11 @@ import '../../shared/widgets/content_unavailable_view.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/karar_avatar.dart';
 import '../../shared/widgets/karar_circle_button.dart';
+import '../../shared/widgets/karar_logo.dart';
 import '../../shared/widgets/karar_pressable.dart';
 import '../../shared/widgets/karar_sheet.dart';
 import '../../shared/widgets/karar_surface.dart';
+import '../../shared/widgets/karar_top_bar.dart';
 import '../../shared/widgets/login_nudge.dart';
 import '../../shared/widgets/mention_text.dart';
 import '../../shared/widgets/loading_indicator.dart';
@@ -46,6 +48,12 @@ import 'share_picker_sheet.dart';
 import 'similar_posts_section.dart';
 import 'verdict_panel.dart';
 import 'wellbeing_banner.dart';
+
+/// Desktop content frame (spec §6.1 "Desktop"): the two columns live in a
+/// centred 1120 px frame with a 24 px gutter; the top bar aligns its
+/// controls with that frame.
+const double _desktopFrame = 1120;
+const double _desktopGutter = 24;
 
 class PostDetailScreen extends ConsumerStatefulWidget {
   const PostDetailScreen({
@@ -206,7 +214,7 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
             },
             style: FilledButton.styleFrom(
               backgroundColor: ctx.kc.haksizFill,
-              foregroundColor: Colors.white,
+              foregroundColor: ctx.kc.onColor,
             ),
             child: const Text('Evet, Sil'),
           ),
@@ -261,7 +269,7 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
             },
             style: FilledButton.styleFrom(
               backgroundColor: ctx.kc.haksizFill,
-              foregroundColor: Colors.white,
+              foregroundColor: ctx.kc.onColor,
             ),
             child: const Text('Engelle'),
           ),
@@ -385,7 +393,7 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
               next.error!,
               style: AppTypography.bodyS.copyWith(
                 fontWeight: FontWeight.w600,
-                color: Colors.white,
+                color: context.kc.onColor,
               ),
             ),
             backgroundColor: context.kc.haksizFill,
@@ -562,13 +570,32 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
     final isDesktop = context.isDesktop;
     final kc = context.kc;
     final canPop = ModalRoute.of(context)?.impliesAppBarDismissal ?? false;
+    // Mobile: 12 px from the screen edges. Desktop: the back circle lines up
+    // with the hero's left edge and the actions with the comments panel's
+    // right edge, instead of floating in the window corners.
+    final barInset = isDesktop
+        ? (context.screenWidth - _desktopFrame).clamp(0.0, double.infinity) /
+                2 +
+            _desktopGutter
+        : 12.0;
 
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
-        leadingWidth: 68,
+        // Frosted bar + hairline only (spec §2.8), like Keşfet, Oluştur and
+        // the feed: no extra light-theme drop shadow under the hairline.
+        scrolledUnderElevation: 0,
+        flexibleSpace: const KararTopBarBackground(),
+        leadingWidth: isDesktop ? barInset + 44 : 68,
+        // Desktop has no shell nav on this route: the logo anchors the page.
+        title: isDesktop ? const KararLogo(size: LogoSize.small) : null,
+        centerTitle: isDesktop ? false : null,
+        titleSpacing: isDesktop ? 16 : null,
+        actionsPadding: isDesktop
+            ? EdgeInsetsDirectional.only(end: barInset)
+            : null,
         leading: Padding(
-          padding: const EdgeInsets.only(left: 12),
+          padding: EdgeInsetsDirectional.only(start: barInset),
           child: Center(
             child: canPop
                 ? KararCircleButton(
@@ -620,7 +647,7 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
               onPressed: () => _openMoreMenu(anchorContext, post, notifier),
             ),
           ),
-          const SizedBox(width: 4),
+          if (!isDesktop) const SizedBox(width: 4),
         ],
       ),
       body: Stack(
@@ -756,11 +783,15 @@ class _DetailHero extends StatelessWidget {
   Widget build(BuildContext context) {
     final kc = context.kc;
     final style = CategoryStyle.of(post.category);
-    const white = Colors.white;
+    final white = kc.onColor;
 
+    // No “ watermark: the title sits at the top of this card, so the quote
+    // would land right behind its first letters.
     return PostSurface(
       post: post,
       showPhoto: false,
+      showQuote: false,
+      showRailSheen: false,
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 220),
         child: Padding(
@@ -839,7 +870,7 @@ class _HeroAuthorRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const white = Colors.white;
+    final white = context.kc.onColor;
     final meta = '${post.createdAgo} · ${post.readingTimeMinutes} dk okuma';
     final metaStyle = AppTypography.labelS.copyWith(
       fontWeight: FontWeight.w500,
@@ -935,7 +966,7 @@ class _DesktopLayout extends StatelessWidget {
   Widget build(BuildContext context) {
     final kc = context.kc;
     return CenteredContent(
-      maxWidth: 1120,
+      maxWidth: _desktopFrame,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -943,7 +974,12 @@ class _DesktopLayout extends StatelessWidget {
           Expanded(
             flex: 10,
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
+              padding: const EdgeInsets.fromLTRB(
+                _desktopGutter,
+                12,
+                _desktopGutter,
+                32,
+              ),
               children: [
                 _PostContent(
                   post: post,
@@ -963,7 +999,7 @@ class _DesktopLayout extends StatelessWidget {
           Expanded(
             flex: 7,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(0, 16, 24, 16),
+              padding: const EdgeInsets.fromLTRB(0, 16, _desktopGutter, 16),
               child: KararSurface(
                 radius: KararRadius.card,
                 padding: EdgeInsets.zero,
@@ -979,22 +1015,29 @@ class _DesktopLayout extends StatelessWidget {
                     ),
                     Divider(height: 1, thickness: 1, color: kc.outlineVariant),
                     Expanded(
-                      child: detailState.isLoadingComments
-                          ? const Center(child: LoadingIndicator())
-                          : CommentList(
-                              postId: post.id,
-                              comments: detailState.comments,
-                              onUpvote: notifier.upvoteComment,
-                              onDownvote: notifier.downvoteComment,
-                              onDelete: notifier.deleteComment,
-                              onReply: notifier.setReplyingTo,
-                              onPin: notifier.pinComment,
-                              onUnpin: notifier.unpinComment,
-                              isPostOwner: post.isOwner,
-                              shrinkWrap: false,
-                              padding: const EdgeInsets.fromLTRB(0, 8, 0, 8),
-                              highlightedCommentId: initialCommentId,
-                            ),
+                      // The panel scrolls inside its own card: keep its
+                      // scroll notifications from flipping the page's top
+                      // bar into the "scrolled under" state.
+                      child: NotificationListener<ScrollNotification>(
+                        onNotification: (_) => true,
+                        child: detailState.isLoadingComments
+                            ? const Center(child: LoadingIndicator())
+                            : CommentList(
+                                postId: post.id,
+                                comments: detailState.comments,
+                                onUpvote: notifier.upvoteComment,
+                                onDownvote: notifier.downvoteComment,
+                                onDelete: notifier.deleteComment,
+                                onReply: notifier.setReplyingTo,
+                                onPin: notifier.pinComment,
+                                onUnpin: notifier.unpinComment,
+                                isPostOwner: post.isOwner,
+                                shrinkWrap: false,
+                                padding:
+                                    const EdgeInsets.fromLTRB(0, 8, 0, 8),
+                                highlightedCommentId: initialCommentId,
+                              ),
+                      ),
                     ),
                     CommentInput(
                       postId: post.id,
@@ -1528,7 +1571,7 @@ class _GenerateAiSummaryPlaceholder extends StatelessWidget {
       side: BorderSide(color: kc.outlineVariant, width: 1.5),
     );
     return Material(
-      color: Colors.transparent,
+      type: MaterialType.transparency,
       shape: shape,
       child: InkWell(
         onTap: isLoading ? null : onGenerate,

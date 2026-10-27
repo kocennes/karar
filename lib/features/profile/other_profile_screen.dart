@@ -7,18 +7,18 @@ import '../../core/layout/breakpoints.dart';
 import '../../core/providers.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/theme/karar_tokens.dart';
+import '../../core/theme/motion.dart';
 import '../../core/utils/count_format.dart';
-import '../../core/utils/date_formatter.dart';
 import '../../shared/models/post.dart';
 import '../../shared/widgets/centered_content.dart';
 import '../../shared/widgets/content_unavailable_view.dart';
 import '../../shared/widgets/error_view.dart';
-import '../../shared/widgets/karar_circle_button.dart';
 import '../../shared/widgets/karar_text_tabs.dart';
 import '../../shared/widgets/loading_indicator.dart';
 import '../feed/feed_provider.dart';
 import '../report/report_bottom_sheet.dart';
 import 'my_comments_screen.dart';
+import 'widgets/column_app_bar.dart';
 import 'widgets/profile_header.dart';
 import 'widgets/verdict_tile.dart';
 
@@ -39,10 +39,30 @@ class _OtherProfileScreenState extends ConsumerState<OtherProfileScreen> {
   String? _errorCode;
   int _tab = 0;
 
+  /// The "@handle" title fades into the app bar only once the header (which
+  /// already shows the handle at 22/800) has scrolled away.
+  final _scroll = ScrollController();
+  bool _showTitle = false;
+  static const double _titleRevealOffset = 200;
+
   @override
   void initState() {
     super.initState();
+    _scroll.addListener(_onScroll);
     _load();
+  }
+
+  void _onScroll() {
+    final show = _scroll.hasClients && _scroll.offset > _titleRevealOffset;
+    if (show != _showTitle) setState(() => _showTitle = show);
+  }
+
+  @override
+  void dispose() {
+    _scroll
+      ..removeListener(_onScroll)
+      ..dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -116,29 +136,33 @@ class _OtherProfileScreenState extends ConsumerState<OtherProfileScreen> {
     final kc = context.kc;
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          '@${user.username}',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+      appBar: ColumnAppBar(
+        title: AnimatedOpacity(
+          opacity: _showTitle ? 1 : 0,
+          duration: KararMotion.d(context, KararMotion.fast),
+          child: ExcludeSemantics(
+            excluding: !_showTitle,
+            child: Text(
+              '@${user.username}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ),
         actions: [
-          KararCircleButton(
-            icon: Icons.block_rounded,
-            iconColor: kc.haksizFill,
+          // Plain 48 px icon buttons: two filled circles competed with the
+          // header. Dark uses the lighter Haksız text tone (6.1:1).
+          IconButton(
+            icon: Icon(
+              Icons.block_rounded,
+              color: kc.isDark ? kc.haksizText : kc.haksizFill,
+            ),
             tooltip: 'Engelle',
-            style: KararCircleStyle.muted,
-            size: 40,
-            iconSize: 20,
             onPressed: () => _confirmBlock(context, ref, user),
           ),
-          const SizedBox(width: 4),
-          KararCircleButton(
-            icon: Icons.flag_outlined,
+          IconButton(
+            icon: const Icon(Icons.outlined_flag_rounded),
             tooltip: 'Şikayet Et',
-            style: KararCircleStyle.muted,
-            size: 40,
-            iconSize: 20,
             onPressed: () {
               ReportBottomSheet.show(
                 context,
@@ -148,17 +172,17 @@ class _OtherProfileScreenState extends ConsumerState<OtherProfileScreen> {
               );
             },
           ),
-          const SizedBox(width: 4),
         ],
       ),
       body: CenteredContent(
         child: CustomScrollView(
+          controller: _scroll,
           slivers: [
             SliverToBoxAdapter(
               child: ProfileHeader(
                 user: user,
                 metaLine: user.joinedAt != null
-                    ? '${DateFormatter.full(user.joinedAt!)} tarihinden beri üye'
+                    ? '${formatJoinedDate(user.joinedAt!)} tarihinden beri üye'
                     : null,
                 stats: [
                   ProfileStat(
@@ -179,7 +203,8 @@ class _OtherProfileScreenState extends ConsumerState<OtherProfileScreen> {
                   'Yorumlar (${user.commentCount})',
                 ],
                 index: _tab,
-                padding: const EdgeInsets.fromLTRB(24, 22, 24, 4),
+                // Same 16 px inset as the tile grid below.
+                padding: const EdgeInsets.fromLTRB(16, 22, 16, 4),
                 onChanged: (i) => setState(() => _tab = i),
               ),
             ),
@@ -209,7 +234,7 @@ class _OtherProfileScreenState extends ConsumerState<OtherProfileScreen> {
           FilledButton(
             style: FilledButton.styleFrom(
               backgroundColor: ctx.kc.haksizFill,
-              foregroundColor: Colors.white,
+              foregroundColor: ctx.kc.onColor,
             ),
             onPressed: () async {
               Navigator.pop(ctx);
@@ -258,7 +283,7 @@ class _EmptyTab extends StatelessWidget {
           message,
           textAlign: TextAlign.center,
           style: AppTypography.body.copyWith(
-            fontStyle: FontStyle.italic,
+            fontWeight: FontWeight.w600,
             color: context.kc.text3,
           ),
         ),

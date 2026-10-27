@@ -37,10 +37,12 @@ class _CardBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final style = CategoryStyle.of(post.category);
+    final white = context.kc.onColor;
     return MediaQuery.withNoTextScaling(
       child: PostSurface(
         post: post,
         showPhoto: false,
+        showRailSheen: false,
         radius: KararRadius.card,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(22, 20, 22, 20),
@@ -49,9 +51,9 @@ class _CardBody extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  const KararLogo(
+                  KararLogo(
                     size: LogoSize.small,
-                    wordmarkColor: Colors.white,
+                    wordmarkColor: white,
                   ),
                   const Spacer(),
                   Flexible(
@@ -67,7 +69,7 @@ class _CardBody extends StatelessWidget {
                 '“${post.title}”',
                 maxLines: 5,
                 overflow: TextOverflow.ellipsis,
-                style: AppTypography.cardTitle.copyWith(color: Colors.white),
+                style: AppTypography.cardTitle.copyWith(color: white),
               ),
               const SizedBox(height: 16),
               VerdictChip(post: post),
@@ -77,7 +79,7 @@ class _CardBody extends StatelessWidget {
                   Text(
                     'Sen ne düşünüyorsun?',
                     style: AppTypography.meta.copyWith(
-                      color: Colors.white,
+                      color: white,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -88,7 +90,7 @@ class _CardBody extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.end,
-                      style: AppTypography.meta.copyWith(color: Colors.white),
+                      style: AppTypography.meta.copyWith(color: white),
                     ),
                   ),
                 ],

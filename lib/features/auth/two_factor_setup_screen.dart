@@ -110,8 +110,9 @@ class _TwoFactorSetupScreenState extends ConsumerState<TwoFactorSetupScreen> {
                       Center(
                         child: Container(
                           padding: const EdgeInsets.all(16),
+                          // QR codes need a light quiet zone in both themes.
                           decoration: BoxDecoration(
-                            color: Colors.white,
+                            color: context.kc.onColor,
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child:

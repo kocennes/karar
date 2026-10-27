@@ -44,22 +44,13 @@ class KararAvatar extends StatelessWidget {
   final bool anonymous;
   final bool onColor;
 
-  static const _palette = [
-    Color(0xFF6366F1), // Indigo
-    Color(0xFF8B5CF6), // Violet
-    Color(0xFFEC4899), // Pink
-    Color(0xFFF43F5E), // Rose
-    Color(0xFFF59E0B), // Amber
-    Color(0xFF10B981), // Emerald
-    Color(0xFF06B6D4), // Cyan
-    Color(0xFF3B82F6), // Blue
-  ];
-
-  /// Deterministic background colour for [username].
+  /// Deterministic background colour for [username] from
+  /// `KararPalette.avatar` (white initial >= 4.5:1, no vote hues).
   static Color colorFor(String username) {
-    if (username.isEmpty) return _palette[0];
+    const palette = KararPalette.avatar;
+    if (username.isEmpty) return palette[0];
     final hash = username.codeUnits.reduce((a, b) => a + b);
-    return _palette[hash % _palette.length];
+    return palette[hash % palette.length];
   }
 
   /// Turkish-aware initial of [username] ("?" when empty).
@@ -83,11 +74,11 @@ class KararAvatar extends StatelessWidget {
     final Color bg;
     final Widget content;
     if (anonymous) {
-      bg = onColor ? Colors.white.withValues(alpha: 0.25) : kc.muted;
+      bg = onColor ? kc.onColorSoft : kc.muted;
       content = Icon(
         Icons.person_rounded,
         size: radius * 1.15,
-        color: onColor ? Colors.white : kc.text3,
+        color: onColor ? kc.onColor : kc.text3,
       );
     } else {
       bg = colorFor(username);
@@ -96,7 +87,7 @@ class KararAvatar extends StatelessWidget {
         textScaler: TextScaler.noScaling,
         style: TextStyle(
           fontFamily: 'PlusJakartaSans',
-          color: Colors.white,
+          color: kc.onColor,
           fontWeight: FontWeight.w800,
           fontSize: fontSize ?? (radius * 0.8),
           height: 1,

@@ -163,7 +163,10 @@ class _VoteBarState extends State<VoteBar> with SingleTickerProviderStateMixin {
                 animation: _controller,
                 builder: (context, _) {
                   final f = _current.clamp(0.0, 1.0);
+                  // Stretch: the segments are childless boxes, so with the
+                  // Row's default loose cross-axis they would collapse to 0.
                   return Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       if (hakliPercent > 0)
                         Flexible(
@@ -258,10 +261,16 @@ class _Segment extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: KararRadius.all(height / 2),
+    // Explicit size: a childless DecoratedBox takes the smallest size its
+    // constraints allow, which is 0 × 0 under loose constraints.
+    return SizedBox(
+      height: height,
+      width: double.infinity,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: KararRadius.all(height / 2),
+        ),
       ),
     );
   }

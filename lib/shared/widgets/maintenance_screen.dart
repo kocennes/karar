@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../core/theme/app_colors.dart';
+import '../../core/theme/karar_tokens.dart';
 
 class MaintenanceScreen extends StatelessWidget {
   const MaintenanceScreen({
@@ -35,7 +35,7 @@ class MaintenanceScreen extends StatelessWidget {
                 Text(
                   message ?? 'Karar birazdan geri dönecek.',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: AppColors.textSecondary,
+                        color: context.kc.text2,
                       ),
                   textAlign: TextAlign.center,
                 ),

@@ -73,7 +73,11 @@ class VoteRailMetrics {
 ///
 /// Items top→bottom: Haklı capsule, Haksız capsule, divider, Yorum capsule,
 /// Kaydet circle (if [onSave]), Paylaş circle (if [onShare]). Capsules are
-/// light in both themes (text on them is theme-independent, ≥ 6:1).
+/// light in both themes (white / dimmed #E4E1EC in dark; text on them is
+/// theme-independent, ≥ 5:1). Kaydet / Paylaş are glass circles (black
+/// 22 % on gradients, 28 % on photos, white 28 % stroke, white icon) as in
+/// the reference, so only the vote and comment capsules are solid; a saved
+/// post shows a solid capsule with the brand bookmark.
 ///
 /// The rail does not change data itself: it calls [onVote] and re-renders
 /// whatever the provider state says (optimistic in feed, server-confirmed in
@@ -222,6 +226,7 @@ class _VoteRailState extends State<VoteRail> with TickerProviderStateMixin {
         fill: kc.voteFill(hakli),
         capsuleColor: kc.capsule,
         textColor: kc.onCapsuleText,
+        onFill: kc.onColor,
         pending: widget.pendingVote == type,
       );
       capsule = Stack(
@@ -309,13 +314,14 @@ class _VoteRailState extends State<VoteRail> with TickerProviderStateMixin {
           focusShape: BoxShape.circle,
           child: _RailCircle(
             diameter: m.circle,
-            color: kc.capsule,
+            solid: widget.isSaved,
+            photo: widget.liveBlur,
             child: Icon(
               widget.isSaved
                   ? Icons.bookmark_rounded
                   : Icons.bookmark_border_rounded,
               size: 22,
-              color: widget.isSaved ? kc.primaryFill : kc.onCapsuleText,
+              color: widget.isSaved ? kc.primaryFill : kc.onColor,
             ),
           ),
         ),
@@ -330,8 +336,8 @@ class _VoteRailState extends State<VoteRail> with TickerProviderStateMixin {
           focusShape: BoxShape.circle,
           child: _RailCircle(
             diameter: m.circle,
-            color: kc.capsule,
-            child: Icon(Icons.send_rounded, size: 21, color: kc.onCapsuleText),
+            photo: widget.liveBlur,
+            child: Icon(Icons.send_rounded, size: 21, color: kc.onColor),
           ),
         ),
       ],
@@ -356,6 +362,7 @@ class _VoteCapsule extends StatelessWidget {
     required this.fill,
     required this.capsuleColor,
     required this.textColor,
+    required this.onFill,
     required this.pending,
   });
 
@@ -367,12 +374,15 @@ class _VoteCapsule extends StatelessWidget {
   final Color fill;
   final Color capsuleColor;
   final Color textColor;
+
+  /// Content colour on the selected (vote-filled) capsule.
+  final Color onFill;
   final bool pending;
 
   @override
   Widget build(BuildContext context) {
-    final fg = selected ? Colors.white : textColor;
-    final iconColor = selected ? Colors.white : fill;
+    final fg = selected ? onFill : textColor;
+    final iconColor = selected ? onFill : fill;
     final radius = size.width / 2;
     Widget capsule = AnimatedContainer(
       duration: KararMotion.d(context, KararMotion.base),
@@ -382,9 +392,10 @@ class _VoteCapsule extends StatelessWidget {
       decoration: BoxDecoration(
         color: selected ? fill : capsuleColor,
         borderRadius: BorderRadius.circular(radius),
+        // Selected ring in the capsule colour (white / dimmed in dark).
         border: selected
             ? Border.all(
-                color: Colors.white,
+                color: capsuleColor,
                 width: 2,
                 strokeAlign: BorderSide.strokeAlignOutside,
               )
@@ -413,7 +424,7 @@ class _VoteCapsule extends StatelessWidget {
             top: -4,
             right: -4,
             bottom: -4,
-            child: _PendingRing(radius: radius + 4),
+            child: _PendingRing(radius: radius + 4, color: onFill),
           ),
         ],
       );
@@ -460,27 +471,45 @@ class _CountCapsule extends StatelessWidget {
   }
 }
 
+/// Kaydet / Paylaş circle: glass (translucent black + white stroke, no
+/// extra blur — the rail already carries the card's one live blur), or a
+/// solid capsule when [solid] (saved state).
 class _RailCircle extends StatelessWidget {
   const _RailCircle({
     required this.diameter,
-    required this.color,
     required this.child,
+    this.solid = false,
+    this.photo = false,
   });
 
   final double diameter;
-  final Color color;
   final Widget child;
+  final bool solid;
+
+  /// On a photo (darker glass for contrast over bright images).
+  final bool photo;
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
+    final highContrast = MediaQuery.maybeHighContrastOf(context) ?? false;
+    final Color fill;
+    if (solid) {
+      fill = kc.capsule;
+    } else if (highContrast) {
+      fill = KararGlass.chipHighContrast;
+    } else {
+      fill = photo ? KararGlass.railCirclePhoto : KararGlass.railCircle;
+    }
     return Container(
       width: diameter,
       height: diameter,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: color,
+        color: fill,
         shape: BoxShape.circle,
-        boxShadow: KararShadow.capsule,
+        border: solid ? null : Border.all(color: KararGlass.stroke),
+        boxShadow: solid ? KararShadow.capsule : null,
       ),
       child: child,
     );
@@ -579,11 +608,13 @@ class _PulseRing extends StatelessWidget {
   }
 }
 
-/// 2 px white ring travelling around a capsule while a vote is pending.
+/// 2 px ring (white on colour) travelling around a capsule while a vote is
+/// pending.
 class _PendingRing extends StatefulWidget {
-  const _PendingRing({required this.radius});
+  const _PendingRing({required this.radius, required this.color});
 
   final double radius;
+  final Color color;
 
   @override
   State<_PendingRing> createState() => _PendingRingState();
@@ -624,6 +655,7 @@ class _PendingRingState extends State<_PendingRing>
               progress: _c.value,
               radius: widget.radius,
               full: reduce,
+              color: widget.color,
             ),
           ),
         ),
@@ -637,11 +669,13 @@ class _PendingRingPainter extends CustomPainter {
     required this.progress,
     required this.radius,
     required this.full,
+    required this.color,
   });
 
   final double progress;
   final double radius;
   final bool full;
+  final Color color;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -650,13 +684,13 @@ class _PendingRingPainter extends CustomPainter {
       Radius.circular(radius),
     );
     final paint = Paint()
-      ..color = Colors.white
+      ..color = color
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2
       ..strokeCap = StrokeCap.round;
     final path = Path()..addRRect(rrect);
     if (full) {
-      canvas.drawPath(path, paint..color = Colors.white.withValues(alpha: 0.7));
+      canvas.drawPath(path, paint..color = color.withValues(alpha: 0.7));
       return;
     }
     for (final metric in path.computeMetrics()) {
@@ -675,5 +709,6 @@ class _PendingRingPainter extends CustomPainter {
   bool shouldRepaint(_PendingRingPainter oldDelegate) =>
       oldDelegate.progress != progress ||
       oldDelegate.radius != radius ||
-      oldDelegate.full != full;
+      oldDelegate.full != full ||
+      oldDelegate.color != color;
 }

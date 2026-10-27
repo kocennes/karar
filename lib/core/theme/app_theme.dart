@@ -138,13 +138,20 @@ abstract final class AppTheme {
       colorScheme: cs,
       fontFamily: AppTypography.fontFamily,
       textTheme: textTheme,
-      primaryTextTheme: AppTypography.textTheme,
+      // Text on the primary colour (brand fill in light, surface in dark):
+      // white in both themes, never the ambient dark/black default.
+      primaryTextTheme: AppTypography.textTheme.apply(
+        bodyColor: k.onColor,
+        displayColor: k.onColor,
+      ),
       extensions: [k],
       scaffoldBackgroundColor: k.canvas,
       canvasColor: k.surface,
       cardColor: k.surface,
       dividerColor: k.outlineVariant,
-      disabledColor: k.text3.withValues(alpha: 0.6),
+      // Disabled content stays legible (no dark-on-dark): text3 is >= 4.99:1
+      // on every surface in both themes.
+      disabledColor: k.text3,
       hintColor: k.text3,
       shadowColor: cs.shadow,
       focusColor: k.primary.withValues(alpha: 0.12),
@@ -154,16 +161,26 @@ abstract final class AppTheme {
       visualDensity: VisualDensity.standard,
       materialTapTargetSize: MaterialTapTargetSize.padded,
       iconTheme: IconThemeData(color: k.text1, size: 24),
-      primaryIconTheme: const IconThemeData(color: Colors.white, size: 24),
+      primaryIconTheme: IconThemeData(color: k.onColor, size: 24),
 
       // -- App bar ----------------------------------------------------------
+      // Scrolled under: the bar steps up from the canvas (light: white with a
+      // soft drop shadow; dark: the #1F1C2A elevated tone, above the
+      // #17151F cards) so content that slides under it reads as passing
+      // beneath a bar, not as a card sliced off at a knife edge.
+      // `KararTopBarBackground` (shared/widgets/karar_top_bar.dart) adds the
+      // spec §2.8 frosted glass + hairline on top of this.
       appBarTheme: AppBarThemeData(
-        backgroundColor: k.canvas,
+        backgroundColor: WidgetStateColor.resolveWith(
+          (states) => states.contains(WidgetState.scrolledUnder)
+              ? (isDark ? k.elevated : k.surface)
+              : k.canvas,
+        ),
         foregroundColor: k.text1,
         elevation: 0,
-        scrolledUnderElevation: 0,
+        scrolledUnderElevation: isDark ? 0 : 2,
         surfaceTintColor: Colors.transparent,
-        shadowColor: Colors.transparent,
+        shadowColor: cs.shadow.withValues(alpha: 0.55),
         centerTitle: true,
         toolbarHeight: 64,
         titleTextStyle: AppTypography.appBarTitle.copyWith(color: k.text1),
@@ -282,7 +299,7 @@ abstract final class AppTheme {
               BorderRadius.vertical(top: Radius.circular(KararRadius.card)),
         ),
         showDragHandle: false,
-        dragHandleColor: k.outlineVariant,
+        dragHandleColor: k.outline.withValues(alpha: 0.55),
         dragHandleSize: const Size(40, 5),
         modalBarrierColor: k.scrim,
         clipBehavior: Clip.antiAlias,
@@ -305,9 +322,7 @@ abstract final class AppTheme {
         color: k.elevated,
         surfaceTintColor: Colors.transparent,
         elevation: 8,
-        shadowColor: isDark
-            ? Colors.black.withValues(alpha: 0.6)
-            : const Color(0xFF141028).withValues(alpha: 0.35),
+        shadowColor: cs.shadow.withValues(alpha: isDark ? 0.6 : 0.35),
         shape: RoundedRectangleBorder(
           borderRadius: KararRadius.all(KararRadius.navItem),
           side: isDark ? darkHairline : BorderSide.none,
@@ -338,29 +353,33 @@ abstract final class AppTheme {
           ),
         ),
       ),
+      // Dark: a raised dark toast (#3A3552 + hairline) instead of the
+      // inverse off-white block, which glared on the dark canvas.
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
-        backgroundColor: cs.inverseSurface,
+        backgroundColor: isDark ? k.raised : cs.inverseSurface,
         contentTextStyle: AppTypography.bodyS.copyWith(
           fontWeight: FontWeight.w600,
-          color: cs.onInverseSurface,
+          color: isDark ? k.text1 : cs.onInverseSurface,
         ),
-        actionTextColor: cs.inversePrimary,
-        closeIconColor: cs.onInverseSurface,
+        actionTextColor: isDark ? k.onPrimaryContainer : cs.inversePrimary,
+        closeIconColor: isDark ? k.text1 : cs.onInverseSurface,
         elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: KararRadius.all(KararRadius.input),
+          side: isDark ? darkHairline : BorderSide.none,
         ),
         insetPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       ),
       tooltipTheme: TooltipThemeData(
         decoration: BoxDecoration(
-          color: cs.inverseSurface,
+          color: isDark ? k.raised : cs.inverseSurface,
           borderRadius: KararRadius.all(KararRadius.sm),
+          border: isDark ? Border.fromBorderSide(darkHairline) : null,
         ),
         textStyle: AppTypography.labelS.copyWith(
           fontWeight: FontWeight.w600,
-          color: cs.onInverseSurface,
+          color: isDark ? k.text1 : cs.onInverseSurface,
         ),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         waitDuration: const Duration(milliseconds: 400),
@@ -402,12 +421,12 @@ abstract final class AppTheme {
       ),
       badgeTheme: BadgeThemeData(
         backgroundColor: k.haksizFill,
-        textColor: Colors.white,
+        textColor: k.onColor,
         smallSize: 8,
         largeSize: 18,
         padding: const EdgeInsets.symmetric(horizontal: 5),
         textStyle: AppTypography.micro.copyWith(
-          color: Colors.white,
+          color: k.onColor,
           letterSpacing: 0,
         ),
       ),
@@ -421,13 +440,13 @@ abstract final class AppTheme {
           ),
           foregroundColor: WidgetStateProperty.resolveWith(
             (states) =>
-                states.contains(WidgetState.disabled) ? k.text3 : Colors.white,
+                states.contains(WidgetState.disabled) ? k.text3 : k.onColor,
           ),
           iconColor: WidgetStateProperty.resolveWith(
             (states) =>
-                states.contains(WidgetState.disabled) ? k.text3 : Colors.white,
+                states.contains(WidgetState.disabled) ? k.text3 : k.onColor,
           ),
-          overlayColor: overlay(base: Colors.black),
+          overlayColor: overlay(base: k.onColor, pressed: 0.12, focused: 0.12),
           elevation: const WidgetStatePropertyAll(0),
           shadowColor: const WidgetStatePropertyAll(Colors.transparent),
           surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
@@ -511,6 +530,13 @@ abstract final class AppTheme {
       ),
       iconButtonTheme: IconButtonThemeData(
         style: ButtonStyle(
+          // Only the disabled colour is themed (enabled icons keep their
+          // own / the ambient IconTheme colour): legible text3, never
+          // onSurface @ 38 % (dark-on-dark).
+          foregroundColor: WidgetStateProperty.resolveWith(
+            (states) =>
+                states.contains(WidgetState.disabled) ? k.text3 : null,
+          ),
           minimumSize: const WidgetStatePropertyAll(Size(44, 44)),
           visualDensity: VisualDensity.standard,
           overlayColor: overlay(base: k.text1),
@@ -518,7 +544,7 @@ abstract final class AppTheme {
       ),
       floatingActionButtonTheme: FloatingActionButtonThemeData(
         backgroundColor: k.primaryFill,
-        foregroundColor: Colors.white,
+        foregroundColor: k.onColor,
         elevation: 0,
         focusElevation: 0,
         hoverElevation: 0,
@@ -558,13 +584,15 @@ abstract final class AppTheme {
       ),
 
       // -- Inputs -----------------------------------------------------------
+      // Light: white field + 1 px outline (>= 3:1 on the lavender canvas and
+      // on white sheets). Dark: muted field + hairline on the near-black page.
       inputDecorationTheme: InputDecorationThemeData(
         filled: true,
-        fillColor: k.muted,
+        fillColor: k.fieldFill,
         isDense: false,
         contentPadding: const EdgeInsets.all(16),
-        border: inputBorder(k.outlineVariant, 1),
-        enabledBorder: inputBorder(k.outlineVariant, 1),
+        border: inputBorder(k.fieldBorder, 1),
+        enabledBorder: inputBorder(k.fieldBorder, 1),
         focusedBorder: inputBorder(k.primary, 2),
         errorBorder: inputBorder(cs.error, 1.5),
         focusedErrorBorder: inputBorder(cs.error, 2),
@@ -629,12 +657,17 @@ abstract final class AppTheme {
         surfaceTintColor: Colors.transparent,
         brightness: brightness,
       ),
+      // Segmented control (TabBar on a muted pill track): the indicator is
+      // a *raised* tone, lighter than the track in both themes (dark:
+      // #3A3552 + white 13 % hairline on the #262233 track).
       tabBarTheme: TabBarThemeData(
         indicator: BoxDecoration(
-          color: k.surface,
+          color: k.raised,
           borderRadius: KararRadius.all(KararRadius.pill),
-          boxShadow: KararShadow.soft(brightness),
-          border: isDark ? Border.all(color: KararShadow.cardHairlineDark) : null,
+          boxShadow: KararShadow.raised(brightness),
+          border: isDark
+              ? Border.all(color: KararShadow.cardHairlineDarkStrong)
+              : null,
         ),
         indicatorSize: TabBarIndicatorSize.tab,
         dividerColor: Colors.transparent,
@@ -647,11 +680,21 @@ abstract final class AppTheme {
         splashFactory: NoSplash.splashFactory,
         labelPadding: const EdgeInsets.symmetric(horizontal: 12),
       ),
+      // On: brand fill #7D50F0 in both themes with a white thumb (4.91:1;
+      // track vs dark surface 3.68:1). Off: an outline-coloured thumb on the
+      // muted track (M3 pattern) so the knob never disappears.
       switchTheme: SwitchThemeData(
-        thumbColor: const WidgetStatePropertyAll(Colors.white),
+        thumbColor: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          final color =
+              selected ? k.onColor : (isDark ? k.text3 : k.outline);
+          return states.contains(WidgetState.disabled)
+              ? color.withValues(alpha: 0.6)
+              : color;
+        }),
         trackColor: WidgetStateProperty.resolveWith((states) {
           final selected = states.contains(WidgetState.selected);
-          final color = selected ? k.primary : k.muted;
+          final color = selected ? k.primaryFill : k.muted;
           return states.contains(WidgetState.disabled)
               ? color.withValues(alpha: 0.5)
               : color;

@@ -8,7 +8,6 @@ import '../../core/providers.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/theme/karar_tokens.dart';
 import '../../core/utils/count_format.dart';
-import '../../core/utils/date_formatter.dart';
 import '../../shared/widgets/centered_content.dart';
 import '../../shared/widgets/karar_avatar.dart';
 import '../../shared/widgets/karar_button.dart';
@@ -18,6 +17,7 @@ import '../settings/widgets/settings_group.dart';
 import 'my_comments_screen.dart';
 import 'my_posts_screen.dart';
 import 'saved_posts_screen.dart';
+import 'widgets/column_app_bar.dart';
 import 'widgets/profile_header.dart';
 
 class ProfileScreen extends ConsumerWidget {
@@ -60,11 +60,11 @@ class _LoggedInProfileState extends ConsumerState<_LoggedInProfile> {
     final user = widget.user;
     final authMethod = user.authProvider == 'google' ? 'Google' : 'E-posta';
     final metaLine = user.joinedAt != null
-        ? '${DateFormatter.full(user.joinedAt!)} tarihinden beri üye · $authMethod'
+        ? '${formatJoinedDate(user.joinedAt!)} tarihinden beri üye · $authMethod'
         : authMethod;
 
     return Scaffold(
-      appBar: AppBar(
+      appBar: ColumnAppBar(
         title: const _ProfileTitle(),
         centerTitle: false,
         actions: [
@@ -120,7 +120,12 @@ class _LoggedInProfileState extends ConsumerState<_LoggedInProfile> {
                     KararCircleButton(
                       icon: Icons.insights_rounded,
                       tooltip: 'Haftalık Vicdan Karnesi',
-                      style: KararCircleStyle.muted,
+                      // On the canvas (mobile) a raised surface circle; the
+                      // muted fill had no edge (1.06:1). Inside the desktop
+                      // hero card (already a surface) the muted fill reads.
+                      style: context.isDesktop
+                          ? KararCircleStyle.muted
+                          : KararCircleStyle.surface,
                       size: 48,
                       onPressed: () => context.push('/profile/weekly'),
                     ),
@@ -132,7 +137,8 @@ class _LoggedInProfileState extends ConsumerState<_LoggedInProfile> {
               child: KararTextTabs(
                 labels: _tabs,
                 index: _tab,
-                padding: const EdgeInsets.fromLTRB(24, 22, 24, 4),
+                // Same 16 px inset as the tile grid below.
+                padding: const EdgeInsets.fromLTRB(16, 22, 16, 4),
                 onChanged: (i) => setState(() => _tab = i),
               ),
             ),
@@ -193,8 +199,8 @@ class _GuestProfile extends StatelessWidget {
   Widget build(BuildContext context) {
     final kc = context.kc;
     return Scaffold(
-      appBar: AppBar(
-        title: const _ProfileTitle(),
+      appBar: const ColumnAppBar(
+        title: _ProfileTitle(),
         centerTitle: false,
       ),
       body: CenteredContent(

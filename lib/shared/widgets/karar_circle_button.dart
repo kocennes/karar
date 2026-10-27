@@ -20,14 +20,14 @@ enum KararCircleStyle {
   /// On photos: black 28 % + backdrop blur σ 10 + white icon.
   glass,
 
-  /// Ink fill (#15131F light / #F4F3F8 dark) with `onInk` icon.
+  /// Ink fill (#15131F light / brand #7D50F0 dark) with `onInk` icon.
   ink,
 
   /// Brand fill (`primaryFill`, both themes) with a white icon.
   primary,
 
-  /// Light capsule (white / #F4F3F8) + capsule shadow, #15131F icon in
-  /// both themes (rail circles).
+  /// Light capsule (white / dimmed #E4E1EC in dark) + capsule shadow,
+  /// #15131F icon in both themes.
   capsule,
 }
 
@@ -101,10 +101,10 @@ class KararCircleButton extends StatelessWidget {
         fg = kc.text1;
       case KararCircleStyle.onColor:
         fill = highContrast ? KararGlass.chipHighContrast : KararGlass.chipOnColor;
-        fg = Colors.white;
+        fg = kc.onColor;
       case KararCircleStyle.glass:
         fill = highContrast ? KararGlass.chipHighContrast : KararGlass.chipOnPhoto;
-        fg = Colors.white;
+        fg = kc.onColor;
         blur = !highContrast;
       case KararCircleStyle.ink:
         fill = kc.ink;
@@ -112,7 +112,7 @@ class KararCircleButton extends StatelessWidget {
         shadows = KararShadow.float(brightness);
       case KararCircleStyle.primary:
         fill = kc.primaryFill;
-        fg = Colors.white;
+        fg = kc.onColor;
       case KararCircleStyle.capsule:
         fill = kc.capsule;
         fg = kc.onCapsuleText;

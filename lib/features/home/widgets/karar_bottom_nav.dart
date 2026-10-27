@@ -27,10 +27,12 @@
 //
 // Changes: fixed pixel fillets instead of height fractions, rotated so the
 // attached edge is the bottom (a tab rising above the nav pill), painted
-// with a shadow, an optional active ring and a focus ring.
+// with a shadow, an optional active glow, an optional hairline and a focus
+// ring.
 
 import 'dart:ui' show ImageFilter;
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -96,6 +98,7 @@ class KararBottomNav extends StatefulWidget {
     required this.onSelect,
     required this.unreadCount,
     this.hidden = false,
+    this.overMedia = false,
   });
 
   /// Current shell branch index.
@@ -105,9 +108,14 @@ class KararBottomNav extends StatefulWidget {
   final ValueChanged<int> onSelect;
   final int unreadCount;
 
-  /// Slides the nav out (a text field has focus — on mobile web the nav
-  /// would otherwise sit on top of the keyboard).
+  /// Slides the nav out (the on-screen keyboard is up — on mobile web the
+  /// nav would otherwise sit on top of it).
   final bool hidden;
+
+  /// The page behind the nav is a full-bleed photo/scrim (Keşfet): the
+  /// notch gets a light hairline so its silhouette never melts into a dark
+  /// backdrop (the light ink notch on a near-black scrim is 1.05:1).
+  final bool overMedia;
 
   static const double pillHeight = 70;
   static const double notchRise = 34;
@@ -140,14 +148,16 @@ class _KararBottomNavState extends State<KararBottomNav> {
     super.dispose();
   }
 
-  /// Which of the four tabs is active (-1 = none: the create notch is).
-  /// Search (4) and unknown branches fall back to Anasayfa.
+  /// Which of the four tabs is active (-1 = none). Create (1) has its own
+  /// notch state; Search (4) has no tab here, so no tab is highlighted
+  /// rather than suggesting the feed. Unknown branches fall back to
+  /// Anasayfa.
   int get _selectedTab => switch (widget.currentIndex) {
         0 => 0,
         5 => 1,
         2 => 2,
         3 => 3,
-        1 => -1,
+        1 || 4 => -1,
         _ => 0,
       };
 
@@ -214,13 +224,15 @@ class _KararBottomNavState extends State<KararBottomNav> {
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          // The notch shadow sits behind the pill so it never smears the
-          // pill's white surface.
-          const Positioned(
+          // The notch shadow (and the active glow) sit behind the pill so
+          // they never smear the pill's surface.
+          Positioned(
             top: 0,
             left: 0,
             right: 0,
-            child: Center(child: _NotchShadow()),
+            child: Center(
+              child: _NotchShadow(active: widget.currentIndex == 1),
+            ),
           ),
           Positioned(
             left: 0,
@@ -241,6 +253,7 @@ class _KararBottomNavState extends State<KararBottomNav> {
             child: Center(
               child: _CreateNotch(
                 active: widget.currentIndex == 1,
+                overMedia: widget.overMedia,
                 pressed: _createPressed,
                 onTap: _create,
               ),
@@ -484,7 +497,7 @@ class _NavBadge extends StatelessWidget {
           '${count.clamp(0, 99)}',
           textScaler: TextScaler.noScaling,
           style: AppTypography.micro.copyWith(
-            color: Colors.white,
+            color: kc.onColor,
             letterSpacing: 0,
             height: 1,
             fontFeatures: AppTypography.tabular,
@@ -495,13 +508,26 @@ class _NavBadge extends StatelessWidget {
   }
 }
 
-/// Float shadow of the notch, painted behind the pill.
+/// Float shadow of the notch, painted behind the pill. While the create
+/// branch is open ([active]) a soft brand glow rises around the notch
+/// instead of an outline ring (an outline read as a sticker edge and, on
+/// the violet dark notch, was only 1.8:1 against the fill).
 class _NotchShadow extends StatelessWidget {
-  const _NotchShadow();
+  const _NotchShadow({required this.active});
+
+  final bool active;
 
   @override
   Widget build(BuildContext context) {
-    final shadows = KararShadow.float(Theme.of(context).brightness);
+    final kc = context.kc;
+    final shadows = [
+      ...KararShadow.float(kc.brightness),
+      if (active)
+        BoxShadow(
+          color: kc.primaryFill.withValues(alpha: kc.isDark ? 0.60 : 0.50),
+          blurRadius: 18,
+        ),
+    ];
     return IgnorePointer(
       child: ExcludeSemantics(
         child: CustomPaint(
@@ -536,7 +562,7 @@ class _NotchShadowPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_NotchShadowPainter oldDelegate) =>
-      oldDelegate.shadows != shadows;
+      !listEquals(oldDelegate.shadows, shadows);
 }
 
 /// The "+" create tab (112 × 34) rising above the pill. Together with
@@ -546,11 +572,13 @@ class _NotchShadowPainter extends CustomPainter {
 class _CreateNotch extends StatefulWidget {
   const _CreateNotch({
     required this.active,
+    required this.overMedia,
     required this.pressed,
     required this.onTap,
   });
 
   final bool active;
+  final bool overMedia;
   final ValueNotifier<bool> pressed;
   final VoidCallback onTap;
 
@@ -581,12 +609,15 @@ class _CreateNotchState extends State<_CreateNotch> {
         curve: pressed ? KararMotion.standard : KararMotion.spring,
         child: child,
       ),
+      // Light: ink notch with a white "+" (reference). Dark: `ink` is the
+      // brand violet, never an off-white block. Active = the glow painted
+      // by _NotchShadow behind the pill, no outline.
       child: CustomPaint(
         size: size,
         painter: _NotchPainter(
           fill: kc.ink,
-          ring: widget.active ? kc.primary : null,
           focus: _focused ? kc.primary : null,
+          hairline: widget.overMedia ? kc.onColorSoft : null,
         ),
         child: SizedBox.fromSize(
           size: size,
@@ -690,37 +721,48 @@ class _CreateGapTarget extends StatelessWidget {
 }
 
 class _NotchPainter extends CustomPainter {
-  const _NotchPainter({required this.fill, this.ring, this.focus});
+  const _NotchPainter({required this.fill, this.focus, this.hairline});
 
   final Color fill;
 
-  /// 2 px outer ring when the create branch is active.
-  final Color? ring;
-
-  /// Keyboard focus ring.
+  /// Keyboard focus ring (2 px outside the outline).
   final Color? focus;
+
+  /// 1 px edge over a dark full-bleed backdrop (Keşfet).
+  final Color? hairline;
 
   @override
   void paint(Canvas canvas, Size size) {
     final open = NavNotchClipper.openPathFor(size);
-    final stroke = ring ?? focus;
-    if (stroke != null) {
+    final focus = this.focus;
+    if (focus != null) {
       // Centred 4 px stroke under the fill = 2 px visible outside.
       canvas.drawPath(
         open,
         Paint()
-          ..color = stroke
+          ..color = focus
           ..style = PaintingStyle.stroke
           ..strokeWidth = 4
           ..strokeJoin = StrokeJoin.round,
       );
     }
     canvas.drawPath(NavNotchClipper.pathFor(size), Paint()..color = fill);
+    final hairline = this.hairline;
+    if (hairline != null && focus == null) {
+      canvas.drawPath(
+        open,
+        Paint()
+          ..color = hairline
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1
+          ..strokeJoin = StrokeJoin.round,
+      );
+    }
   }
 
   @override
   bool shouldRepaint(_NotchPainter oldDelegate) =>
       oldDelegate.fill != fill ||
-      oldDelegate.ring != ring ||
-      oldDelegate.focus != focus;
+      oldDelegate.focus != focus ||
+      oldDelegate.hairline != hairline;
 }

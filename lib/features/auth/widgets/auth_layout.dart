@@ -5,6 +5,7 @@ import '../../../core/layout/breakpoints.dart';
 import '../../../core/theme/app_typography.dart';
 import '../../../core/theme/category_style.dart';
 import '../../../core/theme/karar_tokens.dart';
+import '../../../shared/data/sample_posts.dart';
 import '../../../shared/models/post.dart';
 import '../../../shared/widgets/karar_logo.dart';
 import '../../../shared/widgets/post_surface.dart';
@@ -95,23 +96,28 @@ class AuthHeader extends StatelessWidget {
   final Widget? subtitle;
 
   /// Defaults to `KararLogo(large)`; pass an [AuthDisc] for status pages.
+  /// On desktop the default logo is left out: the brand panel next to the
+  /// form already shows it.
   final Widget? leading;
 
   @override
   Widget build(BuildContext context) {
     final kc = context.kc;
     final wide = context.screenWidth >= Breakpoints.mobile;
+    final showLeading = leading != null || !context.isDesktop;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Center(
-          child: leading ??
-              const Hero(
-                tag: 'auth_logo',
-                child: KararLogo(size: LogoSize.large),
-              ),
-        ),
-        const SizedBox(height: 28),
+        if (showLeading) ...[
+          Center(
+            child: leading ??
+                const Hero(
+                  tag: 'auth_logo',
+                  child: KararLogo(size: LogoSize.large),
+                ),
+          ),
+          const SizedBox(height: 28),
+        ],
         Semantics(
           header: true,
           child: Text(
@@ -230,32 +236,33 @@ class AuthOrDivider extends StatelessWidget {
   }
 }
 
-/// Desktop brand panel: violet gradient with soft blobs, the white logo,
-/// the community sentence and three tilted decorative verdict cards.
+/// Desktop brand panel: violet gradient with soft blobs, the logo in white,
+/// the community sentence and three tilted decorative verdict cards (the
+/// in-app sample posts), each card's verdict chip fully visible.
 class _BrandPanel extends StatelessWidget {
   const _BrandPanel();
 
-  static final _samples = [
-    _sample('a', 1, 73, 27),
-    _sample('b', 2, 38, 62),
-    _sample('c', 3, 91, 9),
+  /// Decorative card palettes (contrast against the violet panel; the
+  /// cards' own categories are not shown).
+  static const _styles = [
+    CategoryStyle.magenta,
+    CategoryStyle.ocean,
+    CategoryStyle.amber,
   ];
 
-  static Post _sample(String id, int categoryId, int hakli, int haksiz) => Post(
-        id: 'auth-decor-$id',
-        category: Category(id: categoryId, name: '', icon: ''),
-        title: '',
-        content: '',
-        createdAgo: '',
-        voteCountHakli: hakli,
-        voteCountHaksiz: haksiz,
-        commentCount: 0,
-        comments: const [],
-        createdAt: DateTime(2026),
-      );
+  /// Card origins and tilts inside the 470 × 392 collage: staggered so no
+  /// card covers another card's verdict chip.
+  static const _layout = [
+    (left: 0.0, top: 0.0, angle: -0.06),
+    (left: 190.0, top: 132.0, angle: 0.05),
+    (left: 28.0, top: 264.0, angle: -0.03),
+  ];
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
+    final samples = samplePosts.take(_layout.length).toList();
+
     return ClipRect(
       child: DecoratedBox(
         decoration: const BoxDecoration(gradient: KararGradients.brand),
@@ -264,15 +271,12 @@ class _BrandPanel extends StatelessWidget {
             const Positioned(top: -120, right: -80, child: _Blob(size: 360)),
             const Positioned(bottom: -160, left: -100, child: _Blob(size: 420)),
             Padding(
-              padding: const EdgeInsets.fromLTRB(56, 48, 56, 48),
+              padding: const EdgeInsets.fromLTRB(56, 48, 40, 48),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const KararLogo(
-                    size: LogoSize.large,
-                    wordmarkColor: Colors.white,
-                  ),
+                  const _PanelLogo(),
                   const SizedBox(height: 28),
                   ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 440),
@@ -281,50 +285,90 @@ class _BrandPanel extends StatelessWidget {
                       style: AppTypography.titleXL.copyWith(
                         fontSize: 28,
                         height: 36 / 28,
-                        color: Colors.white,
+                        color: kc.onColor,
                       ),
                     ),
                   ),
-                  const SizedBox(height: 44),
-                  ExcludeSemantics(
-                    child: SizedBox(
-                      height: 300,
-                      width: 440,
-                      child: Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          Positioned(
-                            left: 0,
-                            top: 10,
-                            child: _MiniVerdictCard(
-                              post: _samples[0],
-                              style: CategoryStyle.magenta,
-                              angle: -0.07,
-                            ),
+                  const SizedBox(height: 40),
+                  // Scales down on narrow desktop panels instead of being
+                  // clipped at the panel edge.
+                  Flexible(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: AlignmentDirectional.topStart,
+                      child: ExcludeSemantics(
+                        child: SizedBox(
+                          width: 470,
+                          height: 392,
+                          child: Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              for (var i = 0; i < samples.length; i++)
+                                Positioned(
+                                  left: _layout[i].left,
+                                  top: _layout[i].top,
+                                  child: _MiniVerdictCard(
+                                    post: samples[i],
+                                    style: _styles[i % _styles.length],
+                                    angle: _layout[i].angle,
+                                  ),
+                                ),
+                            ],
                           ),
-                          Positioned(
-                            left: 150,
-                            top: 92,
-                            child: _MiniVerdictCard(
-                              post: _samples[1],
-                              style: CategoryStyle.ocean,
-                              angle: 0.05,
-                            ),
-                          ),
-                          Positioned(
-                            left: 40,
-                            top: 178,
-                            child: _MiniVerdictCard(
-                              post: _samples[2],
-                              style: CategoryStyle.amber,
-                              angle: -0.03,
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
                 ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The logo for the violet panel: a white disc with a brand-violet balance
+/// glyph (4.91:1) and a white wordmark. The regular purple mark melted into
+/// the panel gradient (1.25:1).
+class _PanelLogo extends StatelessWidget {
+  const _PanelLogo();
+
+  @override
+  Widget build(BuildContext context) {
+    final kc = context.kc;
+    return Semantics(
+      label: 'karar',
+      container: true,
+      child: ExcludeSemantics(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: kc.onColor,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.balance_rounded,
+                size: 24,
+                color: kc.primaryFill,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              'karar',
+              style: TextStyle(
+                fontFamily: AppTypography.fontFamily,
+                fontSize: 26,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -1.0,
+                height: 1,
+                color: kc.onColor,
               ),
             ),
           ],
@@ -341,14 +385,18 @@ class _Blob extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final onColor = context.kc.onColor;
     return IgnorePointer(
       child: Container(
         width: size,
         height: size,
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           shape: BoxShape.circle,
           gradient: RadialGradient(
-            colors: [Color(0x2EFFFFFF), Color(0x00FFFFFF)],
+            colors: [
+              onColor.withValues(alpha: 0.18),
+              onColor.withValues(alpha: 0),
+            ],
           ),
         ),
       ),
@@ -356,8 +404,8 @@ class _Blob extends StatelessWidget {
   }
 }
 
-/// A small tilted text-post card: two white placeholder title bars and a
-/// [VerdictChip] — decoration only, no copy.
+/// A small tilted text-post card: the post title (15/800 white, 2 lines)
+/// and its [VerdictChip] — decoration only (excluded from semantics).
 class _MiniVerdictCard extends StatelessWidget {
   const _MiniVerdictCard({
     required this.post,
@@ -367,39 +415,44 @@ class _MiniVerdictCard extends StatelessWidget {
 
   final Post post;
   final CategoryStyle style;
+
   /// Tilt in radians.
   final double angle;
 
   @override
   Widget build(BuildContext context) {
-    Widget bar(double width, double alpha) => Container(
-          width: width,
-          height: 12,
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: alpha),
-            borderRadius: KararRadius.all(6),
-          ),
-        );
-
+    final kc = context.kc;
     return Transform.rotate(
       angle: angle,
       child: SizedBox(
-        width: 260,
+        width: 270,
         child: PostSurface.tinted(
           style: style,
           radius: KararRadius.surface,
           showQuote: false,
+          showRailSheen: false,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               mainAxisSize: MainAxisSize.min,
               children: [
-                bar(180, 0.9),
-                const SizedBox(height: 8),
-                bar(120, 0.6),
-                const SizedBox(height: 16),
-                VerdictChip(post: post),
+                Text(
+                  post.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  textScaler: TextScaler.noScaling,
+                  style: AppTypography.bodyStrong.copyWith(
+                    fontSize: 15,
+                    height: 1.3,
+                    fontWeight: FontWeight.w800,
+                    color: kc.onColor,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                MediaQuery.withNoTextScaling(
+                  child: VerdictChip(post: post),
+                ),
               ],
             ),
           ),

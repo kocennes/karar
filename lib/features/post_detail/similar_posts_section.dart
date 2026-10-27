@@ -104,10 +104,12 @@ class _SimilarPostTile extends StatelessWidget {
                     width: 44,
                     height: 44,
                     decoration: BoxDecoration(
-                      gradient: style.gradient,
+                      gradient: style.gradientFor(
+                        brightness: Theme.of(context).brightness,
+                      ),
                       borderRadius: KararRadius.all(KararRadius.iconTile),
                     ),
-                    child: Icon(style.icon, size: 22, color: Colors.white),
+                    child: Icon(style.icon, size: 22, color: kc.onColor),
                   ),
                 ),
                 const SizedBox(width: 12),

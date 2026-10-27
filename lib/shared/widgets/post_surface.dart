@@ -12,13 +12,15 @@ import '../models/post.dart';
 /// hero, Keşfet page, create compose card, tiles.
 ///
 /// * Text posts: the category gradient + decor (white 18 % radial at the
-///   top-left, white 10 % radial behind the rail at the right-middle, a
+///   top-left, white 10 % radial behind the rail at the right-middle — only
+///   when [showRailSheen], i.e. the surface carries a vote rail — and a
 ///   150 px “ watermark at white 10 %).
 /// * Photo posts: the first image, `BoxFit.cover`, with the §2.4 scrims.
 ///   While it loads — and if it fails — the category gradient shows (never an
 ///   error frame inside a card).
 /// * Light theme: coloured glow (`KararShadow.card`) / photo shadow.
-///   Dark theme: no shadow, 1 px inner hairline white 8 %.
+///   Dark theme: the palette's dark stops (`CategoryStyle.gradientFor`), no
+///   shadow, 1 px inner hairline white 10 % (13 % on Diğer / seen cards).
 /// * [seen]: darker palette (photos +20 % black), no glow.
 ///
 /// [child] is laid out on top and defines the size (the background fills
@@ -32,6 +34,7 @@ class PostSurface extends StatelessWidget {
     this.radius = KararRadius.card,
     this.seen = false,
     this.showQuote = true,
+    this.showRailSheen = true,
     this.liveBlurHost = false,
     this.obscurePhoto = false,
     this.showPhoto = true,
@@ -47,6 +50,7 @@ class PostSurface extends StatelessWidget {
     this.radius = KararRadius.card,
     this.seen = false,
     this.showQuote = true,
+    this.showRailSheen = true,
   })  : post = null,
         liveBlurHost = false,
         obscurePhoto = false,
@@ -59,6 +63,12 @@ class PostSurface extends StatelessWidget {
   final double radius;
   final bool seen;
   final bool showQuote;
+
+  /// Text posts: the white radial glow at the right-middle that sits behind
+  /// the vote rail. Set false on surfaces without a rail (detail hero,
+  /// compose card, share card, tiles), where it would read as a stray
+  /// blotch.
+  final bool showRailSheen;
 
   /// The surface hosts live backdrop blurs (glass rail / chips on a photo):
   /// the background gets its own repaint boundary so blurs re-sample
@@ -91,6 +101,7 @@ class PostSurface extends StatelessWidget {
   Widget build(BuildContext context) {
     final brightness = Theme.of(context).brightness;
     final isDark = brightness == Brightness.dark;
+    final kc = context.kc;
     final palette = style ??
         (post != null ? CategoryStyle.of(post!.category) : CategoryStyle.unknown);
     final url = (showPhoto && post != null) ? imageUrlOf(post!) : null;
@@ -101,34 +112,26 @@ class PostSurface extends StatelessWidget {
       fit: StackFit.expand,
       children: [
         DecoratedBox(
-          decoration: BoxDecoration(gradient: palette.gradientFor(seen: seen)),
+          decoration: BoxDecoration(
+            gradient: palette.gradientFor(seen: seen, brightness: brightness),
+          ),
         ),
         if (!isPhoto) ...[
-          const DecoratedBox(
+          DecoratedBox(
             decoration: BoxDecoration(
-              gradient: RadialGradient(
-                center: Alignment.topLeft,
-                radius: 0.9,
-                colors: [Color(0x2EFFFFFF), Color(0x00FFFFFF)],
-                stops: [0, 0.6],
-              ),
+              gradient:
+                  isDark ? KararGradients.cardSheenDark : KararGradients.cardSheen,
             ),
           ),
-          const DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: RadialGradient(
-                center: Alignment.centerRight,
-                radius: 0.6,
-                colors: [Color(0x1AFFFFFF), Color(0x00FFFFFF)],
-                stops: [0, 0.7],
-              ),
+          if (showRailSheen)
+            const DecoratedBox(
+              decoration: BoxDecoration(gradient: KararGradients.cardSheenRail),
             ),
-          ),
-          if (showQuote) const _QuoteWatermark(),
+          if (showQuote) _QuoteWatermark(color: kc.quoteWatermark),
         ],
         if (isPhoto) ...[
           _Photo(url: url, obscure: obscurePhoto, heroTag: heroTag),
-          if (seen) const ColoredBox(color: Color(0x33000000)),
+          if (seen) const ColoredBox(color: KararGlass.seenPhotoVeil),
           const DecoratedBox(
             decoration: BoxDecoration(gradient: KararGradients.photoScrim),
           ),
@@ -136,6 +139,12 @@ class PostSurface extends StatelessWidget {
       ],
     );
     if (liveBlurHost) background = RepaintBoundary(child: background);
+
+    // Dark: inner hairline instead of a shadow. Low-key (Diğer) and "seen"
+    // cards sit close to the canvas, so they get the stronger one.
+    final hairline = (seen || (!isPhoto && palette.lowKey))
+        ? KararShadow.cardHairlineDarkStrong
+        : KararShadow.cardHairlineDark;
 
     Widget card = Stack(
       children: [
@@ -148,7 +157,7 @@ class PostSurface extends StatelessWidget {
                 child: DecoratedBox(
                   decoration: BoxDecoration(
                     borderRadius: br,
-                    border: Border.all(color: KararShadow.cardHairlineDark),
+                    border: Border.all(color: hairline),
                   ),
                 ),
               ),
@@ -175,11 +184,13 @@ class PostSurface extends StatelessWidget {
 }
 
 class _QuoteWatermark extends StatelessWidget {
-  const _QuoteWatermark();
+  const _QuoteWatermark({required this.color});
+
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
-    return const Stack(
+    return Stack(
       children: [
         Positioned(
           left: 14,
@@ -192,7 +203,7 @@ class _QuoteWatermark extends StatelessWidget {
               fontSize: 150,
               height: 1,
               fontWeight: FontWeight.w800,
-              color: Color(0x1AFFFFFF),
+              color: color,
             ),
           ),
         ),

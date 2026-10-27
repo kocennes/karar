@@ -175,7 +175,7 @@ class _GlassPainter extends CustomPainter {
         ..shader = const LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [KararGlass.sheenTop, Color(0x00FFFFFF)],
+          colors: [KararGlass.sheenTop, KararGlass.sheenBottom],
         ).createShader(Offset.zero & size),
     );
     canvas.drawPath(

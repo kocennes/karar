@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../../core/theme/app_colors.dart';
+import '../../core/theme/karar_tokens.dart';
+import 'karar_sheet.dart';
 
 class _BadgeLevel {
   const _BadgeLevel({
@@ -79,11 +80,10 @@ class KarmaBadge extends StatelessWidget {
   final bool showDetail;
 
   void _showSheet(BuildContext context) {
-    showModalBottomSheet<void>(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+    // Karar sheet: root navigator (covers the shell's floating nav) and the
+    // 640 px desktop cap, like every other sheet in the app.
+    showKararSheet<void>(
+      context,
       builder: (_) => KarmaBadgeSheet(karma: karma),
     );
   }
@@ -114,8 +114,16 @@ class KarmaBadgeSheet extends StatelessWidget {
 
   final int karma;
 
+  static const _greyscale = ColorFilter.matrix(<double>[
+    0.2126, 0.7152, 0.0722, 0, 0, //
+    0.2126, 0.7152, 0.0722, 0, 0, //
+    0.2126, 0.7152, 0.0722, 0, 0, //
+    0, 0, 0, 1, 0, //
+  ]);
+
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
     final currentIndex = _levelIndex(karma);
     final current = _levels[currentIndex];
     final hasNext = currentIndex < _levels.length - 1;
@@ -146,7 +154,7 @@ class KarmaBadgeSheet extends StatelessWidget {
                       Text(
                         '$karma karma',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: AppColors.textSecondary,
+                              color: kc.text2,
                             ),
                       ),
                     ],
@@ -158,7 +166,7 @@ class KarmaBadgeSheet extends StatelessWidget {
             Text(
               current.description,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: AppColors.textSecondary,
+                    color: kc.text2,
                     height: 1.5,
                   ),
             ),
@@ -166,7 +174,7 @@ class KarmaBadgeSheet extends StatelessWidget {
             Text(
               'Rozet Seviyeleri',
               style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    color: AppColors.textTertiary,
+                    color: kc.text3,
                     fontWeight: FontWeight.w700,
                   ),
             ),
@@ -183,13 +191,21 @@ class KarmaBadgeSheet extends StatelessWidget {
                 padding: const EdgeInsets.only(bottom: 10),
                 child: Row(
                   children: [
-                    Text(
-                      level.emoji,
-                      style: TextStyle(
-                        fontSize: 20,
-                        color: isEarned ? null : Colors.grey.withValues(alpha: 0.4),
+                    // A text colour has no effect on colour emoji, so
+                    // unearned levels are greyscaled and faded instead.
+                    if (isEarned)
+                      Text(level.emoji, style: const TextStyle(fontSize: 20))
+                    else
+                      Opacity(
+                        opacity: 0.55,
+                        child: ColorFiltered(
+                          colorFilter: _greyscale,
+                          child: Text(
+                            level.emoji,
+                            style: const TextStyle(fontSize: 20),
+                          ),
+                        ),
                       ),
-                    ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(
@@ -203,13 +219,13 @@ class KarmaBadgeSheet extends StatelessWidget {
                                       : FontWeight.normal,
                                   color: isEarned
                                       ? null
-                                      : AppColors.textTertiary,
+                                      : kc.text3,
                                 ),
                           ),
                           Text(
                             '$rangeText karma',
                             style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                                  color: AppColors.textTertiary,
+                                  color: kc.text3,
                                 ),
                           ),
                         ],
@@ -220,20 +236,20 @@ class KarmaBadgeSheet extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 8, vertical: 3),
                         decoration: BoxDecoration(
-                          color: AppColors.accent.withValues(alpha: 0.12),
+                          color: kc.primaryContainer,
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Text(
                           'Şu anki',
                           style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                                color: AppColors.accent,
+                                color: kc.onPrimaryContainer,
                                 fontWeight: FontWeight.w700,
                               ),
                         ),
                       )
                     else if (isEarned)
-                      const Icon(Icons.check_circle,
-                          size: 18, color: AppColors.hakli),
+                      Icon(Icons.check_circle_rounded,
+                          size: 18, color: kc.hakliText),
                   ],
                 ),
               );
@@ -242,13 +258,13 @@ class KarmaBadgeSheet extends StatelessWidget {
               const Divider(height: 24),
               Row(
                 children: [
-                  const Icon(Icons.trending_up,
-                      size: 16, color: AppColors.textSecondary),
+                  Icon(Icons.trending_up_rounded,
+                      size: 16, color: kc.text2),
                   const SizedBox(width: 8),
                   Text(
                     'Sonraki rozet: ${next.emoji} ${next.label} — $remaining karma daha',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: AppColors.textSecondary,
+                          color: kc.text2,
                         ),
                   ),
                 ],

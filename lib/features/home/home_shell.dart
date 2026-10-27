@@ -188,6 +188,15 @@ class _HomeShellState extends ConsumerState<HomeShell>
     final isDesktop = context.isDesktop;
     final currentIndex = widget.navigationShell.currentIndex;
 
+    // Hide the floating nav only while the on-screen keyboard is actually
+    // up (on mobile web it would sit on top of it), not merely because a
+    // field has focus: a screen that autofocuses its field (Arama opened as
+    // a root) would otherwise lose its only way out.
+    final keyboardUp = MediaQuery.viewInsetsOf(context).bottom > 0;
+    final navHidden = _textInputFocused && keyboardUp;
+    final navHeight =
+        KararBottomNav.heightFor(MediaQuery.paddingOf(context).bottom);
+
     Widget shell = Scaffold(
       // Mobile/tablet: the content runs under the floating pill nav; tabs
       // receive the nav height as MediaQuery bottom padding
@@ -202,14 +211,15 @@ class _HomeShellState extends ConsumerState<HomeShell>
               Expanded(child: _buildLayout(context, unreadCount)),
             ],
           ),
-          // Soft fade behind the floating nav (Keşfet pages are full-bleed).
-          if (!isDesktop && currentIndex != 5)
-            const Positioned(
+          // Canvas fade behind the floating nav, exactly as tall as the nav
+          // (Keşfet pages are full-bleed, so none there).
+          if (!isDesktop && currentIndex != 5 && !navHidden)
+            Positioned(
               left: 0,
               right: 0,
               bottom: 0,
-              height: 150,
-              child: _NavFade(),
+              height: navHeight,
+              child: const _NavFade(),
             ),
           // PWA install + KVKK notices float as cards above the nav.
           Positioned(
@@ -256,7 +266,9 @@ class _HomeShellState extends ConsumerState<HomeShell>
               currentIndex: currentIndex,
               onSelect: _onDestinationSelected,
               unreadCount: unreadCount,
-              hidden: _textInputFocused,
+              hidden: navHidden,
+              // Keşfet is a full-bleed photo page under the nav.
+              overMedia: currentIndex == 5,
             ),
     );
 
@@ -450,7 +462,11 @@ class _HomeShellState extends ConsumerState<HomeShell>
   }
 }
 
-/// Canvas fade behind the floating nav (canvas 0 % → 92 % at 70 %).
+/// Canvas scrim behind the floating nav, exactly as tall as the nav:
+/// clear at the notch top, a faint 12 % veil at the pill's top edge, 80 %
+/// at its middle and solid canvas from its bottom edge to the screen edge.
+/// Content beside the notch stays readable (no muddy tiles above the nav),
+/// and nothing peeks out in the gap below the pill.
 class _NavFade extends StatelessWidget {
   const _NavFade();
 
@@ -459,18 +475,36 @@ class _NavFade extends StatelessWidget {
     final canvas = context.kc.canvas;
     return IgnorePointer(
       child: ExcludeSemantics(
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                canvas.withValues(alpha: 0),
-                canvas.withValues(alpha: 0.92),
-              ],
-              stops: const [0, 0.7],
-            ),
-          ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final h = constraints.maxHeight;
+            if (!h.isFinite || h <= 0) return const SizedBox.shrink();
+            const rise = KararBottomNav.notchRise;
+            const pill = KararBottomNav.pillHeight;
+            double at(double y) => (y / h).clamp(0.0, 1.0);
+            return DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    canvas.withValues(alpha: 0),
+                    canvas.withValues(alpha: 0.12),
+                    canvas.withValues(alpha: 0.80),
+                    canvas.withValues(alpha: 0.95),
+                    canvas,
+                  ],
+                  stops: [
+                    0,
+                    at(rise),
+                    at(rise + pill / 2),
+                    at(rise + pill),
+                    1,
+                  ],
+                ),
+              ),
+            );
+          },
         ),
       ),
     );

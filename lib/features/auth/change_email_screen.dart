@@ -277,11 +277,11 @@ class _RequestStep extends StatelessWidget {
             minimumSize: const Size.fromHeight(56),
           ),
           child: isLoading
-              ? const SizedBox(
+              ? SizedBox(
                   width: 24,
                   height: 24,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white),
+                      strokeWidth: 2, color: context.kc.onColor),
                 )
               : const Text('Kod Gönder'),
         ),
@@ -355,11 +355,11 @@ class _ConfirmStep extends StatelessWidget {
             minimumSize: const Size.fromHeight(56),
           ),
           child: isLoading
-              ? const SizedBox(
+              ? SizedBox(
                   width: 24,
                   height: 24,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white),
+                      strokeWidth: 2, color: context.kc.onColor),
                 )
               : const Text('Onayla'),
         ),

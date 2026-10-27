@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart' hide Category;
 import 'package:flutter/material.dart';
@@ -36,6 +38,7 @@ import 'post_card.dart';
 import 'trend_topics_panel.dart';
 import 'weekly_featured_card.dart';
 import 'widgets/feed_skeletons.dart';
+import 'widgets/horizontal_bleed_clip.dart';
 
 class FeedScreen extends ConsumerStatefulWidget {
   const FeedScreen({super.key});
@@ -389,7 +392,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
           SnackBar(
             content: Text(
               next.actionError!,
-              style: const TextStyle(color: Colors.white),
+              style: TextStyle(color: context.kc.onColor),
             ),
             backgroundColor: context.kc.haksizFill,
             behavior: SnackBarBehavior.floating,
@@ -441,14 +444,23 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
       horizontalPadding: isDesktop ? 8 : KararSpace.gutter,
     );
 
+    // Phones up to ~400 pt wide get the dense hero (one-line title) so the
+    // first card's verdict clears the floating nav above the fold.
+    final denseHeader = MediaQuery.sizeOf(context).width < 400;
+
     return Scaffold(
       appBar: isDesktop ? null : _buildTopBar(user),
-      floatingActionButton: Padding(
-        // The shell's floating nav is part of the bottom padding; the FAB
-        // must clear it.
-        padding: EdgeInsets.only(bottom: context.navBottomInset),
-        child: _BackToTopButton(visible: _showFab, onPressed: _scrollToTop),
-      ),
+      // Desktop: the back-to-top button sits next to the feed column (see
+      // _buildDesktopLayout), not in the window corner.
+      floatingActionButton: isDesktop
+          ? null
+          : Padding(
+              // The shell's floating nav is part of the bottom padding; the
+              // FAB must clear it.
+              padding: EdgeInsets.only(bottom: context.navBottomInset),
+              child:
+                  _BackToTopButton(visible: _showFab, onPressed: _scrollToTop),
+            ),
       body: isDesktop
           ? _buildDesktopLayout(
               feedArea: feedArea,
@@ -470,16 +482,19 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
                         ? Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              const WeeklyFeaturedCard(),
+                              WeeklyFeaturedCard(dense: denseHeader),
+                              // The tabs and chips carry their own 44/48 px
+                              // hit boxes; these paddings only add the
+                              // visual rhythm on top.
                               _buildSortTabs(
                                 padding:
-                                    const EdgeInsets.fromLTRB(20, 12, 20, 0),
+                                    const EdgeInsets.fromLTRB(20, 4, 20, 0),
                               ),
                               _buildCategoryRow(
                                 categories,
                                 followedIds,
                                 padding:
-                                    const EdgeInsets.fromLTRB(16, 6, 16, 10),
+                                    const EdgeInsets.fromLTRB(16, 0, 16, 4),
                               ),
                             ],
                           )
@@ -499,6 +514,9 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
       centerTitle: false,
       titleSpacing: 16,
       backgroundColor: kc.canvas,
+      // The feed draws its own hairline when the list moves; no extra
+      // scrolled-under shadow on top of it.
+      scrolledUnderElevation: 0,
       shape: _scrolled || !_showTopBar
           ? Border(bottom: BorderSide(color: kc.outlineVariant))
           : null,
@@ -603,7 +621,8 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
           children: [
             if (isDisconnected) _buildDisconnectedBanner(),
             const BannerAdWidget(),
-            // Sticky header: tabs + category chips.
+            // Sticky header: tabs + category chips. The top padding puts the
+            // tab labels on the side-nav logo row (logo centre y = 54).
             AnimatedContainer(
               duration: KararMotion.d(context, KararMotion.fast),
               decoration: BoxDecoration(
@@ -616,7 +635,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
                   ),
                 ),
               ),
-              padding: const EdgeInsets.only(top: 12),
+              padding: const EdgeInsets.only(top: _desktopTopInset),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -635,38 +654,80 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
           ],
         );
 
-        return Align(
-          alignment: Alignment.topCenter,
-          child: SizedBox(
-            width: showRail ? feedWidth + gap + railWidth : feedWidth,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                SizedBox(width: feedWidth, child: feedColumn),
-                if (showRail) ...[
-                  SizedBox(width: gap),
-                  SizedBox(width: railWidth, child: _buildRightPanel()),
-                ],
-              ],
-            ),
+        final totalWidth = showRail ? feedWidth + gap + railWidth : feedWidth;
+
+        // Back-to-top sits in the gutter just right of the feed column
+        // (20 px from the cards' edge), bottom-aligned, instead of the far
+        // window corner; clamped inside the window when there is no room.
+        const fabSize = 48.0;
+        final columnLeft = (constraints.maxWidth - totalWidth) / 2;
+        final fabLeft = math.max(
+          0.0,
+          math.min(
+            columnLeft + feedWidth + 12,
+            constraints.maxWidth - fabSize - 16,
           ),
+        );
+
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            Align(
+              alignment: Alignment.topCenter,
+              child: SizedBox(
+                width: totalWidth,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    SizedBox(width: feedWidth, child: feedColumn),
+                    if (showRail) ...[
+                      SizedBox(width: gap),
+                      SizedBox(width: railWidth, child: _buildRightPanel()),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              left: fabLeft,
+              bottom: context.navBottomInset + 24,
+              child: _BackToTopButton(
+                visible: _showFab,
+                onPressed: _scrollToTop,
+              ),
+            ),
+          ],
         );
       },
     );
   }
 
+  /// Desktop: top padding of the sticky feed header and the right rail, so
+  /// the tab labels, the hero card and the side-nav logo share one line.
+  static const double _desktopTopInset = 34;
+
   Widget _buildRightPanel() {
-    return SingleChildScrollView(
-      padding: EdgeInsets.fromLTRB(0, 20, 0, context.navBottomInset + 24),
-      child: const Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          WeeklyFeaturedCard(margin: EdgeInsets.zero),
-          SizedBox(height: 16),
-          TrendTopicsPanel(margin: EdgeInsets.zero),
-          SizedBox(height: 16),
-          _FooterLinks(),
-        ],
+    // Shadows of the rail cards may bleed sideways; the scroll view still
+    // clips vertically (HorizontalBleedClip) when the rail overflows.
+    return HorizontalBleedClip(
+      child: SingleChildScrollView(
+        clipBehavior: Clip.none,
+        padding: EdgeInsets.fromLTRB(
+          0,
+          _desktopTopInset,
+          0,
+          context.navBottomInset + 24,
+        ),
+        child: const Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            WeeklyFeaturedCard(margin: EdgeInsets.zero),
+            SizedBox(height: 16),
+            TrendTopicsPanel(margin: EdgeInsets.zero),
+            SizedBox(height: 20),
+            _FooterLinks(),
+          ],
+        ),
       ),
     );
   }
@@ -853,61 +914,69 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
     final reduceMotion = KararMotion.reduce(context);
     final seenPosts = ref.watch(historyProvider);
 
-    final listView = RefreshIndicator(
-      onRefresh: _onRefresh,
-      child: BackdropGroup(
-        child: ListView.separated(
-          controller: _scrollController,
-          padding: EdgeInsets.fromLTRB(0, 4, 0, bottomPadding),
-          itemCount: posts.length + (feedState.isLoadingMore ? 1 : 0),
-          separatorBuilder: (_, __) =>
-              const SizedBox(height: KararSpace.feedGap),
-          itemBuilder: (context, index) {
-            if (index >= posts.length) {
-              return Padding(
-                padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
-                child: FeedCardSkeleton(
-                  height: isDesktop ? 400 : 440,
-                  compact: isDesktop,
+    // The cards' glow / photo shadows reach ~30 px past their edges; the
+    // viewport only clips vertically so they never stop in a straight line
+    // down the page (HorizontalBleedClip + Clip.none).
+    final listView = HorizontalBleedClip(
+      child: RefreshIndicator(
+        onRefresh: _onRefresh,
+        child: BackdropGroup(
+          child: ListView.separated(
+            clipBehavior: Clip.none,
+            controller: _scrollController,
+            padding: EdgeInsets.fromLTRB(0, 4, 0, bottomPadding),
+            itemCount: posts.length + (feedState.isLoadingMore ? 1 : 0),
+            separatorBuilder: (_, __) =>
+                const SizedBox(height: KararSpace.feedGap),
+            itemBuilder: (context, index) {
+              if (index >= posts.length) {
+                return Padding(
+                  padding:
+                      EdgeInsets.symmetric(horizontal: horizontalPadding),
+                  child: FeedCardSkeleton(
+                    height: isDesktop ? 400 : 440,
+                    compact: isDesktop,
+                  ),
+                );
+              }
+              final post = posts[index];
+              final itemKey = _itemKeys.putIfAbsent(index, () => GlobalKey());
+              Widget card = PostCard(
+                post: post,
+                isSeen: seenPosts.contains(post.id),
+                isFocused: focusedIndex == index,
+                showFirstVoteCoachmark: showFirstVoteCoachmark && index == 0,
+                onDismissFirstVoteCoachmark: _completeFirstVoteCoachmark,
+                onVote: (voteType) => _voteFromFeed(post, voteType),
+                onTap: () =>
+                    context.push('/posts/${post.id}?source=feed', extra: post),
+              );
+              if (!reduceMotion) {
+                card = card
+                    .animate(
+                      delay: Duration(milliseconds: (40 * index.clamp(0, 5))),
+                    )
+                    .fadeIn(
+                      duration: KararMotion.base,
+                      curve: KararMotion.standard,
+                    )
+                    .slideY(
+                      begin: 0.04,
+                      end: 0,
+                      duration: KararMotion.base,
+                      curve: KararMotion.standard,
+                    );
+              }
+              return KeyedSubtree(
+                key: itemKey,
+                child: Padding(
+                  padding:
+                      EdgeInsets.symmetric(horizontal: horizontalPadding),
+                  child: card,
                 ),
               );
-            }
-            final post = posts[index];
-            final itemKey = _itemKeys.putIfAbsent(index, () => GlobalKey());
-            Widget card = PostCard(
-              post: post,
-              isSeen: seenPosts.contains(post.id),
-              isFocused: focusedIndex == index,
-              showFirstVoteCoachmark: showFirstVoteCoachmark && index == 0,
-              onDismissFirstVoteCoachmark: _completeFirstVoteCoachmark,
-              onVote: (voteType) => _voteFromFeed(post, voteType),
-              onTap: () =>
-                  context.push('/posts/${post.id}?source=feed', extra: post),
-            );
-            if (!reduceMotion) {
-              card = card
-                  .animate(
-                    delay: Duration(milliseconds: (40 * index.clamp(0, 5))),
-                  )
-                  .fadeIn(
-                    duration: KararMotion.base,
-                    curve: KararMotion.standard,
-                  )
-                  .slideY(
-                    begin: 0.04,
-                    end: 0,
-                    duration: KararMotion.base,
-                    curve: KararMotion.standard,
-                  );
-            }
-            return KeyedSubtree(
-              key: itemKey,
-              child: Padding(
-                padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
-                child: card,
-              ),
-            );
-          },
+            },
+          ),
         ),
       ),
     );
@@ -960,7 +1029,7 @@ class _IdentityPill extends StatelessWidget {
           Container(
             width: 32,
             height: 32,
-            decoration: BoxDecoration(color: kc.surface, shape: BoxShape.circle),
+            decoration: BoxDecoration(color: kc.raised, shape: BoxShape.circle),
             alignment: Alignment.center,
             child: Icon(
               Icons.person_outline_rounded,
@@ -1171,7 +1240,10 @@ class _FallbackBanner extends StatelessWidget {
   }
 }
 
-/// Desktop right-rail footer: legal links separated by " · ".
+/// Desktop right-rail footer: legal links in a compact wrap. No " · "
+/// separators (they dangled at line ends); the 12 px gap separates them.
+/// Each link keeps a 44 px hit box; the negative run spacing lets the boxes
+/// of adjacent lines overlap so the text lines sit 34 px apart.
 class _FooterLinks extends StatelessWidget {
   const _FooterLinks();
 
@@ -1188,25 +1260,25 @@ class _FooterLinks extends StatelessWidget {
     final kc = context.kc;
     final style = AppTypography.meta.copyWith(color: kc.text3);
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 6),
       child: Wrap(
+        spacing: 8,
+        runSpacing: -10,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          for (var i = 0; i < _links.length; i++) ...[
-            if (i > 0)
-              ExcludeSemantics(child: Text(' · ', style: style)),
+          for (final link in _links)
             TextButton(
-              onPressed: () => context.push(_links[i].$2),
+              onPressed: () => context.push(link.$2),
               style: TextButton.styleFrom(
                 foregroundColor: kc.text3,
                 minimumSize: const Size(0, 44),
                 padding: const EdgeInsets.symmetric(horizontal: 4),
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.standard,
                 textStyle: style,
               ),
-              child: Text(_links[i].$1),
+              child: Text(link.$1),
             ),
-          ],
         ],
       ),
     );
@@ -1256,12 +1328,12 @@ class _NewPostsBanner extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.arrow_upward_rounded, color: Colors.white, size: 16),
+            Icon(Icons.arrow_upward_rounded, color: kc.onColor, size: 16),
             const SizedBox(width: 6),
             Text(
               '$count yeni gönderi',
               style: AppTypography.labelS.copyWith(
-                color: Colors.white,
+                color: kc.onColor,
                 fontWeight: FontWeight.w800,
               ),
             ),

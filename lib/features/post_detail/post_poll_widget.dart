@@ -91,6 +91,13 @@ class _PollOptionTile extends StatelessWidget {
     final percent = totalVotes == 0 ? 0.0 : option.voteCount / totalVotes;
     final percentLabel = '%${(percent * 100).round()}';
     final radius = KararRadius.all(26);
+    // Share fill: brand tint over the muted pill. primaryContainer is only
+    // 1.03:1 off muted in both themes, so the bar would be invisible.
+    // Labels on it stay ≥ 4.5:1 (primaryText 4.64 / 4.52, text2 4.88 / 5.88).
+    final shareFill = Color.alphaBlend(
+      kc.primaryFill.withValues(alpha: kc.isDark ? 0.24 : 0.16),
+      kc.muted,
+    );
 
     final pill = Container(
       constraints: const BoxConstraints(minHeight: 52),
@@ -117,7 +124,7 @@ class _PollOptionTile extends StatelessWidget {
                     builder: (context, value, _) => FractionallySizedBox(
                       widthFactor: value.clamp(0.0, 1.0),
                       heightFactor: 1,
-                      child: ColoredBox(color: kc.primaryContainer),
+                      child: ColoredBox(color: shareFill),
                     ),
                   ),
                 ),

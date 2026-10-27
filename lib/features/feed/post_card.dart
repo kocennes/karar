@@ -53,6 +53,7 @@ class PostCard extends ConsumerStatefulWidget {
     this.onDismissFirstVoteCoachmark,
     this.onVote,
     this.variant = PostCardVariant.feature,
+    this.showCategory = true,
   });
 
   final Post post;
@@ -65,6 +66,10 @@ class PostCard extends ConsumerStatefulWidget {
   final VoidCallback? onDismissFirstVoteCoachmark;
   final ValueChanged<VoteType>? onVote;
   final PostCardVariant variant;
+
+  /// Feature variant: show the category chip in the header. Off on a
+  /// category page, where every card is in the same category.
+  final bool showCategory;
 
   @override
   ConsumerState<PostCard> createState() => _PostCardState();
@@ -176,7 +181,9 @@ class _PostCardState extends ConsumerState<PostCard> {
     final isSensitive = post.isSensitive && !_revealSensitive;
     final railSize = isDesktop ? VoteRailSize.compact : VoteRailSize.card;
     final rail = VoteRailMetrics.of(railSize);
-    final rightPad = rail.width + (isDesktop ? 8 : 12);
+    // Text keeps a clear gap to the rail glass (desktop excerpts run 3
+    // lines wide, so they get the same 20 px as the left padding).
+    final rightPad = rail.width + (isDesktop ? 20 : 12);
     const headerHeight = 44.0;
     const headerTop = 12.0;
 
@@ -212,9 +219,9 @@ class _PostCardState extends ConsumerState<PostCard> {
                   onTap: widget.onTap,
                   excludeFromSemantics: true,
                   borderRadius: KararRadius.all(KararRadius.card),
-                  splashColor: Colors.white.withValues(alpha: 0.12),
-                  highlightColor: Colors.white.withValues(alpha: 0.06),
-                  hoverColor: Colors.white.withValues(alpha: 0.04),
+                  splashColor: kc.splashOnColor,
+                  highlightColor: kc.highlightOnColor,
+                  hoverColor: kc.onColor.withValues(alpha: 0.04),
                   focusColor: Colors.transparent,
                 ),
               ),
@@ -232,11 +239,13 @@ class _PostCardState extends ConsumerState<PostCard> {
             Positioned(
               top: headerTop,
               left: 20,
-              right: rightPad - 4,
+              // The "…" button stays just left of the rail's top curve.
+              right: rail.width + (isDesktop ? 4 : 8),
               height: headerHeight,
               child: _FeatureHeader(
                 post: post,
                 onPhoto: isPhoto,
+                showCategory: widget.showCategory,
                 onDeleted: widget.onDeleted,
               ),
             ),
@@ -445,17 +454,19 @@ bool _showSnippet(Post post, String query) =>
 
 // ── Feature card parts ──────────────────────────────────────────────────────
 
-/// Category chip, optional second chip (content source, else ranking label)
-/// and the "…" menu.
+/// Category chip (unless [showCategory] is off), optional second chip
+/// (content source, else ranking label) and the "…" menu.
 class _FeatureHeader extends StatelessWidget {
   const _FeatureHeader({
     required this.post,
     required this.onPhoto,
+    this.showCategory = true,
     this.onDeleted,
   });
 
   final Post post;
   final bool onPhoto;
+  final bool showCategory;
   final VoidCallback? onDeleted;
 
   @override
@@ -486,15 +497,16 @@ class _FeatureHeader extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Flexible(
-                  child: OnColorChip(
-                    icon: style.icon,
-                    label: post.category.name,
-                    blur: onPhoto,
+                if (showCategory)
+                  Flexible(
+                    child: OnColorChip(
+                      icon: style.icon,
+                      label: post.category.name,
+                      blur: onPhoto,
+                    ),
                   ),
-                ),
                 if (second != null) ...[
-                  const SizedBox(width: 6),
+                  if (showCategory) const SizedBox(width: 6),
                   Flexible(child: second),
                 ],
               ],
@@ -528,14 +540,19 @@ class _FeatureBottomBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
     final query = searchQuery ?? '';
+    // Search match on colour: a heavier weight + a 2× white underline (a
+    // `backgroundColor` box is hard-edged and sits high on the line).
     final highlight = TextStyle(
-      backgroundColor: Colors.white.withValues(alpha: 0.25),
-      fontWeight: FontWeight.w800,
+      fontWeight: FontWeight.w900,
+      decoration: TextDecoration.underline,
+      decorationColor: kc.onColor,
+      decorationThickness: 2,
     );
     final titleStyle =
         (isDesktop ? AppTypography.cardTitleDesktop : AppTypography.cardTitle)
-            .copyWith(color: Colors.white);
+            .copyWith(color: kc.onColor);
     final titleLines = isDesktop ? 3 : (isPhoto ? 3 : 4);
     final excerpt = post.content.trim();
 
@@ -565,7 +582,7 @@ class _FeatureBottomBlock extends StatelessWidget {
                   maxLines: isDesktop ? 3 : 2,
                   overflow: TextOverflow.ellipsis,
                   style: AppTypography.bodyS.copyWith(
-                    color: Colors.white,
+                    color: kc.onColor,
                     height: 1.45,
                   ),
                 ),
@@ -575,7 +592,7 @@ class _FeatureBottomBlock extends StatelessWidget {
                   content: post.content,
                   query: query,
                   style: AppTypography.bodyS.copyWith(
-                    color: Colors.white,
+                    color: kc.onColor,
                     height: 1.45,
                   ),
                   highlightStyle: highlight,
@@ -600,6 +617,7 @@ class _AuthorRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final onColor = context.kc.onColor;
     final handle =
         post.isAnonymous ? '@anonim' : '@${post.authorName ?? 'misafir'}';
     return Row(
@@ -620,14 +638,14 @@ class _AuthorRow extends StatelessWidget {
                   text: handle,
                   style: AppTypography.bodyS.copyWith(
                     fontWeight: FontWeight.w700,
-                    color: Colors.white,
+                    color: onColor,
                   ),
                 ),
                 TextSpan(
                   text: ' · ${post.createdAgo}',
                   style: AppTypography.labelS.copyWith(
                     fontWeight: FontWeight.w500,
-                    color: Colors.white,
+                    color: onColor,
                   ),
                 ),
               ],
@@ -654,7 +672,7 @@ class _TagRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final style = AppTypography.labelS.copyWith(
       fontWeight: FontWeight.w800,
-      color: Colors.white,
+      color: context.kc.onColor,
     );
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -727,7 +745,7 @@ class _SensitiveVeil extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.30),
+        color: kc.photoVeil,
         borderRadius: KararRadius.all(KararRadius.tile),
       ),
       child: Row(
@@ -745,7 +763,7 @@ class _SensitiveVeil extends StatelessWidget {
               'Hassas İçerik',
               style: AppTypography.bodyStrong.copyWith(
                 fontWeight: FontWeight.w800,
-                color: Colors.white,
+                color: kc.onColor,
               ),
             ),
           ),
@@ -893,16 +911,17 @@ class _CategoryTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
     return ExcludeSemantics(
       child: Container(
         width: 44,
         height: 44,
         decoration: BoxDecoration(
-          gradient: style.gradient,
+          gradient: style.gradientFor(brightness: kc.brightness),
           borderRadius: KararRadius.all(KararRadius.iconTile),
         ),
         alignment: Alignment.center,
-        child: Icon(style.icon, size: 22, color: Colors.white),
+        child: Icon(style.icon, size: 22, color: kc.onColor),
       ),
     );
   }
@@ -919,7 +938,9 @@ class _PhotoThumb extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fallback = DecoratedBox(
-      decoration: BoxDecoration(gradient: style.gradient),
+      decoration: BoxDecoration(
+        gradient: style.gradientFor(brightness: context.kc.brightness),
+      ),
     );
     final dpr = MediaQuery.devicePixelRatioOf(context);
     return ExcludeSemantics(
@@ -1168,7 +1189,7 @@ class _MoreMenu extends ConsumerWidget {
   ButtonStyle _destructiveStyle(BuildContext context) =>
       FilledButton.styleFrom(
         backgroundColor: context.kc.haksizFill,
-        foregroundColor: Colors.white,
+        foregroundColor: context.kc.onColor,
       );
 
   void _confirmDelete(BuildContext context, WidgetRef ref) {

@@ -1,10 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/category_style.dart';
+import '../../core/theme/karar_tokens.dart';
+import '../../core/theme/motion.dart';
 import '../../shared/models/post.dart';
+import '../../shared/widgets/karar_button.dart';
+import '../../shared/widgets/karar_chip.dart';
 import '../feed/categories_provider.dart';
 
 const _kOnboardingDone = 'onboarding_done';
@@ -19,6 +25,11 @@ Future<void> markOnboardingDone() async {
   await prefs.setBool(_kOnboardingDone, true);
 }
 
+/// Onboarding (spec §6.10): three full-bleed gradient steps (violet,
+/// magenta, ocean — the dark-tuned stops in dark mode) with white text, then
+/// the category step on the canvas. The bottom controls (step pills, CTA,
+/// login link) and "Atla" float over the pages and switch between their
+/// on-colour and on-canvas looks with the page.
 class OnboardingScreen extends ConsumerStatefulWidget {
   const OnboardingScreen({super.key});
 
@@ -33,19 +44,19 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   static const _steps = [
     _OnboardingStep(
-      emoji: '⚖️',
+      icon: Icons.balance_rounded,
       title: 'Karar nedir?',
       description: 'Gerçek hayat çatışmalarını anlat. Kim haklı, kim haksız? '
           'Topluluk oy versin, karar çıksın.',
     ),
     _OnboardingStep(
-      emoji: '✅❌',
+      icon: Icons.how_to_vote_rounded,
       title: 'Nasıl oylanır?',
       description: 'Her paylaşıma "Haklı" veya "Haksız" oyu ver. '
           '40 oy sonrasında sonuçlar açılır, topluluk kararını görürsün.',
     ),
     _OnboardingStep(
-      emoji: '🕶️',
+      icon: Icons.visibility_off_rounded,
       title: 'Tamamen anonim',
       description: 'Hesap açmadan katılabilirsin. Oylar gizli, '
           'kimse kimin ne oyladığını göremez. Sadece dürüst kararlar.',
@@ -54,12 +65,23 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   static const _totalPages = 4; // 3 intro + 1 category
 
+  /// Height reserved under the pages for the floating bottom controls
+  /// (pills 8 + 20 + CTA 56 + login link 4 + 44 + vertical padding).
+  static const _controlsRoom = 176.0;
+
+  /// Height reserved above the pages for the "Atla" button row.
+  static const _topRoom = 60.0;
+
   void _next() {
     if (_page < _totalPages - 1) {
-      _controller.nextPage(
-        duration: const Duration(milliseconds: 350),
-        curve: Curves.easeOutCubic,
-      );
+      if (KararMotion.reduce(context)) {
+        _controller.jumpToPage(_page + 1);
+      } else {
+        _controller.nextPage(
+          duration: KararMotion.split,
+          curve: KararMotion.emphasized,
+        );
+      }
     } else {
       _finish();
     }
@@ -97,92 +119,151 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: SafeArea(
-        child: Column(
+    final kc = context.kc;
+    final onColour = _page < _steps.length;
+    final ctaLabel = _isLastPage
+        ? (_selectedCategories.isEmpty ? 'Başla' : 'Devam')
+        : 'Devam';
+    final fadeDuration = KararMotion.fade(context, KararMotion.base);
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: onColour || kc.isDark
+          ? SystemUiOverlayStyle.light
+          : SystemUiOverlayStyle.dark,
+      child: Scaffold(
+        backgroundColor: kc.canvas,
+        body: Stack(
           children: [
-            Align(
-              alignment: Alignment.topRight,
-              child: TextButton(
-                onPressed: () async {
-                  await markOnboardingDone();
-                  if (!context.mounted) return;
-                  context.go('/');
-                },
-                child: const Text('Atla'),
-              ),
-            ),
-            Expanded(
+            Positioned.fill(
               child: PageView.builder(
                 controller: _controller,
                 onPageChanged: (p) => setState(() => _page = p),
                 itemCount: _totalPages,
                 itemBuilder: (_, i) => i < _steps.length
-                    ? _StepPage(step: _steps[i])
+                    ? _StepPage(
+                        step: _steps[i],
+                        style: CategoryStyle.cycle(i),
+                        topRoom: _topRoom,
+                        bottomRoom: _controlsRoom,
+                      )
                     : _CategoryStep(
                         selected: _selectedCategories,
                         onToggle: _toggleCategory,
+                        topRoom: _topRoom,
+                        bottomRoom: _controlsRoom,
                       ),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-              child: Column(
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: List.generate(
-                      _totalPages,
-                      (i) => AnimatedContainer(
-                        duration: const Duration(milliseconds: 250),
-                        margin: const EdgeInsets.symmetric(horizontal: 4),
-                        width: _page == i ? 24 : 8,
-                        height: 8,
-                        decoration: BoxDecoration(
-                          color:
-                              _page == i ? AppColors.accent : AppColors.border,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
+
+            // "Atla"
+            Positioned(
+              top: 0,
+              right: 0,
+              child: SafeArea(
+                bottom: false,
+                left: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(0, 8, 12, 0),
+                  child: TextButton(
+                    onPressed: () async {
+                      await markOnboardingDone();
+                      if (!context.mounted) return;
+                      context.go('/');
+                    },
+                    style: onColour
+                        ? TextButton.styleFrom(
+                            foregroundColor: kc.onColor,
+                            overlayColor: kc.onColor,
+                          )
+                        : null,
+                    child: const Text('Atla'),
+                  ),
+                ),
+              ),
+            ),
+
+            // Step pills, CTA, login link.
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: SafeArea(
+                top: false,
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 440),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ExcludeSemantics(
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: List.generate(
+                                _totalPages,
+                                (i) => AnimatedContainer(
+                                  duration: KararMotion.d(
+                                    context,
+                                    KararMotion.base,
+                                  ),
+                                  curve: KararMotion.standard,
+                                  margin: const EdgeInsets.symmetric(
+                                    horizontal: 4,
+                                  ),
+                                  width: _page == i ? 24 : 8,
+                                  height: 8,
+                                  decoration: BoxDecoration(
+                                    color: onColour
+                                        ? (_page == i
+                                            ? kc.onColor
+                                            : kc.onColor.withValues(
+                                                alpha: 0.42,
+                                              ))
+                                        : (_page == i
+                                            ? kc.primary
+                                            : kc.outline),
+                                    borderRadius: KararRadius.all(4),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          SizedBox(
+                            width: double.infinity,
+                            child: AnimatedSwitcher(
+                              duration: fadeDuration,
+                              child: onColour
+                                  ? _CapsuleButton(
+                                      key: const ValueKey('cta_on_colour'),
+                                      label: ctaLabel,
+                                      onPressed: _next,
+                                    )
+                                  : KararButton(
+                                      key: const ValueKey('cta_on_canvas'),
+                                      label: ctaLabel,
+                                      size: KararButtonSize.large,
+                                      onPressed: _next,
+                                    ),
+                            ),
+                          ),
+                          if (_isLastPage) ...[
+                            const SizedBox(height: 4),
+                            TextButton(
+                              onPressed: () async {
+                                await markOnboardingDone();
+                                if (!context.mounted) return;
+                                context.go('/auth/login');
+                              },
+                              child: const Text('Hesabın varsa Giriş Yap'),
+                            ),
+                          ],
+                        ],
                       ),
                     ),
                   ),
-                  const SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton(
-                      onPressed: _next,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: AppColors.accent,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: Text(
-                        _isLastPage
-                            ? (_selectedCategories.isEmpty
-                                ? 'Başla'
-                                : 'Devam')
-                            : 'Devam',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ),
-                  if (_isLastPage) ...[
-                    const SizedBox(height: 12),
-                    TextButton(
-                      onPressed: () async {
-                        await markOnboardingDone();
-                        if (!context.mounted) return;
-                        context.go('/auth/login');
-                      },
-                      child: const Text('Hesabın varsa Giriş Yap'),
-                    ),
-                  ],
-                ],
+                ),
               ),
             ),
           ],
@@ -192,63 +273,127 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   }
 }
 
+/// 56 px light capsule CTA on the gradient steps: `capsule` (white in
+/// light, dimmed #E4E1EC in dark — no glare) with #15131F text (≥ 14:1).
+/// Not red: red reads as "Haksız".
+class _CapsuleButton extends StatelessWidget {
+  const _CapsuleButton({
+    super.key,
+    required this.label,
+    required this.onPressed,
+  });
+
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final kc = context.kc;
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        borderRadius: KararRadius.all(KararRadius.pill),
+        boxShadow: KararShadow.capsule,
+      ),
+      child: FilledButton(
+        onPressed: onPressed,
+        style: FilledButton.styleFrom(
+          backgroundColor: kc.capsule,
+          foregroundColor: kc.onCapsuleText,
+          overlayColor: kc.onCapsuleText,
+          minimumSize: const Size(64, 56),
+          shape: const StadiumBorder(),
+          textStyle: AppTypography.buttonL,
+          elevation: 0,
+        ),
+        child: Text(label),
+      ),
+    );
+  }
+}
+
 class _CategoryStep extends ConsumerWidget {
   const _CategoryStep({
     required this.selected,
     required this.onToggle,
+    required this.topRoom,
+    required this.bottomRoom,
   });
 
   final Set<int> selected;
   final void Function(int) onToggle;
+  final double topRoom;
+  final double bottomRoom;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final kc = context.kc;
     final categoriesAsync = ref.watch(categoriesProvider);
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(height: 16),
-          const Text(
-            '🎯',
-            style: TextStyle(fontSize: 56),
-          ),
-          const SizedBox(height: 20),
-          Text(
-            'Neleri takip etmek istersin?',
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w900,
-                  color: AppColors.textPrimary,
-                ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Seçtiğin kategoriler akışında öne çıkar. İstediğin zaman değiştirebilirsin.',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: AppColors.textSecondary,
-                  height: 1.5,
-                ),
-          ),
-          const SizedBox(height: 24),
-          Expanded(
-            child: categoriesAsync.when(
-              data: (categories) => _CategoryGrid(
-                categories: categories,
-                selected: selected,
-                onToggle: onToggle,
-              ),
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (_, __) => const Center(
-                child: Text(
-                  'Kategoriler yüklenemedi.',
-                  style: TextStyle(color: AppColors.textSecondary),
-                ),
+    return ColoredBox(
+      color: kc.canvas,
+      child: SafeArea(
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560),
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(24, topRoom, 24, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ExcludeSemantics(
+                    child: Container(
+                      width: 56,
+                      height: 56,
+                      decoration: BoxDecoration(
+                        color: kc.primaryContainer,
+                        borderRadius: KararRadius.all(KararRadius.tile),
+                      ),
+                      child: Icon(
+                        Icons.interests_rounded,
+                        size: 28,
+                        color: kc.primaryText,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Semantics(
+                    header: true,
+                    child: Text(
+                      'Neleri takip etmek istersin?',
+                      style: AppTypography.titleXL.copyWith(color: kc.text1),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Seçtiğin kategoriler akışında öne çıkar. İstediğin zaman değiştirebilirsin.',
+                    style: AppTypography.bodyL.copyWith(color: kc.text2),
+                  ),
+                  const SizedBox(height: 24),
+                  Expanded(
+                    child: categoriesAsync.when(
+                      data: (categories) => _CategoryGrid(
+                        categories: categories,
+                        selected: selected,
+                        onToggle: onToggle,
+                        bottomRoom: bottomRoom,
+                      ),
+                      loading: () =>
+                          const Center(child: CircularProgressIndicator()),
+                      error: (_, __) => Center(
+                        child: Text(
+                          'Kategoriler yüklenemedi.',
+                          style: AppTypography.body.copyWith(color: kc.text2),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -259,39 +404,32 @@ class _CategoryGrid extends StatelessWidget {
     required this.categories,
     required this.selected,
     required this.onToggle,
+    required this.bottomRoom,
   });
 
   final List<Category> categories;
   final Set<int> selected;
   final void Function(int) onToggle;
+  final double bottomRoom;
 
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
+      padding: EdgeInsets.only(bottom: bottomRoom),
       child: Wrap(
-        spacing: 10,
-        runSpacing: 10,
+        spacing: KararSpace.s8,
+        runSpacing: KararSpace.s4,
         children: categories.map((cat) {
           final isSelected = selected.contains(cat.id);
-          return FilterChip(
-            label: Text('${cat.icon} ${cat.name}'),
+          final style = CategoryStyle.of(cat);
+          // Names only: `cat.icon` holds short words ("Aşk", "İş"), not
+          // glyphs, so it is never rendered as text.
+          return KararChip(
+            label: cat.name,
+            icon: isSelected ? style.icon : style.iconOutlined,
             selected: isSelected,
-            onSelected: (_) => onToggle(cat.id),
-            selectedColor: AppColors.accent.withValues(alpha: 0.18),
-            checkmarkColor: AppColors.accent,
-            labelStyle: TextStyle(
-              fontWeight:
-                  isSelected ? FontWeight.w700 : FontWeight.normal,
-              color: isSelected ? AppColors.accent : null,
-            ),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-              side: BorderSide(
-                color: isSelected
-                    ? AppColors.accent
-                    : Theme.of(context).colorScheme.outlineVariant,
-              ),
-            ),
+            tone: KararChipTone.category(style),
+            onTap: () => onToggle(cat.id),
           );
         }).toList(),
       ),
@@ -301,51 +439,107 @@ class _CategoryGrid extends StatelessWidget {
 
 class _OnboardingStep {
   const _OnboardingStep({
-    required this.emoji,
+    required this.icon,
     required this.title,
     required this.description,
   });
 
-  final String emoji;
+  final IconData icon;
   final String title;
   final String description;
 }
 
+/// One full-bleed gradient step: 120 px white-25 % disc with a 56 px white
+/// glyph, 30/800 white title, 16/500 white body (white on every dark-tuned
+/// stop ≥ 5.88:1).
 class _StepPage extends StatelessWidget {
-  const _StepPage({required this.step});
+  const _StepPage({
+    required this.step,
+    required this.style,
+    required this.topRoom,
+    required this.bottomRoom,
+  });
+
   final _OnboardingStep step;
+  final CategoryStyle style;
+  final double topRoom;
+  final double bottomRoom;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 32),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(
-            step.emoji,
-            style: const TextStyle(fontSize: 72),
+    final kc = context.kc;
+    final brightness = Theme.of(context).brightness;
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        ExcludeSemantics(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: style.gradientFor(brightness: brightness),
+            ),
           ),
-          const SizedBox(height: 32),
-          Text(
-            step.title,
-            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.w900,
-                  color: AppColors.textPrimary,
+        ),
+        ExcludeSemantics(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: kc.isDark
+                  ? KararGradients.cardSheenDark
+                  : KararGradients.cardSheen,
+            ),
+          ),
+        ),
+        SafeArea(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(32, topRoom, 32, bottomRoom),
+            child: Center(
+              child: SingleChildScrollView(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 420),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ExcludeSemantics(
+                        child: Container(
+                          width: 120,
+                          height: 120,
+                          decoration: BoxDecoration(
+                            color: kc.onColorSoft,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(step.icon, size: 56, color: kc.onColor),
+                        ),
+                      ),
+                      const SizedBox(height: 32),
+                      Semantics(
+                        header: true,
+                        child: Text(
+                          step.title,
+                          textAlign: TextAlign.center,
+                          style: AppTypography.display.copyWith(
+                            fontSize: 30,
+                            height: 36 / 30,
+                            color: kc.onColor,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        step.description,
+                        textAlign: TextAlign.center,
+                        style: AppTypography.bodyL.copyWith(
+                          fontWeight: FontWeight.w500,
+                          color: kc.onColor,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-            textAlign: TextAlign.center,
+              ),
+            ),
           ),
-          const SizedBox(height: 16),
-          Text(
-            step.description,
-            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: AppColors.textSecondary,
-                  height: 1.6,
-                ),
-            textAlign: TextAlign.center,
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

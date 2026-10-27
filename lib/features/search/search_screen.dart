@@ -141,39 +141,59 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
         postState.dateRange != null ||
         postState.sort != 'relevance';
 
+    final canPop = ModalRoute.of(context)?.impliesAppBarDismissal ?? false;
+
     return Scaffold(
       appBar: AppBar(
-        titleSpacing:
-            (ModalRoute.of(context)?.impliesAppBarDismissal ?? false) ? 0 : 16,
+        titleSpacing: 0,
         centerTitle: false,
-        title: Padding(
-          padding: EdgeInsets.only(right: showFilter ? 4 : 8),
-          child: _SearchField(
-            controller: _controller,
-            onChanged: _onChanged,
-            onSubmitted: _submit,
-            onClear: () {
-              _controller.clear();
-              ref.read(searchProvider.notifier).clear();
-              ref.read(userSearchProvider.notifier).clear();
-              setState(() {});
-            },
-          ),
-        ),
-        actions: [
-          if (showFilter)
-            Padding(
-              padding: const EdgeInsets.only(right: 4),
-              child: KararCircleButton(
-                icon: Icons.tune_rounded,
-                tooltip: 'Filtrele',
-                style: KararCircleStyle.muted,
-                onPressed: _showFilters,
-                selected: filtersActive,
-                badge: filtersActive ? const _ActiveDot() : null,
+        // 76 px toolbar: the 52 px pill gets 12 px above and below, so its
+        // soft shadow is not cut by the bar (Clip.none lets the tail fall
+        // onto the content instead of ending in a hard line).
+        toolbarHeight: 76,
+        clipBehavior: Clip.none,
+        actionsPadding: EdgeInsets.zero,
+        // Field + filter button share the 680 px content column on desktop,
+        // so the pill, the tabs and the result cards line up.
+        title: Align(
+          alignment: Alignment.center,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 680),
+            child: Padding(
+              padding:
+                  EdgeInsetsDirectional.fromSTEB(canPop ? 0 : 16, 0, 16, 0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _SearchField(
+                      controller: _controller,
+                      onChanged: _onChanged,
+                      onSubmitted: _submit,
+                      onClear: () {
+                        _controller.clear();
+                        ref.read(searchProvider.notifier).clear();
+                        ref.read(userSearchProvider.notifier).clear();
+                        setState(() {});
+                      },
+                    ),
+                  ),
+                  if (showFilter) ...[
+                    const SizedBox(width: 8),
+                    KararCircleButton(
+                      icon: Icons.tune_rounded,
+                      tooltip: 'Filtrele',
+                      style: KararCircleStyle.muted,
+                      size: 48,
+                      onPressed: _showFilters,
+                      selected: filtersActive,
+                      badge: filtersActive ? const _ActiveDot() : null,
+                    ),
+                  ],
+                ],
               ),
             ),
-        ],
+          ),
+        ),
         bottom: hasQuery
             ? PreferredSize(
                 preferredSize: const Size.fromHeight(64),
@@ -203,14 +223,25 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
               )
             : null,
       ),
+      // Results: the column is 16 px wider on each side and the lists pad
+      // 16 px more, so the cards keep the field's edges while their soft
+      // shadows fade out inside the (clipping) TabBarView.
       body: CenteredContent(
+        maxWidth: hasQuery ? 680 + 2 * _shadowRoom : 680,
         child: hasQuery
-            ? TabBarView(
-                controller: _tabController,
-                children: [
-                  _buildPostResults(postState),
-                  _buildUserResults(userState),
-                ],
+            ? LayoutBuilder(
+                builder: (context, constraints) {
+                  final extra = ((constraints.maxWidth - 680) / 2)
+                      .clamp(0.0, _shadowRoom);
+                  final pad = 16 + extra;
+                  return TabBarView(
+                    controller: _tabController,
+                    children: [
+                      _buildPostResults(postState, pad),
+                      _buildUserResults(userState, pad),
+                    ],
+                  );
+                },
               )
             : _EmptyQueryView(
                 history: _history,
@@ -222,13 +253,21 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
     );
   }
 
-  EdgeInsets _listPadding(BuildContext context) =>
-      EdgeInsets.fromLTRB(16, 8, 16, context.navBottomInset + 24);
+  /// Extra side room for card shadows on wide layouts.
+  static const double _shadowRoom = 16;
 
-  Widget _buildPostResults(SearchState state) {
+  EdgeInsets _listPadding(BuildContext context, double horizontal) =>
+      EdgeInsets.fromLTRB(
+        horizontal,
+        8,
+        horizontal,
+        context.navBottomInset + 24,
+      );
+
+  Widget _buildPostResults(SearchState state, double hPad) {
     if (state.isLoading) {
       return ListView.separated(
-        padding: _listPadding(context),
+        padding: _listPadding(context, hPad),
         itemCount: 4,
         separatorBuilder: (_, __) => const SizedBox(height: 12),
         itemBuilder: (_, __) => const PostCardSkeleton(),
@@ -246,16 +285,17 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
       );
     }
 
+    // Compact result rows (spec §6.7): a scannable list instead of one
+    // full-height feature card per screen.
     return ListView.separated(
-      padding: _listPadding(context),
+      padding: _listPadding(context, hPad),
       itemCount: state.results.length,
-      separatorBuilder: (_, __) => const SizedBox(height: KararSpace.feedGap),
+      separatorBuilder: (_, __) => const SizedBox(height: 12),
       itemBuilder: (context, index) {
         final post = state.results[index];
-        // TODO(owner A): switch to `variant: PostCardVariant.compact` once
-        // the compact post card lands (spec §5.4 / §6.7).
         return PostCard(
           post: post,
+          variant: PostCardVariant.compact,
           searchQuery: state.query,
           onTap: () =>
               context.push('/posts/${post.id}?source=search', extra: post),
@@ -264,10 +304,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
     );
   }
 
-  Widget _buildUserResults(UserSearchState state) {
+  Widget _buildUserResults(UserSearchState state, double hPad) {
     if (state.isLoading) {
       return ListView.separated(
-        padding: _listPadding(context),
+        padding: _listPadding(context, hPad),
         itemCount: 5,
         separatorBuilder: (_, __) => const SizedBox(height: 4),
         itemBuilder: (_, __) => const _UserResultSkeleton(),
@@ -292,7 +332,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
     }
 
     return ListView.builder(
-      padding: _listPadding(context),
+      padding: _listPadding(context, hPad),
       itemCount: state.results.length,
       itemBuilder: (context, index) {
         final user = state.results[index];
@@ -789,25 +829,22 @@ class _EmptyQueryView extends ConsumerWidget {
             child: _MessageView(message: 'Trendler yüklenemedi.'),
           ),
         ),
+        // The hint sits 24 px under the trend list, close to what it
+        // explains, instead of floating in the middle of the empty space.
         if (history.isEmpty && !trendTopicsAsync.isLoading)
-          SliverFillRemaining(
-            hasScrollBody: false,
-            child: Center(
-              child: Padding(
-                padding: EdgeInsets.fromLTRB(
-                    32, 32, 32, 32 + context.navBottomInset),
-                child: Text(
-                  'En az 3 karakter yazarak aramaya başla.',
-                  textAlign: TextAlign.center,
-                  style: AppTypography.bodyS.copyWith(color: kc.text3),
-                ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(32, 24, 32, 0),
+              child: Text(
+                'En az 3 karakter yazarak aramaya başla.',
+                textAlign: TextAlign.center,
+                style: AppTypography.bodyS.copyWith(color: kc.text3),
               ),
             ),
-          )
-        else
-          SliverToBoxAdapter(
-            child: SizedBox(height: context.navBottomInset + 24),
           ),
+        SliverToBoxAdapter(
+          child: SizedBox(height: context.navBottomInset + 24),
+        ),
       ],
     );
   }
@@ -896,7 +933,9 @@ class _TrendRow extends StatelessWidget {
                   height: 44,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    gradient: CategoryStyle.cycle(rank).gradient,
+                    gradient: CategoryStyle.cycle(rank).gradientFor(
+                      brightness: Theme.of(context).brightness,
+                    ),
                     borderRadius: KararRadius.all(KararRadius.iconTile),
                   ),
                   child: Text(
@@ -904,7 +943,7 @@ class _TrendRow extends StatelessWidget {
                     textScaler: TextScaler.noScaling,
                     style: AppTypography.headline.copyWith(
                       fontSize: 18,
-                      color: Colors.white,
+                      color: kc.onColor,
                     ),
                   ),
                 ),

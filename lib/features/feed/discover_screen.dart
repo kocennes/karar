@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -19,6 +20,7 @@ import '../../shared/widgets/karar_avatar.dart';
 import '../../shared/widgets/karar_circle_button.dart';
 import '../../shared/widgets/karar_pressable.dart';
 import '../../shared/widgets/karar_sheet.dart';
+import '../../shared/widgets/karar_top_bar.dart';
 import '../../shared/widgets/on_color_chip.dart';
 import '../../shared/widgets/post_surface.dart';
 import '../../shared/widgets/verdict_chip.dart';
@@ -258,6 +260,11 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen>
     return Scaffold(
       backgroundColor: context.kc.canvas,
       appBar: AppBar(
+        // Canvas bar that gains the frosted fill + hairline (spec §2.8)
+        // once the sections list scrolls under it, like the other tabs.
+        backgroundColor: Colors.transparent,
+        scrolledUnderElevation: 0,
+        flexibleSpace: const KararTopBarBackground(),
         title: const Text('Keşfet'),
         centerTitle: true,
         actions: [
@@ -610,18 +617,19 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
   /// Room for the 3 px focus ring + 3 px gap inside the scrolling block.
   static const _ringRoom = 6.0;
 
-  /// Extra photo scrim behind the tall Keşfet text block (on top of the
-  /// card scrim from `PostSurface`), so author/meta text stays ≥ 4.5:1 over
-  /// bright photos when the block starts around the middle of the page.
-  static final _textScrim = LinearGradient(
-    begin: Alignment.topCenter,
-    end: Alignment.bottomCenter,
-    colors: [
-      KararColors.dark.scrim.withValues(alpha: 0),
-      KararColors.dark.scrim,
-    ],
-    stops: const [0.22, 0.62],
-  );
+  /// Photo pages — top scrim: black 45 % under the status bar, eased to 0
+  /// over the chip row + [_topScrimTail] px. On a white sky the chips
+  /// (28 % glass + this scrim) keep their white labels ≥ 4.5:1.
+  static const _topScrimAlpha = 0.45;
+  static const _topScrimTail = 56.0;
+
+  /// Photo pages — bottom scrim behind the text block: eased in over
+  /// [_blockScrimLead] px above the block to 55 % black at the block's top
+  /// edge (white 14 px meta 4.75:1 over pure white), then 72 % at the
+  /// bottom. The photo above the block stays untouched.
+  static const _blockScrimLead = 88.0;
+  static const _blockScrimTopAlpha = 0.55;
+  static const _blockScrimBottomAlpha = 0.72;
 
   @override
   void initState() {
@@ -675,11 +683,21 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
     final padding = MediaQuery.paddingOf(context);
     final bottomInset = context.navBottomInset;
 
+    // Photo pages draw their own photo and scrims (below): the card scrim
+    // of `PostSurface` is tuned for ~500 px cards and, stretched over a
+    // full-height page, darkens everything below the upper third. Here the
+    // photo stays clean; a short top scrim covers the status bar / chips
+    // and a bottom scrim follows the text block's real height.
+    final photoUrl = isPhoto ? PostSurface.imageUrlOf(post) : null;
+
     return ClipRect(
       child: PostSurface(
         post: post,
         radius: 0,
         liveBlurHost: isPhoto,
+        // The gradient shows while the photo loads (and if it fails).
+        showPhoto: false,
+        showQuote: !isPhoto,
         child: LayoutBuilder(
           builder: (context, constraints) {
             final pageHeight = constraints.maxHeight;
@@ -707,16 +725,28 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
               height: pageHeight,
               child: Stack(
                 children: [
-                  if (isPhoto)
+                  if (photoUrl != null) ...[
                     Positioned.fill(
-                      child: IgnorePointer(
-                        child: ExcludeSemantics(
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(gradient: _textScrim),
-                          ),
-                        ),
+                      child: RepaintBoundary(
+                        child: _DiscoverPhoto(url: photoUrl),
                       ),
                     ),
+                    // Top scrim: solid under the status bar, then eased
+                    // out below the chip row (chips stay ≥ 4.5:1 together
+                    // with their own 28 % glass fill).
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      height: topReserved + _topScrimTail,
+                      child: _PhotoScrim(
+                        fromBottom: false,
+                        denseAlpha: _topScrimAlpha,
+                        hold: padding.top,
+                        fade: _topBarHeight + _topScrimTail,
+                      ),
+                    ),
+                  ],
                   Positioned(
                     top: 0,
                     left: 0,
@@ -726,7 +756,9 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
                       child: SizedBox(
                         height: _topBarHeight,
                         child: Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 0, 12, 0),
+                          // Right inset 16 minus the 7 px hit slack around
+                          // the 30 px sections button: both edges read 16.
+                          padding: const EdgeInsets.fromLTRB(16, 0, 9, 0),
                           child: _TopOverlay(
                             rankingReason: widget.item.rankingReason,
                             index: widget.index,
@@ -743,26 +775,49 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
                     left: 0,
                     right: 0,
                     bottom: 0,
-                    child: Padding(
-                      // The scrollable block adds _ringRoom on each side so
-                      // focus rings are not clipped; text still starts 20 px
-                      // from the edge and ends 24 px before the rail.
-                      padding: EdgeInsets.fromLTRB(
-                        KararSpace.s20 - _ringRoom,
-                        0,
-                        rail.width + 24 - _ringRoom,
-                        bottomInset + 20,
-                      ),
-                      child: Align(
-                        alignment: Alignment.bottomLeft,
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxWidth: 560 + 2 * _ringRoom,
-                            maxHeight: blockMaxHeight,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        // Bottom scrim sized to the text block: it fades in
+                        // over `_blockScrimLead` px above the block and
+                        // reaches ≥ 55 % black at the author row, so white
+                        // meta text stays ≥ 4.5:1 even over a white photo.
+                        if (photoUrl != null)
+                          const Positioned(
+                            left: 0,
+                            right: 0,
+                            top: -_blockScrimLead,
+                            bottom: 0,
+                            child: _PhotoScrim(
+                              fromBottom: true,
+                              denseAlpha: _blockScrimBottomAlpha,
+                              fade: _blockScrimLead,
+                              fadeAlpha: _blockScrimTopAlpha,
+                            ),
                           ),
-                          child: _buildTextBlock(context, post),
+                        Padding(
+                          // The scrollable block adds _ringRoom on each side
+                          // so focus rings are not clipped; text still
+                          // starts 20 px from the edge and ends 24 px before
+                          // the rail.
+                          padding: EdgeInsets.fromLTRB(
+                            KararSpace.s20 - _ringRoom,
+                            0,
+                            rail.width + 24 - _ringRoom,
+                            bottomInset + 20,
+                          ),
+                          child: Align(
+                            alignment: Alignment.bottomLeft,
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(
+                                maxWidth: 560 + 2 * _ringRoom,
+                                maxHeight: blockMaxHeight,
+                              ),
+                              child: _buildTextBlock(context, post),
+                            ),
+                          ),
                         ),
-                      ),
+                      ],
                     ),
                   ),
                   Positioned(
@@ -798,7 +853,8 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
   }
 
   Widget _buildTextBlock(BuildContext context, Post post) {
-    final column = Column(
+    final onColor = context.kc.onColor;
+    final upper = Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -814,7 +870,7 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
             post.title,
             maxLines: 4,
             overflow: TextOverflow.ellipsis,
-            style: AppTypography.titleXL.copyWith(color: Colors.white),
+            style: AppTypography.titleXL.copyWith(color: onColor),
           ),
         ),
         if (post.content.isNotEmpty) ...[
@@ -825,15 +881,50 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
             onToggle: () => setState(() => _expanded = !_expanded),
           ),
         ],
-        // The tag row is 44 px tall (hit area) around 18 px of text, so its
-        // own slack provides the 8 / 12 px gaps around it.
-        if (post.tags.isNotEmpty)
-          _TagRow(tags: post.tags)
-        else
-          const SizedBox(height: KararSpace.s12),
-        VerdictChip(post: post),
       ],
     );
+
+    final Widget column;
+    if (post.tags.isEmpty) {
+      column = Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          upper,
+          const SizedBox(height: KararSpace.s12),
+          VerdictChip(post: post),
+        ],
+      );
+    } else {
+      // Tags keep a full 44 px hit height without 44 px of visual slack:
+      // the tag row's hit box (_TagRow.boxHeight, text centred) slides
+      // under the text above by _TagRow.overlapAbove (the text above keeps
+      // that strip — it is hit-tested first) and over the non-interactive
+      // VerdictChip below by _TagRow.overlapBelow. The column is laid out
+      // bottom-up so the hit-test order is text → tags → verdict, and the
+      // overlap shows up as empty space above the author row (invisible:
+      // the block is anchored to the bottom).
+      // Visual gaps: content → tags ≈ 8, tags → verdict 12.
+      column = Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        verticalDirection: VerticalDirection.up,
+        children: [
+          VerdictChip(post: post),
+          Transform.translate(
+            offset: const Offset(0, _TagRow.overlapBelow),
+            child: _TagRow(tags: post.tags),
+          ),
+          Transform.translate(
+            offset: const Offset(
+              0,
+              _TagRow.overlapBelow + _TagRow.overlapAbove,
+            ),
+            child: upper,
+          ),
+        ],
+      );
+    }
 
     Widget block = SingleChildScrollView(
       physics: const ClampingScrollPhysics(),
@@ -853,13 +944,120 @@ class _DiscoverCardState extends ConsumerState<_DiscoverCard> {
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           // Alpha mask only (dstIn): transparent → opaque.
-          colors: const [Colors.transparent, Colors.white],
+          colors: [onColor.withValues(alpha: 0), onColor],
           stops: [0, rect.height <= 0 ? 0 : math.min(1, 24 / rect.height)],
         ).createShader(rect),
         child: block,
       );
     }
     return block;
+  }
+}
+
+/// Full-bleed Keşfet photo (`BoxFit.cover`). Decoded at the page height so
+/// tall pages are not upscaled from a width-sized decode. While loading or
+/// on error nothing is drawn, so the category gradient underneath shows.
+class _DiscoverPhoto extends StatelessWidget {
+  const _DiscoverPhoto({required this.url});
+
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    return ExcludeSemantics(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final dpr = MediaQuery.devicePixelRatioOf(context);
+          final height = constraints.maxHeight.isFinite
+              ? constraints.maxHeight
+              : MediaQuery.sizeOf(context).height;
+          final cacheHeight = math.min(2048, math.max(1, (height * dpr).round()));
+          return CachedNetworkImage(
+            imageUrl: url,
+            fit: BoxFit.cover,
+            width: double.infinity,
+            height: double.infinity,
+            memCacheHeight: cacheHeight,
+            fadeInDuration: KararMotion.d(context, KararMotion.base),
+            placeholder: (context, url) => const SizedBox.shrink(),
+            errorWidget: (context, url, error) => const SizedBox.shrink(),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Eased black scrim over a photo (decorative, ignores pointers).
+///
+/// The dense end ([fromBottom] = bottom edge, else top edge) holds
+/// [denseAlpha] for [hold] px, then the alpha moves linearly to [fadeAlpha]
+/// where the last [fade] px begin, and eases out to 0 at the light end.
+class _PhotoScrim extends StatelessWidget {
+  const _PhotoScrim({
+    required this.fromBottom,
+    required this.denseAlpha,
+    required this.fade,
+    this.fadeAlpha,
+    this.hold = 0,
+  });
+
+  final bool fromBottom;
+  final double denseAlpha;
+  final double fade;
+  final double? fadeAlpha;
+  final double hold;
+
+  static const _easeSteps = 6;
+
+  @override
+  Widget build(BuildContext context) {
+    final veil = context.kc.photoVeil;
+    return IgnorePointer(
+      child: ExcludeSemantics(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final h = constraints.maxHeight;
+            if (!h.isFinite || h <= 0) return const SizedBox.shrink();
+            final fadeTo = fadeAlpha ?? denseAlpha;
+            final fadeStart = ((h - fade) / h).clamp(0.0, 1.0);
+            final holdEnd = (hold / h).clamp(0.0, fadeStart);
+
+            final stops = <double>[0];
+            final alphas = <double>[denseAlpha];
+            if (holdEnd > 0) {
+              stops.add(holdEnd);
+              alphas.add(denseAlpha);
+            }
+            if (fadeStart > holdEnd) {
+              stops.add(fadeStart);
+              alphas.add(fadeTo);
+            }
+            // Ease out over the fade (no hard band where it ends).
+            for (var i = 1; i <= _easeSteps; i++) {
+              final t = i / _easeSteps;
+              stops.add(fadeStart + (1 - fadeStart) * t);
+              alphas.add(fadeTo * (1 - Curves.easeInOut.transform(t)));
+            }
+
+            return DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: fromBottom
+                      ? Alignment.bottomCenter
+                      : Alignment.topCenter,
+                  end: fromBottom ? Alignment.topCenter : Alignment.bottomCenter,
+                  colors: [
+                    for (final a in alphas) veil.withValues(alpha: a),
+                  ],
+                  stops: stops,
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
   }
 }
 
@@ -881,6 +1079,9 @@ class _TopOverlay extends StatelessWidget {
   final bool onPhoto;
   final VoidCallback onNotInterested;
   final VoidCallback onOpenSections;
+
+  /// Visual height of every control in the row ([OnColorChip] is 30).
+  static const _controlHeight = 30.0;
 
   /// Width of an [OnColorChip] (padding L9 R11, 16 px icon + 5 gap,
   /// 12/800 label) at the current text scale.
@@ -937,11 +1138,16 @@ class _TopOverlay extends StatelessWidget {
           blur: onPhoto,
           onTap: onNotInterested,
         ),
-        const SizedBox(width: KararSpace.s4),
+        // 8 px visual gap (the button's 44 px hit box adds 7 px).
+        const SizedBox(width: KararSpace.s8 - 7),
+        // Same 30 px visual height as the chips beside it (one aligned
+        // row); the hit area stays 44 × 44.
         KararCircleButton(
           icon: Icons.dashboard_rounded,
           tooltip: 'Bölümler',
           style: onPhoto ? KararCircleStyle.glass : KararCircleStyle.onColor,
+          size: _controlHeight,
+          iconSize: 17,
           onPressed: onOpenSections,
         ),
       ],
@@ -956,6 +1162,7 @@ class _AuthorRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final onColor = context.kc.onColor;
     final name = post.authorName;
     final anonymous = post.isAnonymous || name == null || name.isEmpty;
     final handle = anonymous ? '@anonim' : '@$name';
@@ -978,14 +1185,14 @@ class _AuthorRow extends StatelessWidget {
                   TextSpan(
                     text: handle,
                     style: AppTypography.bodyS.copyWith(
-                      color: Colors.white,
+                      color: onColor,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
                   TextSpan(
                     text: ' · ${post.createdAgo}',
                     style: AppTypography.labelS.copyWith(
-                      color: Colors.white,
+                      color: onColor,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -1003,6 +1210,10 @@ class _AuthorRow extends StatelessWidget {
 
 /// Post body: 3 lines, tap to expand/collapse; "Devamını oku" when it is
 /// actually truncated.
+///
+/// When truncated, the paragraph and the "Devamını oku" link form one
+/// button (same action), so the link sits 4 px under the text instead of
+/// inside its own 44 px hit box; the paragraph is far taller than 44 px.
 class _ExpandableContent extends StatelessWidget {
   const _ExpandableContent({
     required this.text,
@@ -1018,8 +1229,9 @@ class _ExpandableContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final onColor = context.kc.onColor;
     final style = AppTypography.body.copyWith(
-      color: Colors.white,
+      color: onColor,
       fontWeight: FontWeight.w500,
     );
     return LayoutBuilder(
@@ -1033,36 +1245,41 @@ class _ExpandableContent extends StatelessWidget {
         final truncates = painter.didExceedMaxLines;
         painter.dispose();
 
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            GestureDetector(
-              onTap: onToggle,
-              child: Text(
-                text,
-                maxLines: expanded ? null : _collapsedLines,
-                overflow:
-                    expanded ? TextOverflow.visible : TextOverflow.ellipsis,
-                style: style,
-              ),
-            ),
-            if (!expanded && truncates)
-              KararPressable(
-                onTap: onToggle,
-                semanticLabel: 'Devamını oku',
-                focusRadius: KararRadius.xs,
-                child: Text(
-                  'Devamını oku',
-                  style: AppTypography.bodyS.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w800,
-                    decoration: TextDecoration.underline,
-                    decorationColor: Colors.white,
-                  ),
+        final paragraph = Text(
+          text,
+          maxLines: expanded ? null : _collapsedLines,
+          overflow: expanded ? TextOverflow.visible : TextOverflow.ellipsis,
+          style: style,
+        );
+
+        if (expanded || !truncates) {
+          return GestureDetector(onTap: onToggle, child: paragraph);
+        }
+
+        return KararPressable(
+          onTap: onToggle,
+          // The paragraph text and the link label stay readable as the
+          // button's content.
+          excludeChildSemantics: false,
+          pressedScale: 0.99,
+          focusRadius: KararRadius.xs,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              paragraph,
+              const SizedBox(height: KararSpace.s4),
+              Text(
+                'Devamını oku',
+                style: AppTypography.bodyS.copyWith(
+                  color: onColor,
+                  fontWeight: FontWeight.w800,
+                  decoration: TextDecoration.underline,
+                  decorationColor: onColor,
                 ),
               ),
-          ],
+            ],
+          ),
         );
       },
     );
@@ -1070,7 +1287,12 @@ class _ExpandableContent extends StatelessWidget {
 }
 
 /// Single-line hashtag row: up to three tags, never wrapping — tags that do
-/// not fit are dropped. Each tag is a 44 px target that opens the search.
+/// not fit are dropped. Each tag opens the search.
+///
+/// Every tag's hit box is [boxHeight] tall with the text centred; the text
+/// block overlaps it by [overlapAbove] (owned by the text above) and
+/// [overlapBelow] (over the non-interactive verdict chip), which leaves
+/// each tag a full 44 px of its own hit height.
 class _TagRow extends StatelessWidget {
   const _TagRow({required this.tags});
 
@@ -1078,10 +1300,20 @@ class _TagRow extends StatelessWidget {
 
   static const _gap = 10.0;
 
+  /// Hit-box height of each tag (text centred).
+  static const boxHeight = 64.0;
+
+  /// Strip at the top of the box covered by the text above.
+  static const overlapAbove = 20.0;
+
+  /// Strip at the bottom of the box drawn over the verdict chip: leaves a
+  /// 12 px gap between the tag text (17 px line) and the chip.
+  static const overlapBelow = (boxHeight - 17) / 2 - KararSpace.s12;
+
   @override
   Widget build(BuildContext context) {
     final style = AppTypography.labelS.copyWith(
-      color: Colors.white,
+      color: context.kc.onColor,
       fontWeight: FontWeight.w800,
     );
     final scaler = MediaQuery.textScalerOf(context);
@@ -1105,7 +1337,13 @@ class _TagRow extends StatelessWidget {
           used = next;
           fitted.add(tag);
         }
-        if (fitted.isEmpty) return const SizedBox(height: KararSpace.s12);
+        // Nothing fits: keep a plain 12 px gap above the verdict chip
+        // (the block subtracts both overlaps from this slot).
+        if (fitted.isEmpty) {
+          return const SizedBox(
+            height: overlapAbove + overlapBelow + KararSpace.s12,
+          );
+        }
 
         return Row(
           children: [
@@ -1116,6 +1354,7 @@ class _TagRow extends StatelessWidget {
                     '/search?q=${Uri.encodeComponent('#${fitted[i]}')}'),
                 semanticLabel: '#${fitted[i]}',
                 focusRadius: KararRadius.xs,
+                minSize: const Size(KararSpace.minTap, boxHeight),
                 child: ConstrainedBox(
                   constraints:
                       const BoxConstraints(minWidth: KararSpace.minTap),
@@ -1713,7 +1952,7 @@ class _DiscoverLoadingSkeleton extends StatelessWidget {
         Positioned(
           top: 0,
           left: 16,
-          right: 12,
+          right: 16,
           child: SafeArea(
             bottom: false,
             child: SizedBox(
@@ -1726,7 +1965,7 @@ class _DiscoverLoadingSkeleton extends StatelessWidget {
                   const Spacer(),
                   bone(30, 128, radius: 15),
                   const SizedBox(width: KararSpace.s8),
-                  bone(44, 44, radius: 22),
+                  bone(30, 30, radius: 15),
                 ],
               ),
             ),

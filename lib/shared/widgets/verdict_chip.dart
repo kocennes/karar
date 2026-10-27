@@ -194,7 +194,7 @@ class _PercentState extends State<_Percent>
         maxLines: 1,
         softWrap: false,
         style: widget.style.copyWith(
-          color: mine ? Colors.white : widget.color,
+          color: mine ? context.kc.onColor : widget.color,
         ),
       ),
     );

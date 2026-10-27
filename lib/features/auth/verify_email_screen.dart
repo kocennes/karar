@@ -105,7 +105,10 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
                   children: [
                     TextSpan(
                       text: widget.email,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: kc.text1,
+                      ),
                     ),
                     const TextSpan(
                       text: ' adresine 6 haneli bir kod gönderdik.',
@@ -114,14 +117,26 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
                 ),
               ),
             ),
+            // Centred OTP field: label, hint and digits share one axis (a
+            // start-aligned label + prefix icon sat off the centred code).
             TextFormField(
               controller: _otpCtrl,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Doğrulama Kodu',
-                prefixIcon: Icon(Icons.pin_rounded),
+                floatingLabelAlignment: FloatingLabelAlignment.center,
+                // Always floated, so the resting label never sits at the
+                // start while the code and hint are centred.
+                floatingLabelBehavior: FloatingLabelBehavior.always,
                 hintText: '000000',
+                hintStyle: AppTypography.headline.copyWith(
+                  fontSize: 24,
+                  height: 30 / 24,
+                  letterSpacing: 10,
+                  color: kc.text3,
+                  fontFeatures: AppTypography.tabular,
+                ),
                 counterText: '',
-                constraints: BoxConstraints(minHeight: 56),
+                constraints: const BoxConstraints(minHeight: 56),
               ),
               keyboardType: TextInputType.number,
               maxLength: 6,
@@ -147,7 +162,8 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
               onPressed: _verify,
               isLoading: _isVerifying,
             ),
-            const SizedBox(height: 12),
+            // Both secondary actions: same widget, same size, same gap.
+            const SizedBox(height: 8),
             KararButton(
               label: _resendCooldown > 0
                   ? 'Tekrar gönder (${_resendCooldown}s)'
@@ -157,10 +173,11 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
               variant: KararButtonVariant.text,
               isLoading: _isResending,
             ),
-            const SizedBox(height: 4),
-            TextButton(
+            const SizedBox(height: 8),
+            KararButton(
+              label: 'Giriş Ekranına Dön',
               onPressed: () => context.go('/auth/login'),
-              child: const Text('Giriş Ekranına Dön'),
+              variant: KararButtonVariant.text,
             ),
           ],
         ),

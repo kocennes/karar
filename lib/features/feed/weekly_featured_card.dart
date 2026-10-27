@@ -11,16 +11,21 @@ import 'weekly_featured_provider.dart';
 import 'widgets/feed_skeletons.dart';
 
 /// "Bu Haftanın Kararı" hero (spec §5.8): an ink radial-gradient card in
-/// both themes with a gold overline, a 2-line quoted title, a mini verdict
-/// bar, the comment count and a "Görüntüle" pill.
+/// both themes with a gold overline, a quoted title, a mini verdict bar,
+/// the comment count and a "Görüntüle" pill.
 class WeeklyFeaturedCard extends ConsumerWidget {
   const WeeklyFeaturedCard({
     super.key,
     this.margin = const EdgeInsets.fromLTRB(16, 4, 16, 0),
+    this.dense = false,
   });
 
   /// Outer margin (the desktop right rail passes zero).
   final EdgeInsetsGeometry margin;
+
+  /// Phone feed header: a one-line title and tighter padding, so the first
+  /// post card's verdict clears the floating nav on ~844 pt screens.
+  final bool dense;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -29,9 +34,14 @@ class WeeklyFeaturedCard extends ConsumerWidget {
     return async.when(
       data: (post) => post == null
           ? const SizedBox.shrink()
-          : Padding(padding: margin, child: _FeaturedCard(post: post)),
-      loading: () =>
-          Padding(padding: margin, child: const _FeaturedCardSkeleton()),
+          : Padding(
+              padding: margin,
+              child: _FeaturedCard(post: post, dense: dense),
+            ),
+      loading: () => Padding(
+        padding: margin,
+        child: _FeaturedCardSkeleton(dense: dense),
+      ),
       error: (_, __) => const SizedBox.shrink(),
     );
   }
@@ -56,9 +66,10 @@ class _HeroFrame extends StatelessWidget {
             : [
                 BoxShadow(
                   color:
-                      KararGradients.hero.colors.last.withValues(alpha: 0.25),
-                  offset: const Offset(0, 12),
-                  blurRadius: 28,
+                      KararGradients.hero.colors.last.withValues(alpha: 0.22),
+                  offset: const Offset(0, 10),
+                  blurRadius: 24,
+                  spreadRadius: -6,
                 ),
               ],
       ),
@@ -83,9 +94,10 @@ class _HeroFrame extends StatelessWidget {
 }
 
 class _FeaturedCard extends StatelessWidget {
-  const _FeaturedCard({required this.post});
+  const _FeaturedCard({required this.post, required this.dense});
 
   final Post post;
+  final bool dense;
 
   @override
   Widget build(BuildContext context) {
@@ -97,7 +109,7 @@ class _FeaturedCard extends StatelessWidget {
     final white12 = AppTypography.meta.copyWith(
       fontWeight: FontWeight.w800,
       letterSpacing: 0,
-      color: Colors.white,
+      color: kc.onColor,
       fontFeatures: AppTypography.tabular,
     );
 
@@ -109,6 +121,8 @@ class _FeaturedCard extends StatelessWidget {
         final narrow =
             constraints.maxWidth < 340 * textScale.clamp(1.0, 2.0);
 
+        // The button's 44 px hit box is taller than its 32/36 px visual, so
+        // the paddings below are 6 px smaller than the visual gaps.
         final viewButton = narrow
             ? KararPressable(
                 onTap: open,
@@ -119,14 +133,14 @@ class _FeaturedCard extends StatelessWidget {
                   width: 36,
                   height: 36,
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.14),
+                    color: kc.onColorTrack,
                     shape: BoxShape.circle,
                   ),
                   alignment: Alignment.center,
-                  child: const Icon(
+                  child: Icon(
                     Icons.arrow_forward_rounded,
                     size: 18,
-                    color: Colors.white,
+                    color: kc.onColor,
                   ),
                 ),
               )
@@ -138,7 +152,7 @@ class _FeaturedCard extends StatelessWidget {
                   constraints: const BoxConstraints(minHeight: 32),
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.14),
+                    color: kc.onColorTrack,
                     borderRadius: KararRadius.all(16),
                   ),
                   child: Row(
@@ -146,10 +160,10 @@ class _FeaturedCard extends StatelessWidget {
                     children: [
                       Text('Görüntüle', style: white12),
                       const SizedBox(width: 4),
-                      const Icon(
+                      Icon(
                         Icons.arrow_forward_rounded,
                         size: 15,
-                        color: Colors.white,
+                        color: kc.onColor,
                       ),
                     ],
                   ),
@@ -159,10 +173,12 @@ class _FeaturedCard extends StatelessWidget {
         return _HeroFrame(
           child: InkWell(
             onTap: open,
-            splashColor: Colors.white.withValues(alpha: 0.10),
-            highlightColor: Colors.white.withValues(alpha: 0.05),
+            splashColor: kc.splashOnColor,
+            highlightColor: kc.highlightOnColor,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 14, 14),
+              padding: dense
+                  ? const EdgeInsets.fromLTRB(16, 12, 12, 6)
+                  : const EdgeInsets.fromLTRB(16, 14, 14, 8),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 mainAxisSize: MainAxisSize.min,
@@ -187,19 +203,19 @@ class _FeaturedCard extends StatelessWidget {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: dense ? 6 : 8),
                   Text(
                     '“${post.title}”',
-                    maxLines: 2,
+                    maxLines: dense ? 1 : 2,
                     overflow: TextOverflow.ellipsis,
                     style: AppTypography.bodyStrong.copyWith(
-                      fontSize: 16,
+                      fontSize: dense ? 15 : 16,
                       height: 1.3,
                       fontWeight: FontWeight.w800,
-                      color: Colors.white,
+                      color: kc.onColor,
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  SizedBox(height: dense ? 4 : 6),
                   Row(
                     children: [
                       Expanded(
@@ -217,11 +233,11 @@ class _FeaturedCard extends StatelessWidget {
                               Text('%$hakliPct Haklı', style: white12),
                               const SizedBox(width: 12),
                             ],
-                            const ExcludeSemantics(
+                            ExcludeSemantics(
                               child: Icon(
                                 Icons.chat_bubble_outline_rounded,
                                 size: 15,
-                                color: Colors.white,
+                                color: kc.onColor,
                               ),
                             ),
                             const SizedBox(width: 4),
@@ -247,7 +263,8 @@ class _FeaturedCard extends StatelessWidget {
 }
 
 /// 84 × 6 Haklı/Haksız mini bar for the ink background (#4ADE80 / #FF7A7A,
-/// 2 px gap).
+/// 2 px gap). The row stretches its segments to the 6 px height (a loose
+/// cross axis would lay the empty boxes out at zero height).
 class _MiniBar extends StatelessWidget {
   const _MiniBar({required this.hakliPercent});
 
@@ -260,6 +277,7 @@ class _MiniBar extends StatelessWidget {
       child: SizedBox(
         height: 6,
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             if (hakli > 0)
               Expanded(
@@ -290,31 +308,39 @@ class _MiniBar extends StatelessWidget {
 }
 
 class _FeaturedCardSkeleton extends StatelessWidget {
-  const _FeaturedCardSkeleton();
+  const _FeaturedCardSkeleton({required this.dense});
+
+  final bool dense;
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
+    final bar = kc.onColor;
     return ExcludeSemantics(
       child: _HeroFrame(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 14, 16),
+          padding: dense
+              ? const EdgeInsets.fromLTRB(16, 12, 12, 12)
+              : const EdgeInsets.fromLTRB(16, 16, 14, 16),
           child: KararShimmer(
-            baseColor: Colors.white.withValues(alpha: 0.08),
-            highlightColor: Colors.white.withValues(alpha: 0.16),
+            baseColor: kc.highlightOnColor,
+            highlightColor: kc.onColorTrack,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _bar(width: 130, height: 12),
-                const SizedBox(height: 12),
-                _bar(height: 16),
-                const SizedBox(height: 8),
-                _bar(width: 200, height: 16),
-                const SizedBox(height: 16),
+                _bar(bar, width: 130, height: 12),
+                SizedBox(height: dense ? 10 : 12),
+                _bar(bar, height: 16),
+                if (!dense) ...[
+                  const SizedBox(height: 8),
+                  _bar(bar, width: 200, height: 16),
+                ],
+                SizedBox(height: dense ? 12 : 16),
                 Row(
                   children: [
-                    _bar(width: 84, height: 6),
+                    _bar(bar, width: 84, height: 6),
                     const Spacer(),
-                    _bar(width: 96, height: 32, radius: 16),
+                    _bar(bar, width: 96, height: 32, radius: 16),
                   ],
                 ),
               ],
@@ -325,12 +351,17 @@ class _FeaturedCardSkeleton extends StatelessWidget {
     );
   }
 
-  static Widget _bar({double? width, required double height, double? radius}) {
+  static Widget _bar(
+    Color color, {
+    double? width,
+    required double height,
+    double? radius,
+  }) {
     return Container(
       width: width ?? double.infinity,
       height: height,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: color,
         borderRadius: KararRadius.all(radius ?? 4),
       ),
     );

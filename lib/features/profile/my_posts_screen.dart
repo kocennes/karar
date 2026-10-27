@@ -12,6 +12,7 @@ import '../../shared/widgets/loading_indicator.dart';
 import '../../shared/widgets/centered_content.dart';
 import '../feed/feed_provider.dart';
 import 'my_posts_provider.dart';
+import 'widgets/column_app_bar.dart';
 import 'widgets/verdict_tile.dart';
 
 const _sortOptions = [
@@ -27,7 +28,7 @@ class MyPostsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
-      appBar: AppBar(
+      appBar: ColumnAppBar(
         title: const Text('Paylaşımlarım'),
         centerTitle: true,
         actions: [
@@ -37,7 +38,8 @@ class MyPostsScreen extends ConsumerWidget {
               return PopupMenuButton<String>(
                 icon: const Icon(Icons.sort_rounded),
                 tooltip: 'Sırala',
-                onSelected: (s) => ref.read(myPostsProvider.notifier).setSort(s),
+                onSelected: (s) =>
+                    ref.read(myPostsProvider.notifier).setSort(s),
                 itemBuilder: (_) => _sortOptions
                     .map((o) => PopupMenuItem(
                           value: o.$1,
@@ -200,16 +202,16 @@ class _OwnerMenu extends ConsumerWidget {
     return PopupMenuButton<String>(
       tooltip: 'Gönderi seçenekleri',
       icon: Container(
-        width: 32,
-        height: 32,
+        width: VerdictTile.menuDiameter,
+        height: VerdictTile.menuDiameter,
         decoration: const BoxDecoration(
           color: KararGlass.chipOnColor,
           shape: BoxShape.circle,
         ),
-        child: const Icon(
+        child: Icon(
           Icons.more_horiz_rounded,
-          size: 20,
-          color: Colors.white,
+          size: 18,
+          color: kc.onColor,
         ),
       ),
       padding: EdgeInsets.zero,
@@ -222,7 +224,8 @@ class _OwnerMenu extends ConsumerWidget {
           value: 'delete',
           child: Row(
             children: [
-              Icon(Icons.delete_outline_rounded, size: 20, color: kc.haksizText),
+              Icon(Icons.delete_outline_rounded,
+                  size: 20, color: kc.haksizText),
               const SizedBox(width: 10),
               Text('Sil', style: TextStyle(color: kc.haksizText)),
             ],
@@ -248,7 +251,7 @@ class _OwnerMenu extends ConsumerWidget {
           FilledButton(
             style: FilledButton.styleFrom(
               backgroundColor: ctx.kc.haksizFill,
-              foregroundColor: Colors.white,
+              foregroundColor: ctx.kc.onColor,
             ),
             onPressed: () async {
               final messenger = ScaffoldMessenger.of(context);

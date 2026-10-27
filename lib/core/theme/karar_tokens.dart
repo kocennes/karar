@@ -58,6 +58,17 @@ class KararColors extends ThemeExtension<KararColors> {
     required this.hairline,
     required this.shimmerBase,
     required this.shimmerHighlight,
+    required this.raised,
+    required this.fieldFill,
+    required this.fieldBorder,
+    required this.onColor,
+    required this.onColorSoft,
+    required this.onColorTrack,
+    required this.splashOnColor,
+    required this.highlightOnColor,
+    required this.photoVeil,
+    required this.quoteWatermark,
+    required this.mediaBackdrop,
   });
 
   final Brightness brightness;
@@ -106,7 +117,11 @@ class KararColors extends ThemeExtension<KararColors> {
   /// Active icon colour in navigation (light #7D50F0 / dark #B39AFF).
   final Color navActive;
 
-  /// Notch, selected chip, ink CTA (inverse in dark).
+  /// Strong fill for the nav notch, the side-nav "Oluştur" CTA, selected
+  /// neutral chips, segmented/toggle selections, the coachmark bubble and
+  /// ink buttons. Light: near-black ink #15131F. Dark: brand violet
+  /// #7D50F0 (an inverse off-white block glared on the dark canvas), so
+  /// [onInk] is white in both themes (18.3:1 / 4.91:1).
   final Color ink;
   final Color onInk;
 
@@ -131,7 +146,10 @@ class KararColors extends ThemeExtension<KararColors> {
   /// Modal barrier.
   final Color scrim;
 
-  /// Rail buttons and verdict chip background (off-white in dark).
+  /// Rail buttons and verdict chip background. Light white; dark a dimmed
+  /// lavender-grey #E4E1EC so the capsules do not glare on the dark canvas
+  /// (#15131F text 14.2:1, #5B576D 5.37:1, #116B34 5.13:1, #B4232A 5.06:1,
+  /// #15803D icon 3.89:1, #D6363C icon 3.66:1, #7D50F0 icon 3.81:1).
   final Color capsule;
 
   /// Text on capsules — theme-independent (capsules are light in both themes).
@@ -152,6 +170,45 @@ class KararColors extends ThemeExtension<KararColors> {
   /// Skeleton shimmer colours.
   final Color shimmerBase;
   final Color shimmerHighlight;
+
+  /// A surface raised above [muted] (segmented-control indicator, toggles
+  /// on a muted track). Light white (with a soft shadow); dark #3A3552
+  /// (+ hairline), lighter than the #262233 track so the selection never
+  /// reads as a sunken hole. text1 on it: 18.3:1 / 10.5:1.
+  final Color raised;
+
+  /// Text field fill and enabled border. Light: white field with a 1 px
+  /// #8E8AA3 border (3.07:1 on canvas, 3.33:1 on white) so fields are
+  /// visible on the lavender canvas. Dark: #262233 with the #2F2B3D hairline.
+  final Color fieldFill;
+  final Color fieldBorder;
+
+  /// White content on colour: gradients, photos, brand/vote fills (both
+  /// themes). Use this instead of `Colors.white`.
+  final Color onColor;
+
+  /// White 25 %: discs/tiles on colour (anonymous avatar, icon tiles).
+  final Color onColorSoft;
+
+  /// White 14 %: pills and tracks on colour (weekly hero meta pills).
+  final Color onColorTrack;
+
+  /// White 12 % / 6 %: ink splash and highlight on colour surfaces.
+  final Color splashOnColor;
+  final Color highlightOnColor;
+
+  /// Black 30 %: veil over photos (tile scrims, image overlays).
+  final Color photoVeil;
+
+  /// White 10 %: the 150 px “ watermark on gradient cards.
+  final Color quoteWatermark;
+
+  /// Full-screen media viewer background (black in both themes).
+  final Color mediaBackdrop;
+
+  /// Avatar disc colours (same in both themes). Every entry carries a
+  /// white initial at ≥ 4.5:1 and avoids the Haklı green / Haksız red hues.
+  List<Color> get avatarPalette => KararPalette.avatar;
 
   bool get isDark => brightness == Brightness.dark;
 
@@ -205,6 +262,17 @@ class KararColors extends ThemeExtension<KararColors> {
     hairline: Color(0x00FFFFFF),
     shimmerBase: Color(0xFFECEAF3),
     shimmerHighlight: Color(0xFFF8F7FB),
+    raised: Color(0xFFFFFFFF),
+    fieldFill: Color(0xFFFFFFFF),
+    fieldBorder: Color(0xFF8E8AA3),
+    onColor: Color(0xFFFFFFFF),
+    onColorSoft: Color(0x40FFFFFF), // white 25 %
+    onColorTrack: Color(0x24FFFFFF), // white 14 %
+    splashOnColor: Color(0x1FFFFFFF), // white 12 %
+    highlightOnColor: Color(0x0FFFFFFF), // white 6 %
+    photoVeil: Color(0x4D000000), // black 30 %
+    quoteWatermark: Color(0x1AFFFFFF), // white 10 %
+    mediaBackdrop: Color(0xFF000000),
   );
 
   static const dark = KararColors(
@@ -224,8 +292,9 @@ class KararColors extends ThemeExtension<KararColors> {
     primaryContainer: Color(0xFF2A2145),
     onPrimaryContainer: Color(0xFFDCD0FF),
     navActive: Color(0xFFB39AFF),
-    ink: Color(0xFFF4F3F8),
-    onInk: Color(0xFF15131F),
+    // Brand violet instead of an inverse off-white block (glare).
+    ink: Color(0xFF7D50F0),
+    onInk: Color(0xFFFFFFFF),
     hakliFill: Color(0xFF15803D),
     hakliText: Color(0xFF4ADE80),
     hakliSoft: Color(0xFF15281E),
@@ -238,16 +307,27 @@ class KararColors extends ThemeExtension<KararColors> {
     warnText: Color(0xFFF5C04E),
     mint: Color(0xFF57CA8C),
     scrim: Color(0x99000000), // rgba(0,0,0,.60)
-    capsule: Color(0xFFF4F3F8),
+    capsule: Color(0xFFE4E1EC), // dimmed: no glare blocks on the rail
     onCapsuleText: Color(0xFF15131F),
     onCapsuleMuted: Color(0xFF5B576D),
     onCapsuleHakli: Color(0xFF116B34),
     onCapsuleHaksiz: Color(0xFFB4232A),
     navPill: Color(0xF01F1C2A), // #1F1C2A @ 94 %
     sheet: Color(0xFF1F1C2A),
-    hairline: Color(0x0FFFFFFF), // white 6 %
+    hairline: Color(0x14FFFFFF), // white 8 %
     shimmerBase: Color(0xFF1F1C2A),
     shimmerHighlight: Color(0xFF2A2638),
+    raised: Color(0xFF3A3552),
+    fieldFill: Color(0xFF262233),
+    fieldBorder: Color(0xFF2F2B3D),
+    onColor: Color(0xFFFFFFFF),
+    onColorSoft: Color(0x40FFFFFF), // white 25 %
+    onColorTrack: Color(0x24FFFFFF), // white 14 %
+    splashOnColor: Color(0x1FFFFFFF), // white 12 %
+    highlightOnColor: Color(0x0FFFFFFF), // white 6 %
+    photoVeil: Color(0x4D000000), // black 30 %
+    quoteWatermark: Color(0x1AFFFFFF), // white 10 %
+    mediaBackdrop: Color(0xFF000000),
   );
 
   @override
@@ -292,6 +372,17 @@ class KararColors extends ThemeExtension<KararColors> {
     Color? hairline,
     Color? shimmerBase,
     Color? shimmerHighlight,
+    Color? raised,
+    Color? fieldFill,
+    Color? fieldBorder,
+    Color? onColor,
+    Color? onColorSoft,
+    Color? onColorTrack,
+    Color? splashOnColor,
+    Color? highlightOnColor,
+    Color? photoVeil,
+    Color? quoteWatermark,
+    Color? mediaBackdrop,
   }) {
     return KararColors(
       brightness: brightness ?? this.brightness,
@@ -334,6 +425,17 @@ class KararColors extends ThemeExtension<KararColors> {
       hairline: hairline ?? this.hairline,
       shimmerBase: shimmerBase ?? this.shimmerBase,
       shimmerHighlight: shimmerHighlight ?? this.shimmerHighlight,
+      raised: raised ?? this.raised,
+      fieldFill: fieldFill ?? this.fieldFill,
+      fieldBorder: fieldBorder ?? this.fieldBorder,
+      onColor: onColor ?? this.onColor,
+      onColorSoft: onColorSoft ?? this.onColorSoft,
+      onColorTrack: onColorTrack ?? this.onColorTrack,
+      splashOnColor: splashOnColor ?? this.splashOnColor,
+      highlightOnColor: highlightOnColor ?? this.highlightOnColor,
+      photoVeil: photoVeil ?? this.photoVeil,
+      quoteWatermark: quoteWatermark ?? this.quoteWatermark,
+      mediaBackdrop: mediaBackdrop ?? this.mediaBackdrop,
     );
   }
 
@@ -382,8 +484,37 @@ class KararColors extends ThemeExtension<KararColors> {
       hairline: c(hairline, other.hairline),
       shimmerBase: c(shimmerBase, other.shimmerBase),
       shimmerHighlight: c(shimmerHighlight, other.shimmerHighlight),
+      raised: c(raised, other.raised),
+      fieldFill: c(fieldFill, other.fieldFill),
+      fieldBorder: c(fieldBorder, other.fieldBorder),
+      onColor: c(onColor, other.onColor),
+      onColorSoft: c(onColorSoft, other.onColorSoft),
+      onColorTrack: c(onColorTrack, other.onColorTrack),
+      splashOnColor: c(splashOnColor, other.splashOnColor),
+      highlightOnColor: c(highlightOnColor, other.highlightOnColor),
+      photoVeil: c(photoVeil, other.photoVeil),
+      quoteWatermark: c(quoteWatermark, other.quoteWatermark),
+      mediaBackdrop: c(mediaBackdrop, other.mediaBackdrop),
     );
   }
+}
+
+/// Fixed palettes that are the same in both themes.
+abstract final class KararPalette {
+  /// Avatar disc colours, in the original hue order (indigo, violet, pink,
+  /// rose → plum, amber, emerald → ink, cyan, blue) so a user keeps the
+  /// same slot. White initial: 6.29 / 5.70 / 6.04 / 7.02 / 5.02 / 8.81 /
+  /// 5.36 / 5.17 : 1. No pure green or red (vote semantics).
+  static const List<Color> avatar = [
+    Color(0xFF4F46E5), // indigo
+    Color(0xFF7C3AED), // violet
+    Color(0xFFBE185D), // pink
+    Color(0xFF9D2A6E), // plum (was rose: read as Haksız)
+    Color(0xFFB45309), // amber
+    Color(0xFF4A4766), // ink (was emerald: read as Haklı)
+    Color(0xFF0E7490), // cyan
+    Color(0xFF2563EB), // blue
+  ];
 }
 
 /// `context.kc` / `context.isDark` shortcuts.
@@ -577,6 +708,17 @@ abstract final class KararShadow {
           ),
         ];
 
+  /// Logo mark glow (light only).
+  static List<BoxShadow> logo(Brightness b) => b == Brightness.dark
+      ? const []
+      : [
+          BoxShadow(
+            color: const Color(0xFF7D50F0).withValues(alpha: 0.35),
+            offset: const Offset(0, 8),
+            blurRadius: 18,
+          ),
+        ];
+
   /// Shadow list for a [KararShadowKind].
   static List<BoxShadow> of(KararShadowKind kind, Brightness b) =>
       switch (kind) {
@@ -587,19 +729,41 @@ abstract final class KararShadow {
       };
 
   /// Dark-mode hairline that replaces a shadow (null in light / for none).
-  /// soft → white 6 %, float → white 7 %, cards → white 8 %.
+  /// soft → white 8 %, float → white 9 %, cards → white 10 %.
   static Color? hairlineFor(KararShadowKind kind, Brightness b) {
     if (b != Brightness.dark) return null;
     return switch (kind) {
       KararShadowKind.none => null,
-      KararShadowKind.soft => const Color(0x0FFFFFFF),
-      KararShadowKind.float => const Color(0x12FFFFFF),
+      KararShadowKind.soft => const Color(0x14FFFFFF),
+      KararShadowKind.float => const Color(0x17FFFFFF),
       KararShadowKind.capsule => null,
     };
   }
 
-  /// Inner hairline on post cards in dark mode (white 8 %).
-  static const Color cardHairlineDark = Color(0x14FFFFFF);
+  /// Inner hairline on post cards in dark mode (white 10 %).
+  static const Color cardHairlineDark = Color(0x1AFFFFFF);
+
+  /// Stronger dark-mode card hairline (white 13 %) for low-key palettes
+  /// (Diğer / ink) and "seen" cards, whose bottom stop sits close to the
+  /// canvas.
+  static const Color cardHairlineDarkStrong = Color(0x21FFFFFF);
+
+  /// Raised indicator on a muted track (segmented control): light soft
+  /// lift, none in dark (the dark indicator uses a hairline instead).
+  static List<BoxShadow> raised(Brightness b) => b == Brightness.dark
+      ? const []
+      : [
+          BoxShadow(
+            color: _ink.withValues(alpha: 0.10),
+            offset: const Offset(0, 2),
+            blurRadius: 8,
+          ),
+          BoxShadow(
+            color: _ink.withValues(alpha: 0.04),
+            offset: const Offset(0, 1),
+            blurRadius: 2,
+          ),
+        ];
 }
 
 /// Glass parameters (§2.8).
@@ -613,8 +777,18 @@ abstract final class KararGlass {
   /// High-contrast rail fill on photos.
   static const Color railFillHighContrast = Color(0x73000000); // black 45 %
 
-  /// Sheen gradient top colour (fades to transparent at the bottom).
+  /// Sheen gradient top colour (fades to [sheenBottom]).
   static const Color sheenTop = Color(0x1AFFFFFF); // white 10 %
+  static const Color sheenBottom = Color(0x00FFFFFF);
+
+  /// Secondary rail circles (Kaydet / Paylaş) are glass, not solid
+  /// capsules (reference): black 22 % on gradients, 28 % on photos, with a
+  /// 1 px [stroke]; white icon ≥ 5.6:1 on every palette.
+  static const Color railCircle = Color(0x38000000); // black 22 %
+  static const Color railCirclePhoto = Color(0x47000000); // black 28 %
+
+  /// Extra veil on "seen" photo cards (black 20 %).
+  static const Color seenPhotoVeil = Color(0x33000000);
 
   /// 1 px stroke around the rail.
   static const Color stroke = Color(0x47FFFFFF); // white 28 %
@@ -647,6 +821,31 @@ abstract final class KararGradients {
     begin: Alignment(-0.57, -0.82),
     end: Alignment(0.57, 0.82),
     colors: [Color(0xFF8E66F7), Color(0xFF6A3FE6)],
+  );
+
+  /// Text-post decor: white 18 % radial sheen at the top-left.
+  static const RadialGradient cardSheen = RadialGradient(
+    center: Alignment.topLeft,
+    radius: 0.9,
+    colors: [Color(0x2EFFFFFF), Color(0x00FFFFFF)],
+    stops: [0, 0.6],
+  );
+
+  /// Text-post decor: white 10 % radial glow behind the rail (right-middle).
+  static const RadialGradient cardSheenRail = RadialGradient(
+    center: Alignment.centerRight,
+    radius: 0.6,
+    colors: [Color(0x1AFFFFFF), Color(0x00FFFFFF)],
+    stops: [0, 0.7],
+  );
+
+  /// Dark theme: the same sheens, a touch softer so dark cards keep depth
+  /// without a milky top-left.
+  static const RadialGradient cardSheenDark = RadialGradient(
+    center: Alignment.topLeft,
+    radius: 0.9,
+    colors: [Color(0x24FFFFFF), Color(0x00FFFFFF)],
+    stops: [0, 0.6],
   );
 
   /// "Bu Haftanın Kararı" hero and ink digest cards (both themes).

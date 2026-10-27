@@ -171,6 +171,11 @@ class _CommentInputState extends ConsumerState<CommentInput> {
         keyboardInset > 0 ? keyboardInset : MediaQuery.paddingOf(context).bottom;
     final inputRadius = KararRadius.all(24);
     final textStyle = AppTypography.body.copyWith(color: kc.text1);
+    // Dark: the muted pill sits only 1.08:1 off the elevated bar, so it gets
+    // a 1 px outline rim (1.6:1) to keep its shape. Light: no border.
+    final restingSide = kc.isDark
+        ? BorderSide(color: kc.outline.withValues(alpha: 0.4))
+        : BorderSide.none;
 
     return Material(
       color: kc.isDark ? kc.elevated : kc.surface,
@@ -272,11 +277,11 @@ class _CommentInputState extends ConsumerState<CommentInput> {
                           ),
                           border: OutlineInputBorder(
                             borderRadius: inputRadius,
-                            borderSide: BorderSide.none,
+                            borderSide: restingSide,
                           ),
                           enabledBorder: OutlineInputBorder(
                             borderRadius: inputRadius,
-                            borderSide: BorderSide.none,
+                            borderSide: restingSide,
                           ),
                           focusedBorder: OutlineInputBorder(
                             borderRadius: inputRadius,

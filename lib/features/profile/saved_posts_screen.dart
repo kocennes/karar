@@ -9,6 +9,7 @@ import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_indicator.dart';
 import '../../shared/widgets/centered_content.dart';
+import 'widgets/column_app_bar.dart';
 import 'widgets/verdict_tile.dart';
 
 class SavedPostsScreen extends StatelessWidget {
@@ -16,12 +17,12 @@ class SavedPostsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Kaydedilenler'),
+    return const Scaffold(
+      appBar: ColumnAppBar(
+        title: Text('Kaydedilenler'),
         centerTitle: true,
       ),
-      body: const CenteredContent(
+      body: CenteredContent(
         child: SavedPostsGrid(),
       ),
     );

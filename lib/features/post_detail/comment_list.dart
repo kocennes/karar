@@ -333,6 +333,13 @@ class _CommentTile extends ConsumerWidget {
                       else
                         nameText,
                       if (comment.isPostOwner) const _OpChip(),
+                      // Time sits with the name ("@ad · 1s önce"), so the
+                      // action row below never wraps on narrow replies.
+                      Text(
+                        '· ${comment.createdAgo}',
+                        maxLines: 1,
+                        style: AppTypography.meta.copyWith(color: kc.text3),
+                      ),
                     ],
                   ),
                 ),
@@ -546,7 +553,8 @@ class _HighlightFadeState extends State<_HighlightFade>
   }
 }
 
-/// Yanıtla · 👍 n · 👎 n · time · "…" (one merged menu).
+/// Yanıtla · 👍 n · 👎 n · "…" (one merged menu). The time lives in the
+/// name row.
 class _ActionRow extends ConsumerWidget {
   const _ActionRow({
     required this.comment,
@@ -574,7 +582,6 @@ class _ActionRow extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final kc = context.kc;
     final items = <Widget>[
       if (onReply != null && !comment.isOwner)
         _ReplyPill(
@@ -624,20 +631,6 @@ class _ActionRow extends ConsumerWidget {
             onDownvote(comment);
           }
         },
-      ),
-      ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 44),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6),
-          child: Align(
-            widthFactor: 1,
-            child: Text(
-              comment.createdAgo,
-              maxLines: 1,
-              style: AppTypography.meta.copyWith(color: kc.text3),
-            ),
-          ),
-        ),
       ),
     ];
 
@@ -987,9 +980,13 @@ class _CommentMoreMenu extends ConsumerWidget {
                                 height: 56,
                                 alignment: Alignment.center,
                                 decoration: BoxDecoration(
+                                  // Dark: `raised`, since muted is only
+                                  // 1.08:1 off the dark sheet.
                                   color: comment.myReaction == e
                                       ? kc.primaryContainer
-                                      : kc.muted,
+                                      : kc.isDark
+                                          ? kc.raised
+                                          : kc.muted,
                                   shape: BoxShape.circle,
                                   border: comment.myReaction == e
                                       ? Border.all(
@@ -1041,7 +1038,7 @@ class _CommentMoreMenu extends ConsumerWidget {
           FilledButton(
             style: FilledButton.styleFrom(
               backgroundColor: ctx.kc.haksizFill,
-              foregroundColor: Colors.white,
+              foregroundColor: ctx.kc.onColor,
             ),
             onPressed: () async {
               Navigator.pop(ctx);
@@ -1240,7 +1237,7 @@ void _confirmDelete(
         FilledButton(
           style: FilledButton.styleFrom(
             backgroundColor: ctx.kc.haksizFill,
-            foregroundColor: Colors.white,
+            foregroundColor: ctx.kc.onColor,
           ),
           onPressed: () {
             Navigator.pop(ctx);

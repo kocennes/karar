@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
@@ -13,6 +11,7 @@ import 'core/ads/ad_service.dart';
 import 'core/app_services.dart';
 import 'core/providers.dart';
 import 'core/theme/app_theme.dart';
+import 'core/theme/karar_tokens.dart';
 import 'firebase_options.dart';
 import 'shared/widgets/offline_view.dart';
 
@@ -114,12 +113,19 @@ class _BootstrapAppState extends State<_BootstrapApp> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const MaterialApp(
+      // Same brand panel as the splash screen that follows, so the hand-off
+      // from bootstrap to splash does not flash a flat block.
+      return MaterialApp(
         debugShowCheckedModeBanner: false,
         home: Scaffold(
-          backgroundColor: Color(0xFF7D50F0), // AppColors.primary
-          body: Center(
-            child: CircularProgressIndicator(color: Colors.white),
+          backgroundColor: KararColors.light.primaryFill,
+          body: DecoratedBox(
+            decoration: const BoxDecoration(gradient: KararGradients.brand),
+            child: Center(
+              child: CircularProgressIndicator(
+                color: KararColors.light.onColor,
+              ),
+            ),
           ),
         ),
       );

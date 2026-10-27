@@ -21,6 +21,8 @@ import '../../shared/widgets/karar_button.dart';
 import '../../shared/widgets/karar_chip.dart';
 import '../../shared/widgets/karar_sheet.dart';
 import '../../shared/widgets/loading_indicator.dart';
+import '../profile/widgets/column_app_bar.dart';
+import '../profile/widgets/hue_tint.dart';
 import 'data/notification_item.dart';
 import 'notifications_provider.dart';
 
@@ -34,7 +36,8 @@ class NotificationsScreen extends ConsumerWidget {
     final kc = context.kc;
 
     return Scaffold(
-      appBar: AppBar(
+      // Desktop: title and actions line up with the 680 px list column.
+      appBar: ColumnAppBar(
         centerTitle: false,
         title: FittedBox(
           fit: BoxFit.scaleDown,
@@ -143,7 +146,11 @@ class _NotificationControls extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final prefs = ref.watch(userPreferencesProvider);
 
-    return SingleChildScrollView(
+    // Start-aligned (the narrower row used to be centred by the parent
+    // Column on desktop), with the same 16 px inset as the cards below.
+    return Align(
+      alignment: AlignmentDirectional.centerStart,
+      child: SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
       child: Row(
@@ -172,6 +179,7 @@ class _NotificationControls extends ConsumerWidget {
             onTap: () => context.push('/settings/notifications'),
           ),
         ],
+      ),
       ),
     );
   }
@@ -424,12 +432,12 @@ class _WebPushBannerState extends ConsumerState<_WebPushBanner> {
                 textStyle: AppTypography.label,
               ),
               child: _isRequesting
-                  ? const SizedBox(
+                  ? SizedBox(
                       width: 16,
                       height: 16,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: Colors.white,
+                        color: kc.onColor,
                       ),
                     )
                   : const Text('Aç'),
@@ -519,6 +527,7 @@ class _DigestWidget extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(digestPostsProvider);
+    final kc = context.kc;
 
     return async.when(
       loading: () => const SizedBox.shrink(),
@@ -544,8 +553,14 @@ class _DigestWidget extends ConsumerWidget {
                   padding: const EdgeInsets.only(right: 8),
                   child: Row(
                     children: [
-                      const ExcludeSemantics(
-                        child: Text('📊', style: TextStyle(fontSize: 16)),
+                      // Rounded Material icon instead of the colour emoji
+                      // (matches the rest of the icon set).
+                      ExcludeSemantics(
+                        child: Icon(
+                          Icons.insights_rounded,
+                          size: 20,
+                          color: kc.gold,
+                        ),
                       ),
                       const SizedBox(width: 8),
                       Expanded(
@@ -554,7 +569,7 @@ class _DigestWidget extends ConsumerWidget {
                           style: AppTypography.bodyStrong.copyWith(
                             fontSize: 16,
                             fontWeight: FontWeight.w800,
-                            color: Colors.white,
+                            color: kc.onColor,
                           ),
                         ),
                       ),
@@ -567,7 +582,7 @@ class _DigestWidget extends ConsumerWidget {
                   alignment: AlignmentDirectional.centerEnd,
                   child: TextButton(
                     style: TextButton.styleFrom(
-                      foregroundColor: Colors.white,
+                      foregroundColor: kc.onColor,
                       padding: const EdgeInsets.symmetric(horizontal: 10),
                       minimumSize: const Size(44, 44),
                       textStyle: AppTypography.label,
@@ -575,7 +590,7 @@ class _DigestWidget extends ConsumerWidget {
                     onPressed: () => context.go('/'),
                     child: Text(
                       'Hepsini Gör →',
-                      style: AppTypography.label.copyWith(color: Colors.white),
+                      style: AppTypography.label.copyWith(color: kc.onColor),
                     ),
                   ),
                 ),
@@ -605,11 +620,11 @@ class _DigestItem extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(0, 4, 8, 4),
           child: Row(
             children: [
-              const ExcludeSemantics(
+              ExcludeSemantics(
                 child: Text(
                   '•  ',
                   style: TextStyle(
-                    color: Colors.white,
+                    color: kc.onColor,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -619,7 +634,7 @@ class _DigestItem extends StatelessWidget {
                   post.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: AppTypography.bodyS.copyWith(color: Colors.white),
+                  style: AppTypography.bodyS.copyWith(color: kc.onColor),
                 ),
               ),
               const SizedBox(width: 8),
@@ -644,12 +659,9 @@ class _DigestItem extends StatelessWidget {
   final kc = context.kc;
   final dark = context.isDark;
 
-  ({Color bg, Color fg}) tinted(Color hue) => dark
-      ? (
-          bg: Color.lerp(hue, kc.surface, 0.8)!,
-          fg: Color.lerp(hue, Colors.white, 0.45)!,
-        )
-      : (bg: Color.lerp(hue, kc.surface, 0.88)!, fg: hue);
+  // Dark: a lighter tone of the same hue (not a lerp to white, which made
+  // amber a muddy beige). See [hueTint].
+  ({Color bg, Color fg}) tinted(Color hue) => hueTint(kc, hue);
 
   return switch (type) {
     'verdict_milestone' => (bg: kc.warnSoft, fg: kc.goldText),
@@ -676,8 +688,10 @@ class _NotificationTile extends ConsumerWidget {
     final colors = _tileColors(context, item.type);
     final radius = KararRadius.all(KararRadius.tile);
 
+    // Same 16 px inset as the digest card and the chips row, so every
+    // rounded surface in the column shares its edges.
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       child: Dismissible(
         key: ValueKey(item.id),
         direction: DismissDirection.endToStart,
@@ -722,7 +736,7 @@ class _NotificationTile extends ConsumerWidget {
             child: ConstrainedBox(
               constraints: const BoxConstraints(minHeight: 72),
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(8, 12, 8, 12),
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [

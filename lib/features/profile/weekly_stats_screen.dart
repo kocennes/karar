@@ -5,11 +5,14 @@ import '../../core/app_services.dart';
 import '../../core/layout/breakpoints.dart';
 import '../../core/providers.dart';
 import '../../core/theme/app_typography.dart';
+import '../../core/theme/category_style.dart';
 import '../../core/theme/karar_tokens.dart';
 import '../../shared/models/post.dart';
 import '../../shared/widgets/centered_content.dart';
 import '../../shared/widgets/karar_button.dart';
 import '../../shared/widgets/karar_surface.dart';
+import 'widgets/column_app_bar.dart';
+import 'widgets/hue_tint.dart';
 
 final weeklyStatsProvider =
     FutureProvider.autoDispose<WeeklyStats>((ref) async {
@@ -37,8 +40,8 @@ class WeeklyStatsScreen extends ConsumerWidget {
     final kc = context.kc;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Haftalık Vicdan Karnen'),
+      appBar: const ColumnAppBar(
+        title: Text('Haftalık Vicdan Karnen'),
         centerTitle: true,
       ),
       body: CenteredContent(
@@ -185,6 +188,7 @@ class _StatsGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final kc = context.kc;
+    final commentTint = hueTint(kc, CategoryStyle.ocean.start);
     final tiles = [
       _StatCard(
         icon: Icons.auto_awesome_rounded,
@@ -211,12 +215,36 @@ class _StatsGrid extends StatelessWidget {
         icon: Icons.chat_bubble_rounded,
         label: 'Yorum',
         value: '${stats.commentsPosted}',
-        tint: kc.muted,
-        iconColor: kc.text2,
+        // Ocean tint: the neutral muted disc read as disabled next to the
+        // three tinted ones.
+        tint: commentTint.bg,
+        iconColor: commentTint.fg,
       ),
     ];
-    // Two rows of two; rows size to their content so large text never
-    // overflows a fixed aspect ratio.
+    // Wide (desktop/tablet column): one row of four, so the tiles are not
+    // mostly empty. Narrow: two rows of two. Rows size to their content so
+    // large text never overflows a fixed aspect ratio.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth >= 560) {
+          return IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (var i = 0; i < tiles.length; i++) ...[
+                  if (i > 0) const SizedBox(width: 10),
+                  Expanded(child: tiles[i]),
+                ],
+              ],
+            ),
+          );
+        }
+        return _twoByTwo(tiles);
+      },
+    );
+  }
+
+  Widget _twoByTwo(List<Widget> tiles) {
     return Column(
       children: [
         IntrinsicHeight(

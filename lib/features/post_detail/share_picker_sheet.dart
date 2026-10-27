@@ -214,7 +214,8 @@ class _SharePickerSheetState extends ConsumerState<SharePickerSheet> {
   }
 }
 
-/// Share target: 56 px muted circle + two-line 12/700 label.
+/// Share target: 56 px circle + two-line 12/700 label. The circle is muted
+/// in light and `raised` in dark (muted is only 1.08:1 off the dark sheet).
 class _OptionButton extends StatelessWidget {
   const _OptionButton({
     required this.icon,
@@ -245,7 +246,7 @@ class _OptionButton extends StatelessWidget {
               height: 56,
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: kc.muted,
+                color: kc.isDark ? kc.raised : kc.muted,
                 shape: BoxShape.circle,
               ),
               child: loading

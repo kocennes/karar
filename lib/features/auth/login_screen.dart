@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/api/api_exception.dart';
 import '../../core/auth/auth_service.dart';
+import '../../core/layout/breakpoints.dart';
 import '../../core/utils/validators.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/theme/karar_tokens.dart';
@@ -125,11 +126,15 @@ class _LoginScreenState extends State<LoginScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const AuthHeader(
+            // Desktop: the brand panel beside the form already says this
+            // sentence, so the form keeps only the headline.
+            AuthHeader(
               title: 'Tekrar Hoş Geldin',
-              subtitle: Text(
-                'Hüküm vermek için sabırsızlanan bir topluluk var.',
-              ),
+              subtitle: context.isDesktop
+                  ? null
+                  : const Text(
+                      'Hüküm vermek için sabırsızlanan bir topluluk var.',
+                    ),
             ),
             TextFormField(
               controller: _identifierCtrl,
@@ -273,7 +278,9 @@ class _LoginScreenState extends State<LoginScreen> {
               onPressed: _isLoading ? null : _googleSignIn,
               variant: KararButtonVariant.outlined,
               size: KararButtonSize.large,
-              icon: Icons.g_mobiledata,
+              // `g_mobiledata` rendered as a tiny broken "G" (no brand
+              // asset is bundled); a neutral sign-in glyph instead.
+              icon: Icons.login_rounded,
             ),
             const SizedBox(height: 20),
             Wrap(
@@ -291,11 +298,13 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 4),
+            // Text button: a third 56 px slab made the CTA stack heavy, and
+            // the dark tonal fill read as disabled.
             KararButton(
               label: 'Misafir Olarak Dene',
               onPressed: _isLoading ? null : () => Navigator.pop(context),
-              variant: KararButtonVariant.tonal,
+              variant: KararButtonVariant.text,
             ),
           ],
         ),

@@ -286,7 +286,7 @@ class _ImageThumbnailState extends State<_ImageThumbnail> {
               onPressed: widget.onRemove,
               tooltip: 'Kaldır',
               style: KararCircleStyle.onColor,
-              backgroundColor: Colors.black.withValues(alpha: 0.55),
+              backgroundColor: kc.mediaBackdrop.withValues(alpha: 0.55),
               size: 28,
               iconSize: 16,
             ),

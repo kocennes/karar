@@ -54,18 +54,10 @@ class KararLogo extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         gradient: KararGradients.logo,
-        boxShadow: kc.isDark
-            ? null
-            : [
-                BoxShadow(
-                  color: const Color(0xFF7D50F0).withValues(alpha: 0.35),
-                  offset: const Offset(0, 8),
-                  blurRadius: 18,
-                ),
-              ],
+        boxShadow: KararShadow.logo(kc.brightness),
       ),
       alignment: Alignment.center,
-      child: Icon(Icons.balance_rounded, size: iconSize, color: Colors.white),
+      child: Icon(Icons.balance_rounded, size: iconSize, color: kc.onColor),
     );
 
     if (!showWordmark) {

@@ -16,6 +16,9 @@ import '../../../shared/widgets/karar_surface.dart';
 ///   trailing switch / chevron / value.
 
 /// Section header: sentence case (never upper-cased), 13/800 text3.
+/// Starts at 32 px, the left edge of the rows' icon tiles (group margin 16
+/// + card padding 4 + row padding 12), so header, tiles and titles share
+/// one column instead of three different left edges.
 class SettingsSectionHeader extends StatelessWidget {
   const SettingsSectionHeader(this.title, {super.key});
 
@@ -24,7 +27,7 @@ class SettingsSectionHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 20, 24, 8),
+      padding: const EdgeInsets.fromLTRB(32, 20, 24, 8),
       child: Semantics(
         header: true,
         child: Text(
@@ -161,7 +164,7 @@ class SettingsRow extends StatelessWidget {
                 child: Icon(icon, size: 20, color: tileFg),
               ),
             ),
-            const SizedBox(width: 16),
+            const SizedBox(width: 14),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -177,16 +180,22 @@ class SettingsRow extends StatelessWidget {
                   ),
                   if (subtitle != null && subtitle!.isNotEmpty) ...[
                     const SizedBox(height: 2),
+                    // 13/500 so most subtitles fit on one line beside a
+                    // switch instead of leaving an orphaned last word.
                     Text(
                       subtitle!,
-                      style: AppTypography.bodyS.copyWith(color: kc.text2),
+                      style: AppTypography.bodyS.copyWith(
+                        fontSize: 13,
+                        height: 18 / 13,
+                        color: kc.text2,
+                      ),
                     ),
                   ],
                 ],
               ),
             ),
             if (trailingWidget != null) ...[
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
               trailingWidget,
             ],
           ],

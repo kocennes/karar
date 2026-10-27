@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../core/theme/app_colors.dart';
+import '../../core/theme/karar_tokens.dart';
 
 class ContactScreen extends StatelessWidget {
   const ContactScreen({super.key});
@@ -66,17 +66,17 @@ class ContactScreen extends StatelessWidget {
 class _InfoBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.primary.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
+        color: kc.primaryContainer,
+        borderRadius: KararRadius.all(KararRadius.input),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.info_outline, size: 20, color: AppColors.primary),
+          Icon(Icons.info_outline_rounded, size: 20, color: kc.onPrimaryContainer),
           const SizedBox(width: 12),
           Expanded(
             child: Text(
@@ -84,7 +84,7 @@ class _InfoBanner extends StatelessWidget {
               'Hukuka aykırı içerik bildirimleri ve kaldırma taleplerinizi aşağıdaki kanallar '
               'aracılığıyla iletebilirsiniz. Talepler en geç 48 saat içinde incelenir.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: AppColors.primary,
+                    color: kc.onPrimaryContainer,
                     height: 1.5,
                   ),
             ),
@@ -115,12 +115,13 @@ class _ContactCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
       child: ListTile(
         leading: CircleAvatar(
-          backgroundColor: AppColors.primary.withValues(alpha: 0.1),
-          child: Icon(entry.icon, size: 20, color: AppColors.primary),
+          backgroundColor: kc.primaryContainer,
+          child: Icon(entry.icon, size: 20, color: kc.primary),
         ),
         title: Text(
           entry.title,
@@ -132,17 +133,16 @@ class _ContactCard extends StatelessWidget {
             const SizedBox(height: 2),
             Text(
               entry.subtitle,
-              style:
-                  const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              style: TextStyle(fontSize: 12, color: kc.text2),
             ),
             const SizedBox(height: 4),
             Text(
               entry.value,
               style: TextStyle(
-                color: AppColors.primary,
+                color: kc.primaryText,
                 fontWeight: FontWeight.w500,
                 decoration: TextDecoration.underline,
-                decorationColor: AppColors.primary.withValues(alpha: 0.5),
+                decorationColor: kc.primaryText.withValues(alpha: 0.5),
               ),
             ),
           ],
@@ -184,7 +184,7 @@ class _LegalNote extends StatelessWidget {
       '5651 sayılı Kanun kapsamında yer sağlayıcı sıfatıyla bu bilgiler zorunlu olarak '
       'paylaşılmaktadır. Yanıt süresi talebin niteliğine göre değişir.',
       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: AppColors.textTertiary,
+            color: context.kc.text3,
             height: 1.6,
           ),
       textAlign: TextAlign.center,

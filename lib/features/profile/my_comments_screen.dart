@@ -13,18 +13,19 @@ import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/karar_surface.dart';
 import '../../shared/widgets/loading_indicator.dart';
 import '../../shared/widgets/centered_content.dart';
+import 'widgets/column_app_bar.dart';
 
 class MyCommentsScreen extends StatelessWidget {
   const MyCommentsScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Yorumlarım'),
+    return const Scaffold(
+      appBar: ColumnAppBar(
+        title: Text('Yorumlarım'),
         centerTitle: true,
       ),
-      body: const CenteredContent(
+      body: CenteredContent(
         child: MyCommentsList(),
       ),
     );
@@ -169,7 +170,7 @@ class ProfileCommentCard extends StatelessWidget {
 
     return KararSurface(
       radius: KararRadius.tile,
-      padding: const EdgeInsets.fromLTRB(16, 12, 12, 14),
+      padding: const EdgeInsets.fromLTRB(20, 16, 16, 16),
       onTap: () => context.push('/posts/${comment.postId}'),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -192,41 +193,38 @@ class ProfileCommentCard extends StatelessWidget {
               Icon(Icons.chevron_right_rounded, size: 18, color: kc.text3),
             ],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
           Padding(
             padding: const EdgeInsets.only(right: 4),
             child: Text(
               comment.content,
               maxLines: maxBodyLines,
-              overflow:
-                  maxBodyLines == null ? null : TextOverflow.ellipsis,
+              overflow: maxBodyLines == null ? null : TextOverflow.ellipsis,
               style: AppTypography.body.copyWith(color: kc.text1),
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Wrap(
             crossAxisAlignment: WrapCrossAlignment.center,
             spacing: 12,
             runSpacing: 4,
             children: [
               _MetaCount(
-                icon: Icons.thumb_up_alt_outlined,
+                icon: Icons.thumb_up_off_alt_rounded,
                 value: comment.upvoteCount,
                 style: metaStyle,
                 color: kc.text2,
               ),
               _MetaCount(
-                icon: Icons.thumb_down_alt_outlined,
+                icon: Icons.thumb_down_off_alt_rounded,
                 value: comment.downvoteCount,
                 style: metaStyle,
                 color: kc.text2,
               ),
               Text(comment.createdAgo, style: metaStyle),
-              if (comment.isEdited)
-                Text(
-                  'düzenlendi',
-                  style: metaStyle.copyWith(fontStyle: FontStyle.italic),
-                ),
+              // No italic face is bundled (synthetic slant); the meta
+              // style (text3, w600) already sets it apart.
+              if (comment.isEdited) Text('düzenlendi', style: metaStyle),
             ],
           ),
         ],

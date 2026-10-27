@@ -77,8 +77,10 @@ class KararSheetHeader extends StatelessWidget {
                 child: Container(
                   width: 40,
                   height: 5,
+                  // outline @ 55 %: visible on white and on the dark sheet
+                  // (outlineVariant vanished on #1F1C2A).
                   decoration: BoxDecoration(
-                    color: kc.outlineVariant,
+                    color: kc.outline.withValues(alpha: 0.55),
                     borderRadius: KararRadius.all(3),
                   ),
                 ),
