@@ -10417,6 +10417,7 @@ app.MapGet("/api/v1/users/{username}/comments", async (
         FROM comments cm
         JOIN posts p ON p.id = cm.post_id
         WHERE cm.user_id = @userId AND cm.status = 'active' AND p.status = 'active'
+          AND NOT (p.is_anonymous AND p.user_id IS NOT DISTINCT FROM cm.user_id)
         """,
         connection
     );
@@ -10431,6 +10432,7 @@ app.MapGet("/api/v1/users/{username}/comments", async (
         FROM comments cm
         JOIN posts p ON p.id = cm.post_id
         WHERE cm.user_id = @userId AND cm.status = 'active' AND p.status = 'active'
+          AND NOT (p.is_anonymous AND p.user_id IS NOT DISTINCT FROM cm.user_id)
         ORDER BY cm.created_at DESC
         LIMIT @limit OFFSET @offset
         """,
