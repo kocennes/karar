@@ -4065,6 +4065,7 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
                 LEFT JOIN comment_downvotes cd ON cd.comment_id = cm.id AND cd.device_id = @deviceId
                 LEFT JOIN users u ON u.id = cm.user_id
                 WHERE cm.parent_id = ANY(@parentIds) AND cm.status = 'active'
+                  AND cm.post_id = @postId
                   AND (
                       @userId = '00000000-0000-0000-0000-000000000000'::uuid
                       OR NOT EXISTS (
@@ -4084,6 +4085,7 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
                 LEFT JOIN comment_downvotes cd ON cd.comment_id = cm.id AND cd.device_id = @deviceId
                 LEFT JOIN users u ON u.id = cm.user_id
                 WHERE cm.status = 'active'
+                  AND cm.post_id = @postId
                   AND (
                       @userId = '00000000-0000-0000-0000-000000000000'::uuid
                       OR NOT EXISTS (
@@ -4203,6 +4205,36 @@ app.MapPost("/api/v1/posts/{id:guid}/comments", async (
             new ErrorEnvelope(new ErrorBody("BLOCKED_BY_AUTHOR", "Bu içeriğe yorum yapamazsınız.")),
             statusCode: StatusCodes.Status403Forbidden
         );
+    }
+
+    await using var postCheck = new NpgsqlCommand(
+        "SELECT EXISTS(SELECT 1 FROM posts WHERE id = @postId AND status = 'active')",
+        connection,
+        transaction
+    );
+    postCheck.Parameters.AddWithValue("postId", id);
+    if (!(bool)(await postCheck.ExecuteScalarAsync() ?? false))
+    {
+        await transaction.RollbackAsync();
+        return NotFound("POST_NOT_FOUND", "Post bulunamadı.");
+    }
+
+    // Yanıt yalnızca aynı gönderideki aktif bir yoruma bağlanabilir; aksi halde başka bir
+    // gönderinin başlığına yanıt enjekte edilip "Yargılanan" rozeti taklit edilebilir.
+    if (request.ParentId is not null)
+    {
+        await using var parentCheck = new NpgsqlCommand(
+            "SELECT EXISTS(SELECT 1 FROM comments WHERE id = @parentId AND post_id = @postId AND status = 'active')",
+            connection,
+            transaction
+        );
+        parentCheck.Parameters.AddWithValue("parentId", request.ParentId.Value);
+        parentCheck.Parameters.AddWithValue("postId", id);
+        if (!(bool)(await parentCheck.ExecuteScalarAsync() ?? false))
+        {
+            await transaction.RollbackAsync();
+            return BadRequest("INVALID_PARENT", "Yanıtlanan yorum bu gönderiye ait değil.");
+        }
     }
 
     await using var command = new NpgsqlCommand(
