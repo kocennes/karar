@@ -157,7 +157,7 @@ class _HistoryList extends StatelessWidget {
         ],
         const SizedBox(height: 20),
         Text(
-          'RaporlarÄ±m',
+          'Raporlarım',
           style: Theme.of(context).textTheme.titleSmall?.copyWith(
                 color: AppColors.textSecondary,
                 fontWeight: FontWeight.w700,
@@ -166,12 +166,12 @@ class _HistoryList extends StatelessWidget {
         const SizedBox(height: 8),
         if (reportsError)
           const Text(
-            'Rapor durumlarÄ± yÃ¼klenemedi.',
+            'Rapor durumları yüklenemedi.',
             style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
           )
         else if (reports.reports.isEmpty)
           const Text(
-            'HenÃ¼z gÃ¶nderdiÄŸin bir rapor yok.',
+            'Henüz gönderdiğin bir rapor yok.',
             style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
           )
         else

@@ -90,9 +90,8 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - logo/
-    - docs/legal.md
-    - docs/privacy.md
-    - docs/community-guidelines.md
-    - docs/content-policy.md
-    - docs/faq.md
+    - assets/legal/legal.md
+    - assets/legal/privacy.md
+    - assets/legal/community-guidelines.md
+    - assets/legal/content-policy.md
+    - assets/legal/faq.md

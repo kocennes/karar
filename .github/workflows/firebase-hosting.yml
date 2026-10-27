@@ -26,12 +26,36 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      # Same defines as the live build (scripts/deploy-web.ps1). Without them the
+      # app compiles against mock data (USE_REMOTE_API=false) and localhost:5088.
       - name: Build Flutter web
-        run: flutter build web --release
+        env:
+          API_BASE_URL: https://karar-oq5t.onrender.com
+          WEB_VAPID_KEY: ${{ vars.WEB_VAPID_KEY }}
+        run: |
+          flutter build web --release \
+            --no-wasm-dry-run \
+            --dart-define=USE_REMOTE_API=true \
+            --dart-define=API_BASE_URL="$API_BASE_URL" \
+            --dart-define=WEB_VAPID_KEY="$WEB_VAPID_KEY"
+
+      # Without the service account secret (not configured yet, or Dependabot/fork
+      # PRs) the build is still verified and the deploy steps are skipped.
+      - name: Check Firebase deploy credentials
+        id: firebase-sa
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JUDGE_APP_KARAR }}
+        run: |
+          if [ -z "$FIREBASE_SA" ]; then
+            echo "::warning::FIREBASE_SERVICE_ACCOUNT_JUDGE_APP_KARAR not configured — web build verified, deploy skipped."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
 
       # PR: deploy to an isolated preview channel (expires after 7 days)
       - name: Deploy preview channel (PR)
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && steps.firebase-sa.outputs.configured == 'true'
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
@@ -43,7 +67,7 @@ jobs:
 
       # main merge: deploy to live channel
       - name: Deploy to production (live)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.firebase-sa.outputs.configured == 'true'
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
@@ -54,7 +78,7 @@ jobs:
 
       # SPA smoke test: verify the live URL returns HTTP 200 and index.html content
       - name: SPA rewrite smoke test
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.firebase-sa.outputs.configured == 'true'
         run: |
           echo "Waiting 15s for propagation..."
           sleep 15

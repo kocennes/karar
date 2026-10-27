@@ -217,28 +217,28 @@ GoRouter buildRouter(AppServices services) => GoRouter(
           path: '/legal/terms',
           builder: (_, __) => const LegalScreen(
             title: 'Kullanım Koşulları',
-            assetPath: 'docs/legal.md',
+            assetPath: 'assets/legal/legal.md',
           ),
         ),
         GoRoute(
           path: '/legal/privacy',
           builder: (_, __) => const LegalScreen(
             title: 'Gizlilik Politikası',
-            assetPath: 'docs/privacy.md',
+            assetPath: 'assets/legal/privacy.md',
           ),
         ),
         GoRoute(
           path: '/legal/community',
           builder: (_, __) => const LegalScreen(
             title: 'Topluluk Kuralları',
-            assetPath: 'docs/community-guidelines.md',
+            assetPath: 'assets/legal/community-guidelines.md',
           ),
         ),
         GoRoute(
           path: '/legal/content-policy',
           builder: (_, __) => const LegalScreen(
             title: 'İçerik Politikası',
-            assetPath: 'docs/content-policy.md',
+            assetPath: 'assets/legal/content-policy.md',
           ),
         ),
         GoRoute(
@@ -269,7 +269,7 @@ GoRouter buildRouter(AppServices services) => GoRouter(
           path: '/legal/faq',
           builder: (_, __) => const LegalScreen(
             title: 'Sık Sorulan Sorular',
-            assetPath: 'docs/faq.md',
+            assetPath: 'assets/legal/faq.md',
           ),
         ),
         GoRoute(
