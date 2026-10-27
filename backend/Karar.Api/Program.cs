@@ -4064,6 +4064,7 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
                 LEFT JOIN comment_downvotes cd ON cd.comment_id = cm.id AND cd.device_id = @deviceId
                 LEFT JOIN users u ON u.id = cm.user_id
                 WHERE cm.parent_id = ANY(@parentIds) AND cm.status = 'active'
+                  AND cm.post_id = @postId
                   AND (
                       @userId = '00000000-0000-0000-0000-000000000000'::uuid
                       OR NOT EXISTS (
@@ -4083,6 +4084,7 @@ app.MapGet("/api/v1/posts/{id:guid}/comments", async (
                 LEFT JOIN comment_downvotes cd ON cd.comment_id = cm.id AND cd.device_id = @deviceId
                 LEFT JOIN users u ON u.id = cm.user_id
                 WHERE cm.status = 'active'
+                  AND cm.post_id = @postId
                   AND (
                       @userId = '00000000-0000-0000-0000-000000000000'::uuid
                       OR NOT EXISTS (
@@ -4202,6 +4204,23 @@ app.MapPost("/api/v1/posts/{id:guid}/comments", async (
             new ErrorEnvelope(new ErrorBody("BLOCKED_BY_AUTHOR", "Bu içeriğe yorum yapamazsınız.")),
             statusCode: StatusCodes.Status403Forbidden
         );
+    }
+
+    // Yanıt yalnızca aynı gönderideki aktif bir yoruma bağlanabilir. Aksi halde başka gönderinin
+    // yorumuna verilen yanıt o başlıkta sahte "Yargılanan" rozetiyle görünür (çapraz gönderi enjeksiyonu).
+    if (request.ParentId is not null)
+    {
+        await using var parentCmd = new NpgsqlCommand(
+            "SELECT post_id FROM comments WHERE id = @parentId AND status = 'active'",
+            connection,
+            transaction
+        );
+        parentCmd.Parameters.AddWithValue("parentId", request.ParentId.Value);
+        if (await parentCmd.ExecuteScalarAsync() is not Guid parentPostId || parentPostId != id)
+        {
+            await transaction.RollbackAsync();
+            return BadRequest("INVALID_PARENT_COMMENT", "Yanıtlanan yorum bulunamadı veya bu gönderiye ait değil.");
+        }
     }
 
     await using var command = new NpgsqlCommand(
