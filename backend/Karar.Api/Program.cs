@@ -899,20 +899,19 @@ app.MapPost("/api/v1/devices/register", async (
         return BadRequest("INVALID_PLATFORM", "Platform android, ios veya web olmalı.");
     }
 
-    // /24 subnet rate limit: max 5 registrations per hour per subnet
-    var subnetBlock = GetClientIpBlock(httpRequest);
-    if (subnetBlock is not null)
+    // Ağ bloğu rate limit (saatlik): IPv4 /24 → 5; IPv6 /64 → 5, /56 → 20, /48 → 50.
+    // Geniş IPv6 kovaları, tek abonenin /64'leri döndürerek sınırsız cihaz (ve oy) üretmesini engeller.
+    foreach (var bucket in DeviceRegistrationRateLimit.GetBuckets(httpRequest.HttpContext.Connection.RemoteIpAddress))
     {
-        var rateLimitKey = $"device_reg:subnet:{subnetBlock}";
         var db2 = redis.GetDb();
-        var count = await db2.StringIncrementAsync(rateLimitKey);
+        var count = await db2.StringIncrementAsync(bucket.Key);
         if (count == 1)
         {
-            await db2.KeyExpireAsync(rateLimitKey, TimeSpan.FromHours(1));
+            await db2.KeyExpireAsync(bucket.Key, DeviceRegistrationRateLimit.Window);
         }
-        if (count > 5)
+        if (count > bucket.Limit)
         {
-            log.LogWarning("DeviceRegister: /24 subnet rate limit aşıldı. Subnet={S}", subnetBlock);
+            log.LogWarning("DeviceRegister: ağ bloğu kayıt limiti aşıldı. Bucket={B}", bucket.Key);
             return TooManyRequests("SUBNET_RATE_LIMIT", "Bu ağdan çok fazla kayıt yapıldı. Lütfen bir saat sonra tekrar deneyin.");
         }
     }
@@ -5926,6 +5925,7 @@ app.MapPost("/api/v1/admin/devices/{id:guid}/ban", async (
     command.Parameters.AddWithValue("reason", request.Reason);
     command.Parameters.AddWithValue("expiresAt", (object?)expiresAt ?? DBNull.Value);
     await command.ExecuteNonQueryAsync();
+    await SetBannedDeviceVoteSuppressionAsync(connection, transaction, id, suppress: true);
 
     await LogAdminActionAsync(connection, transaction, adminEmail, "ban_device", "device", id, request.Reason);
     await transaction.CommitAsync();
@@ -5960,6 +5960,7 @@ app.MapPost("/api/v1/admin/devices/{id:guid}/unban", async (
         await transaction.RollbackAsync();
         return NotFound("DEVICE_NOT_FOUND", "Cihaz bulunamadı.");
     }
+    await SetBannedDeviceVoteSuppressionAsync(connection, transaction, id, suppress: false);
 
     await LogAdminActionAsync(connection, transaction, adminEmail, "unban_device", "device", id, null);
     await transaction.CommitAsync();
@@ -14770,6 +14771,50 @@ static async Task UpdateVoteCountersAsync(
     );
     command.Parameters.AddWithValue("postId", postId);
     await command.ExecuteNonQueryAsync();
+}
+
+// Banlanan cihazın oyları görünür sayaçlardan çıkarılır (ban kaldırılınca yalnızca bu oylar geri gelir);
+// etkilenen her gönderinin sayaçları aynı transaction içinde DB durumundan yeniden hesaplanır.
+static async Task SetBannedDeviceVoteSuppressionAsync(
+    NpgsqlConnection connection,
+    NpgsqlTransaction transaction,
+    Guid deviceId,
+    bool suppress
+)
+{
+    var sql = suppress
+        ? """
+          UPDATE votes
+          SET is_suppressed = TRUE,
+              suppression_reason = 'device_banned',
+              suppressed_at = NOW()
+          WHERE device_id = @deviceId AND is_suppressed = FALSE
+          RETURNING post_id
+          """
+        : """
+          UPDATE votes
+          SET is_suppressed = FALSE,
+              suppression_reason = NULL,
+              suppressed_at = NULL
+          WHERE device_id = @deviceId AND suppression_reason = 'device_banned'
+          RETURNING post_id
+          """;
+
+    var postIds = new List<Guid>();
+    await using (var command = new NpgsqlCommand(sql, connection, transaction))
+    {
+        command.Parameters.AddWithValue("deviceId", deviceId);
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            postIds.Add(reader.GetGuid(0));
+        }
+    }
+
+    foreach (var postId in postIds)
+    {
+        await UpdateVoteCountersAsync(connection, transaction, postId, null, null);
+    }
 }
 
 static async Task<VoteResponse> GetVoteResponseAsync(
