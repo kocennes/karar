@@ -2677,7 +2677,7 @@ app.MapPost("/api/v1/posts", async (
         var objectName = $"posts/{Guid.NewGuid()}.jpg";
 
         using var stream = imageFile.OpenReadStream();
-        using var processedStream = await imageProcessorService.ProcessAsync(stream);
+        using var processedStream = await imageProcessorService.ProcessAsync(stream, httpRequest.HttpContext.RequestAborted);
 
         // Decode/re-encode zorunlu: işlenemeyen dosya yüklenmez, post oluşturma reddedilir.
         if (processedStream is null)
