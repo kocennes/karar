@@ -47,7 +47,7 @@ public sealed class BrigadeCoordinatedDetectorTests
         job.Should().Contain("median_account_age_hours < @youngAccountMaxHours", "median age filter must be present");
         job.Should().Contain("device_count >= @minDevices", "must check ≥15 devices");
         job.Should().Contain("ip_concentration", "must compute IP block concentration");
-        job.Should().Contain("fp_concentration", "must compute fingerprint prefix concentration");
+        job.Should().NotContain("fp_concentration", "client fingerprints are constant per platform and must not count as concentration");
         job.Should().Contain("IpBlockConcentrationThreshold", "must apply 60% concentration threshold");
         job.Should().Contain("INTERVAL '24 hours'", "coordinated pattern check must look at 24h window");
 

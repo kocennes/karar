@@ -20,12 +20,6 @@ public sealed class VoteBrigadeGuardTests
         VoteBrigadeGuard.WindowMinutes.Should().Be(10);
     }
 
-    [Fact]
-    public void FingerprintPrefixLength_Is8()
-    {
-        VoteBrigadeGuard.FingerprintPrefixLength.Should().Be(8);
-    }
-
     // ── BrigadeGuardResult ──────────────────────────────────────────────────
 
     [Fact]
@@ -71,26 +65,17 @@ public sealed class VoteBrigadeGuardTests
         code.Should().Contain("quarantined = TRUE", "suppression must also set quarantined column (brigade job compat)");
     }
 
-    // ── Service code: fingerprint prefix detection ──────────────────────────
+    // ── Service code: no client-fingerprint clustering ─────────────────────
 
     [Fact]
-    public void ServiceCode_ChecksFingerprintPrefixCluster()
+    public void ServiceCode_DoesNotClusterVotesByClientFingerprint()
     {
         var code = ReadGuard();
 
-        code.Should().Contain("LEFT(d.fingerprint, @prefixLen)", "must use left-prefix of device fingerprint");
-        code.Should().Contain("FingerprintPrefixLength", "must reference FingerprintPrefixLength constant");
-        code.Should().Contain("JOIN devices d ON d.id = v.device_id", "must join devices for fingerprint");
-    }
-
-    [Fact]
-    public void ServiceCode_SuppressesByFingerprintPrefixOnDetection()
-    {
-        var code = ReadGuard();
-
-        code.Should().Contain("SuppressByFingerprintPrefixAsync", "must call fingerprint suppression method");
-        code.Should().Contain("LEFT(d.fingerprint, @prefixLen) = @fpPrefix", "must match fingerprint prefix in UPDATE");
-        code.Should().Contain("suppression_reason = 'brigade_fingerprint_prefix'", "audit/debug reason must be stored");
+        // Official clients send one constant fingerprint per platform; a prefix "cluster"
+        // is every Android/iOS/web voter, while scripted clients randomise the value.
+        code.Should().NotContain("LEFT(d.fingerprint", "client fingerprints must not drive vote suppression");
+        code.Should().NotContain("SuppressByFingerprintPrefixAsync");
     }
 
     [Fact]
@@ -99,7 +84,6 @@ public sealed class VoteBrigadeGuardTests
         var code = ReadGuard();
 
         code.Should().Contain("ipCount > SuppressThreshold", "5 votes are allowed; the 6th cluster vote is suppressed");
-        code.Should().Contain("fpResult.Count > SuppressThreshold", "5 votes are allowed; the 6th cluster vote is suppressed");
     }
 
     // ── Service code: admin alert ───────────────────────────────────────────

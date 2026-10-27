@@ -3705,7 +3705,7 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
         );
         hakli = 0;
         haksiz = 0;
-        // Inline brigade guard: if ≥5 votes from same /24 IP block or fingerprint cluster
+        // Inline brigade guard: if >5 devices vote from the same /24 IP block
         // within 10 min, quarantine the entire cluster (suppressed status).
         brigadeResult = await brigadeGuard.CheckAndSuppressAsync(connection, transaction, id, voterIpBlock);
         (hakli, haksiz) = await UpdateVoteCountersReturningAsync(connection, transaction, id, oldVote, request.VoteType);
