@@ -162,6 +162,7 @@ builder.Services.AddSingleton<ComplianceLogService>();
 builder.Services.AddSingleton<BusinessMetricsService>();
 builder.Services.AddKararObservability(builder.Configuration, builder.Environment);
 builder.Services.AddSingleton<SubnetBanService>();
+builder.Services.AddSingleton<IUserAccessStatusService, UserAccessStatusService>();
 builder.Services.AddSingleton<VoteBrigadeGuard>();
 builder.Services.AddScoped<RequestDevice>();
 builder.Services.AddRateLimiter(options =>
@@ -426,6 +427,7 @@ app.UseRateLimiter();
 app.UseMiddleware<DistributedRateLimitMiddleware>();
 app.UseMiddleware<AppAttestationMiddleware>();
 app.UseMiddleware<AdminSecurityMiddleware>();
+app.UseMiddleware<BannedUserMiddleware>();
 
 app.MapHealthChecks("/health/live", new HealthCheckOptions
 {
@@ -563,8 +565,8 @@ app.MapGet("/sitemap.xml", async (HttpContext httpContext, Db db, IConfiguration
     var webBaseUrl = GetWebBaseUrl(configuration);
     await using var connection = await db.OpenConnectionAsync();
 
-    // Get total count of active posts
-    await using var countCmd = new NpgsqlCommand("SELECT COUNT(*) FROM posts WHERE status = 'active'", connection);
+    // Get total count of active posts (liste dışı gönderiler sitemap'te yayınlanmaz)
+    await using var countCmd = new NpgsqlCommand("SELECT COUNT(*) FROM posts WHERE status = 'active' AND is_unlisted = FALSE", connection);
     var totalCount = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
     var pageSize = 40000;
     var pageCount = (int)Math.Ceiling((double)totalCount / pageSize);
@@ -652,7 +654,7 @@ app.MapGet("/sitemap-posts-{page:int}.xml", async (int page, HttpContext httpCon
         """
         SELECT COALESCE(slug, id::text), updated_at
         FROM posts
-        WHERE status = 'active'
+        WHERE status = 'active' AND is_unlisted = FALSE
         ORDER BY updated_at DESC
         LIMIT @limit OFFSET @offset
         """,
@@ -704,7 +706,7 @@ app.MapGet("/posts/{id:guid}", async (
     await using var command = new NpgsqlCommand(
         """
         SELECT title, content, image_url, vote_count_hakli, vote_count_haksiz,
-               COALESCE(slug, id::text), created_at
+               COALESCE(slug, id::text), created_at, is_unlisted
         FROM posts
         WHERE id = @id AND status = 'active'
         """,
@@ -723,8 +725,10 @@ app.MapGet("/posts/{id:guid}", async (
     var haksiz = reader.GetInt32(4);
     var slug = reader.GetString(5);
     var createdAt = reader.GetFieldValue<DateTimeOffset>(6);
+    // Liste dışı gönderi paylaşılan id linkiyle önizlenebilir ama arama motorlarına noindex döner.
+    var isUnlisted = reader.GetBoolean(7);
 
-    var html = BuildOgHtml(id, slug, title, content, hakli, haksiz, customImageUrl, webBaseUrl, createdAt);
+    var html = BuildOgHtml(id, slug, title, content, hakli, haksiz, customImageUrl, webBaseUrl, createdAt, isUnlisted);
     await redis.SetAsync(cacheKey, html, TimeSpan.FromMinutes(5));
     return Results.Content(html, "text/html; charset=utf-8");
 });
@@ -754,7 +758,7 @@ app.MapGet("/posts/{slug}", async (
         """
         SELECT id, title, content, image_url, vote_count_hakli, vote_count_haksiz, created_at
         FROM posts
-        WHERE slug = @slug AND status = 'active'
+        WHERE slug = @slug AND status = 'active' AND is_unlisted = FALSE
         """,
         connection
     );
@@ -2537,7 +2541,7 @@ app.MapGet("/api/v1/posts/trending/city", async (
         FROM posts p
         JOIN categories c ON c.id = p.category_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
-        WHERE p.id = ANY(@postIds) AND p.status = 'active'
+        WHERE p.id = ANY(@postIds) AND p.status = 'active' AND p.is_unlisted = FALSE
         ORDER BY p.trend_score DESC
         """,
         connection
@@ -3670,7 +3674,7 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
         );
     }
 
-    var (oldVote, oldTotal, curHakli, curHaksiz, categoryId, postCreatedAt) = await GetVoteContextAsync(connection, transaction, id, effectiveDeviceId.Value);
+    var (oldVote, oldTotal, curHakli, curHaksiz, categoryId, postCreatedAt, postIsUnlisted, existingVoteSuppressed) = await GetVoteContextAsync(connection, transaction, id, effectiveDeviceId.Value);
 
     if (postCreatedAt != DateTimeOffset.MinValue && postCreatedAt.AddDays(7) <= DateTimeOffset.UtcNow)
     {
@@ -3726,7 +3730,8 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
     await CheckPostVoteMilestoneAsync(connection, transaction, id, oldTotal, newTotal);
     await transaction.CommitAsync();
 
-    var voteIsSuppressed = brigadeResult.Detected;
+    // Daha önce bastırılmış oy, yeniden oylansa da bastırılmış kalır (UpsertVoteAsync sıfırlamaz).
+    var voteIsSuppressed = brigadeResult.Detected || existingVoteSuppressed;
     var voteIp = httpRequest.HttpContext.Connection.RemoteIpAddress?.ToString();
     _ = complianceLog.LogAsync("vote", voteIp, effectiveDeviceId, userId, id, "post",
         new { vote_type = request.VoteType, quarantined = trustDecision.ShouldQuarantineVote, suppressed = voteIsSuppressed });
@@ -3763,9 +3768,9 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
     if (!trustDecision.ShouldQuarantineVote && !brigadeResult.Detected)
         await redis.MarkPostDirtyAsync(id);
 
-    // City-level trending: fire-and-forget update
+    // City-level trending: fire-and-forget update (liste dışı gönderiler herkese açık listeye girmez)
     var city = geo.GetCity(voterIp);
-    if (city is not null && !trustDecision.ShouldQuarantineVote && !voteIsSuppressed)
+    if (city is not null && !postIsUnlisted && !trustDecision.ShouldQuarantineVote && !voteIsSuppressed)
         _ = redis.UpdateCityTrendingAsync(city, id, newTotal);
 
     sseManager.Broadcast(id, "vote_update", new
@@ -6822,6 +6827,17 @@ app.MapPost("/api/v1/admin/users/{id:guid}/strike", async (
         await tempBan.ExecuteNonQueryAsync();
     }
 
+    // Strike bana dönüştüyse admin kullanıcı banında olduğu gibi açık oturumlar da kapatılır.
+    if (autoAction is not null)
+    {
+        await using var revokeTokens = new NpgsqlCommand(
+            "UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = @userId AND revoked_at IS NULL",
+            connection, transaction
+        );
+        revokeTokens.Parameters.AddWithValue("userId", id);
+        await revokeTokens.ExecuteNonQueryAsync();
+    }
+
     var notifBody = autoAction switch
     {
         "permanent_ban" => "Platformun kullanim kurallarina tekrarlayan ihlaller nedeniyle hesabiniz kalici olarak askiya alinmistir.",
@@ -8559,7 +8575,7 @@ app.MapPost("/api/v1/auth/google", async (
     // Mevcut kullanıcı var mı? (google_id veya email ile bul)
     await using var findCmd = new NpgsqlCommand(
         """
-        SELECT id, username, email, karma, auth_provider
+        SELECT id, username, email, karma, auth_provider, is_banned, deleted_at
         FROM users
         WHERE google_id = @googleId OR (email = @email AND auth_provider = 'google')
         LIMIT 1
@@ -8586,8 +8602,23 @@ app.MapPost("/api/v1/auth/google", async (
         userEmail = findReader.GetString(2);
         karma = findReader.GetInt32(3);
         authProvider = findReader.GetString(4);
+        var isBanned = findReader.GetBoolean(5);
+        var isDeleted = !findReader.IsDBNull(6);
         isNewUser = false;
         await findReader.CloseAsync();
+
+        // Şifreli giriş ve refresh ile aynı kural: banlı veya silinmiş hesaba token verilmez.
+        if (isBanned)
+        {
+            await transaction.RollbackAsync();
+            return BadRequest("USER_BANNED", "Hesabınız askıya alınmıştır.");
+        }
+
+        if (isDeleted)
+        {
+            await transaction.RollbackAsync();
+            return BadRequest("ACCOUNT_DELETED", "Bu hesap silinmiş. Geri almak için e-postana gönderilen kurtarma bağlantısını kullanabilirsin.");
+        }
 
         await using var updateCmd = new NpgsqlCommand(
             "UPDATE users SET google_id = @googleId, updated_at = NOW() WHERE id = @id",
@@ -9608,7 +9639,7 @@ app.MapGet("/api/v1/users/me/moderation-history", async (
     var userId = GetUserId(principal);
 
     await using var connection = await db.OpenConnectionAsync();
-    var userDeviceId = await GetUserDeviceIdAsync(connection, userId);
+    var userDeviceId = await GetUserDeviceIdAsync(connection, userId, includeBannedDevice: true);
     if (userDeviceId is null) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
 
     await using var summaryCmd = new NpgsqlCommand(
@@ -9742,7 +9773,7 @@ app.MapGet("/api/v1/users/me/reports", async (
     var offset = (page - 1) * limit;
 
     await using var connection = await db.OpenConnectionAsync();
-    var effectiveDeviceId = deviceId ?? await GetUserDeviceIdAsync(connection, userId);
+    var effectiveDeviceId = deviceId ?? await GetUserDeviceIdAsync(connection, userId, includeBannedDevice: true);
     if (effectiveDeviceId is null) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
 
     await using var countCmd = new NpgsqlCommand(
@@ -9838,7 +9869,7 @@ app.MapPost("/api/v1/users/me/moderation-appeals", async (
     var message = request.Message.Trim();
 
     await using var connection = await db.OpenConnectionAsync();
-    var userDeviceId = await GetUserDeviceIdAsync(connection, userId);
+    var userDeviceId = await GetUserDeviceIdAsync(connection, userId, includeBannedDevice: true);
     if (userDeviceId is null) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
 
     var table = request.TargetType == "post" ? "posts" : "comments";
@@ -10858,7 +10889,7 @@ app.MapGet("/api/v1/users/me/saved", async (
     var offset = (page - 1) * limit;
     var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
     await using var connection = await db.OpenConnectionAsync();
-    var effectiveDeviceId = deviceId ?? await GetUserDeviceIdAsync(connection, userId);
+    var effectiveDeviceId = deviceId ?? await GetUserDeviceIdAsync(connection, userId, includeBannedDevice: true);
     var deviceParam = effectiveDeviceId ?? Guid.Empty;
 
     await using var countCmd = new NpgsqlCommand(
@@ -13812,7 +13843,7 @@ static string ToSlug(string title, Guid id)
 static string BuildOgHtml(
     Guid id, string slug, string title, string content,
     int hakli, int haksiz, string? customImageUrl,
-    string webBaseUrl, DateTimeOffset createdAt)
+    string webBaseUrl, DateTimeOffset createdAt, bool isUnlisted = false)
 {
     var total = hakli + haksiz;
     var hakliPct = total > 0 ? (int)Math.Round(hakli * 100.0 / total) : 0;
@@ -13821,7 +13852,9 @@ static string BuildOgHtml(
         ? $"{total} kişi oyladı · %{hakliPct} Haklı · Sen de karar ver"
         : TruncateForMeta(content, 160);
 
-    var postUrl = $"{webBaseUrl}/posts/{slug}";
+    // Liste dışı gönderi yalnızca paylaşılan id linkiyle açılır: slug yayınlanmaz ve sayfa indekslenmez.
+    var postUrl = isUnlisted ? $"{webBaseUrl}/posts/{id}" : $"{webBaseUrl}/posts/{slug}";
+    var robotsMeta = isUnlisted ? """<meta name="robots" content="noindex, nofollow">""" : "";
     var imageUrl = customImageUrl ?? $"{webBaseUrl}/api/v1/posts/{id}/share-image.png";
 
     var titleEncoded = WebUtility.HtmlEncode(title);
@@ -13840,6 +13873,7 @@ static string BuildOgHtml(
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <title>{{titleEncoded}} - Karar</title>
           <meta name="description" content="{{descEncoded}}">
+          {{robotsMeta}}
           <link rel="canonical" href="{{urlEncoded}}">
           <meta property="og:type" content="article">
           <meta property="og:title" content="{{titleEncoded}} - Karar">
@@ -14633,7 +14667,7 @@ static Task EnforceMinimumResponseTimeAsync(
     return remaining <= TimeSpan.Zero ? Task.CompletedTask : Task.Delay(remaining, cancellationToken);
 }
 
-static async Task<(string? OldVote, int OldTotal, int Hakli, int Haksiz, int CategoryId, DateTimeOffset CreatedAt)> GetVoteContextAsync(
+static async Task<(string? OldVote, int OldTotal, int Hakli, int Haksiz, int CategoryId, DateTimeOffset CreatedAt, bool IsUnlisted, bool IsSuppressed)> GetVoteContextAsync(
     NpgsqlConnection connection,
     NpgsqlTransaction transaction,
     Guid postId,
@@ -14642,7 +14676,8 @@ static async Task<(string? OldVote, int OldTotal, int Hakli, int Haksiz, int Cat
 {
     await using var command = new NpgsqlCommand(
         """
-        SELECT p.vote_count_hakli, p.vote_count_haksiz, v.vote_type, p.category_id, p.created_at
+        SELECT p.vote_count_hakli, p.vote_count_haksiz, v.vote_type, p.category_id, p.created_at, p.is_unlisted,
+               COALESCE(v.is_suppressed, FALSE)
         FROM posts p
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceId
         WHERE p.id = @postId
@@ -14653,13 +14688,15 @@ static async Task<(string? OldVote, int OldTotal, int Hakli, int Haksiz, int Cat
     command.Parameters.AddWithValue("postId", postId);
     command.Parameters.AddWithValue("deviceId", deviceId);
     await using var reader = await command.ExecuteReaderAsync();
-    if (!await reader.ReadAsync()) return (null, 0, 0, 0, 0, DateTimeOffset.MinValue);
+    if (!await reader.ReadAsync()) return (null, 0, 0, 0, 0, DateTimeOffset.MinValue, false, false);
     var hakli = reader.GetInt32(0);
     var haksiz = reader.GetInt32(1);
     var oldVote = reader.IsDBNull(2) ? null : reader.GetString(2);
     var categoryId = reader.GetInt32(3);
     var createdAt = reader.GetFieldValue<DateTimeOffset>(4);
-    return (oldVote, hakli + haksiz, hakli, haksiz, categoryId, createdAt);
+    var isUnlisted = reader.GetBoolean(5);
+    var isSuppressed = reader.GetBoolean(6);
+    return (oldVote, hakli + haksiz, hakli, haksiz, categoryId, createdAt, isUnlisted, isSuppressed);
 }
 
 static async Task<(int Hakli, int Haksiz)> UpdateVoteCountersReturningAsync(
@@ -14721,6 +14758,8 @@ static async Task UpsertVoteAsync(
     string? voterRegion = null
 )
 {
+    // Brigade bastırması (is_suppressed) yapışkandır: oyu değiştirmek onu temizlemez. Guard penceresi
+    // created_at'e bağlı olduğundan, burada sıfırlanan bastırma 10 dk sonra yeniden uygulanmıyordu.
     await using var command = new NpgsqlCommand(
         """
         INSERT INTO votes (post_id, device_id, vote_type, voter_ip_block, is_quarantined, voter_region, is_suppressed)
@@ -14730,10 +14769,7 @@ static async Task UpsertVoteAsync(
             vote_type = @voteType,
             voter_ip_block = COALESCE(@ipBlock, votes.voter_ip_block),
             voter_region = COALESCE(@voterRegion, votes.voter_region),
-            is_quarantined = @isQuarantined,
-            is_suppressed = FALSE,
-            suppression_reason = NULL,
-            suppressed_at = NULL,
+            is_quarantined = @isQuarantined OR votes.is_suppressed,
             updated_at = NOW()
         """,
         connection,
@@ -14868,11 +14904,21 @@ static Guid? GetOptionalUserId(HttpRequest request, JwtService jwtService)
 static async Task<Guid?> GetUserDeviceIdAsync(
     NpgsqlConnection connection,
     Guid userId,
-    NpgsqlTransaction? transaction = null
+    NpgsqlTransaction? transaction = null,
+    bool includeBannedDevice = false
 )
 {
+    // X-Device-Token düşürülüp yalnızca JWT gönderildiğinde banlı cihaza geri düşülmez. Yalnızca
+    // kullanıcının kendi geçmişini okuyan/itiraz eden endpoint'ler banlı cihazı da çözer.
     await using var command = new NpgsqlCommand(
-        "SELECT device_id FROM users WHERE id = @userId AND deleted_at IS NULL",
+        includeBannedDevice
+            ? "SELECT device_id FROM users WHERE id = @userId AND deleted_at IS NULL"
+            : """
+              SELECT u.device_id
+              FROM users u
+              JOIN devices d ON d.id = u.device_id
+              WHERE u.id = @userId AND u.deleted_at IS NULL AND d.is_banned = FALSE
+              """,
         connection,
         transaction
     );
