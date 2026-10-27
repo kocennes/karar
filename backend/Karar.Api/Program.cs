@@ -1343,7 +1343,7 @@ app.MapGet("/api/v1/posts", async (
                 WHERE p.status = 'active' AND p.is_unlisted = FALSE {stageWhere} {notInterestedWhere} {overImposedWhere}
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-              AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+              AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
               AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
                   AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
             )
@@ -1358,7 +1358,7 @@ app.MapGet("/api/v1/posts", async (
             WHERE p.status = 'active' AND p.is_unlisted = FALSE {categoryWhere} {afterWhere} {stageWhere} {notInterestedWhere} {overImposedWhere}
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-              AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+              AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
               AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
               AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
             """;
@@ -1397,7 +1397,7 @@ app.MapGet("/api/v1/posts", async (
                 WHERE p.status = 'active' AND p.is_unlisted = FALSE {stageWhere} {notInterestedWhere} {overImposedWhere}
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-              AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+              AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
               AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
                   AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
             )
@@ -1439,7 +1439,7 @@ app.MapGet("/api/v1/posts", async (
             WHERE p.status = 'active' AND p.is_unlisted = FALSE {categoryWhere} {afterWhere} {stageWhere} {notInterestedWhere} {overImposedWhere}
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-              AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+              AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
               AND NOT EXISTS (SELECT 1 FROM blocked_users bu WHERE bu.blocker_user_id = @userId AND bu.blocked_user_id = p.user_id)
               AND NOT EXISTS (SELECT 1 FROM muted_categories mc WHERE mc.user_id = @userId AND mc.category_id = p.category_id)
             ORDER BY {affinityOrderBy}
@@ -1490,7 +1490,7 @@ app.MapGet("/api/v1/posts", async (
             WHERE p.status = 'active' AND p.is_unlisted = FALSE
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-              AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+              AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
               AND p.created_at >= NOW() - INTERVAL '2 hours'
               AND p.id != ALL(@existingIds)
               AND p.distribution_stage >= 2
@@ -1541,7 +1541,7 @@ app.MapGet("/api/v1/posts", async (
                 WHERE p.status = 'active' AND p.is_unlisted = FALSE
                   AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
                   AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-                  AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+                  AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
                   AND p.distribution_stage >= 2
                   AND p.id != ALL(@existingIds)
                   AND p.category_id NOT IN (
@@ -1637,7 +1637,7 @@ app.MapGet("/api/v1/posts/discover", async (
         WHERE p.status = 'active' AND p.is_unlisted = FALSE
           AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
           AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-          AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+          AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
           AND (
               @userId = '00000000-0000-0000-0000-000000000000'::uuid
               OR (
@@ -1673,7 +1673,7 @@ app.MapGet("/api/v1/posts/discover", async (
         WHERE p.status = 'active' AND p.is_unlisted = FALSE
           AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
           AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-          AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+          AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
           AND (
               @userId = '00000000-0000-0000-0000-000000000000'::uuid
               OR (
@@ -1710,7 +1710,7 @@ app.MapGet("/api/v1/posts/discover", async (
         WHERE p.status = 'active' AND p.is_unlisted = FALSE
           AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
           AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-          AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+          AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
           AND (
               @userId = '00000000-0000-0000-0000-000000000000'::uuid
               OR (
@@ -1753,7 +1753,7 @@ app.MapGet("/api/v1/posts/discover", async (
                 WHERE p.id = ANY(@postIds) AND p.status = 'active' AND p.is_unlisted = FALSE
                   AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
                   AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-                  AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+                  AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
                   AND (
                       @userId = '00000000-0000-0000-0000-000000000000'::uuid
                       OR (
@@ -1787,7 +1787,7 @@ app.MapGet("/api/v1/posts/discover", async (
         WHERE p.status = 'active' AND p.is_unlisted = FALSE
           AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
           AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
-          AND (SELECT COUNT(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending') < 3
+          AND (SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r JOIN devices rd ON rd.id = r.reporter_device_id WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending' AND rd.created_at <= NOW() - INTERVAL '24 hours') < 3
           AND (
               @userId = '00000000-0000-0000-0000-000000000000'::uuid
               OR (
@@ -1902,8 +1902,10 @@ app.MapGet("/api/v1/posts/discover/feed", async (
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
               AND (
-                  SELECT COUNT(*) FROM reports r
+                  SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r
+                  JOIN devices rd ON rd.id = r.reporter_device_id
                   WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending'
+                    AND rd.created_at <= NOW() - INTERVAL '24 hours'
               ) < 3
               AND (
                   @deviceId = '00000000-0000-0000-0000-000000000000'::uuid
@@ -2008,8 +2010,10 @@ app.MapGet("/api/v1/posts/discover/feed", async (
           AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
           AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
           AND (
-              SELECT COUNT(*) FROM reports r
+              SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r
+              JOIN devices rd ON rd.id = r.reporter_device_id
               WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending'
+                AND rd.created_at <= NOW() - INTERVAL '24 hours'
           ) < 3
           AND (
               @deviceId = '00000000-0000-0000-0000-000000000000'::uuid
@@ -2181,8 +2185,10 @@ app.MapGet("/api/v1/posts/discover/feed", async (
               AND (p.perspective_toxicity IS NULL OR p.perspective_toxicity < 0.6)
               AND (p.image_moderation_status IS NULL OR p.image_moderation_status = 'approved')
               AND (
-                  SELECT COUNT(*) FROM reports r
+                  SELECT COUNT(DISTINCT COALESCE(r.reporter_ip_block, r.reporter_device_id::text)) FROM reports r
+                  JOIN devices rd ON rd.id = r.reporter_device_id
                   WHERE r.target_type = 'post' AND r.target_id = p.id AND r.status = 'pending'
+                    AND rd.created_at <= NOW() - INTERVAL '24 hours'
               ) < 3
               AND p.id != ALL(@usedIds)
               AND (
@@ -4640,6 +4646,16 @@ app.MapPost("/api/v1/reports", async (
             request.TargetType,
             request.TargetId,
             threshold.Reason ?? "Rapor eşiği aşıldı."
+        );
+    }
+    else if (threshold.NeedsAdminAttention)
+    {
+        await AlertAdminsAboutUntrustedReportsAsync(
+            connection,
+            transaction,
+            request.TargetType,
+            request.TargetId,
+            threshold
         );
     }
 
@@ -9799,7 +9815,7 @@ app.MapPost("/api/v1/users/me/moderation-appeals", async (
         FROM {table}
         WHERE id = @targetId
           AND (user_id = @userId OR device_id = @deviceId)
-          AND status IN ('auto_hidden', 'deleted')
+          AND status IN ('auto_hidden', 'deleted', 'under_review')
         """,
         connection
     );
@@ -14301,7 +14317,8 @@ static async Task<ReportThresholdDecision> EvaluateReportThresholdAsync(
                r.reporter_ip_block,
                r.reason,
                COALESCE(u.reporter_accurate_count, 0),
-               COALESCE(u.reporter_total_count,   0)
+               COALESCE(u.reporter_total_count,   0),
+               d.created_at
         FROM reports r
         JOIN devices d ON d.id = r.reporter_device_id
         LEFT JOIN users u ON u.id = r.reporter_user_id
@@ -14315,41 +14332,64 @@ static async Task<ReportThresholdDecision> EvaluateReportThresholdAsync(
     command.Parameters.AddWithValue("targetType", targetType);
     command.Parameters.AddWithValue("targetId", targetId);
 
-    // Raw rows: (fingerprint, ipBlock, reason, accurateCount, totalCount)
-    var rows = new List<(string Fingerprint, string? IpBlock, string Reason, int Accurate, int Total)>();
+    var now = DateTimeOffset.UtcNow;
+    var reporters = new List<ReporterSnapshot>();
     await using (var reader = await command.ExecuteReaderAsync())
     {
         while (await reader.ReadAsync())
         {
-            rows.Add((
+            reporters.Add(new ReporterSnapshot(
                 reader.GetString(0),
                 reader.IsDBNull(1) ? null : reader.GetString(1),
                 reader.GetString(2),
                 reader.GetInt32(3),
-                reader.GetInt32(4)
+                reader.GetInt32(4),
+                now - reader.GetFieldValue<DateTimeOffset>(5)
             ));
         }
     }
 
-    // Compute effective weight per reporter: fingerprint/IP uniqueness × reputation.
-    // Each reporter is compared against all other reporters (not against itself) so the
-    // first reporter from a given subnet is penalised only when there are other same-subnet
-    // reporters in the batch — i.e. when a coordinated cluster is actually present.
-    var allSignals = rows.Select(r => (r.Fingerprint, r.IpBlock)).ToList();
-    var reports = rows.Select((row, i) =>
-    {
-        var others = allSignals.Where((_, j) => j != i);
-        var ipFpWeight = ReportAbuseProtectionService.ComputeReportWeight(row.Fingerprint, row.IpBlock, others);
-        var reputationWeight = ReporterReputationService.ComputeWeight(row.Accurate, row.Total);
-        return new ReportSignal(row.Fingerprint, row.IpBlock, row.Reason, ipFpWeight * reputationWeight);
-    }).ToList();
+    // Ağ bloğu tekilliği × itibar ağırlığı; yalnızca yerleşik cihazlar otomatik gizlemeye sayılır.
+    return reportThresholdService.EvaluateReporters(targetType, reporters);
+}
 
-    var weightedReporters = reports.Sum(r => r.Weight);
-    var weightedCritical  = reports
-        .Where(r => reportThresholdService.IsCriticalReason(r.Reason))
-        .Sum(r => r.Weight);
-
-    return reportThresholdService.Evaluate(targetType, weightedReporters, weightedCritical);
+static async Task AlertAdminsAboutUntrustedReportsAsync(
+    NpgsqlConnection connection,
+    NpgsqlTransaction transaction,
+    string targetType,
+    Guid targetId,
+    ReportThresholdDecision decision
+)
+{
+    // Eşik yalnızca yeni cihazların raporlarıyla aşıldı: içerik gizlenmez, hedef başına tek açık uyarı.
+    await using var command = new NpgsqlCommand(
+        """
+        INSERT INTO admin_alerts (type, payload)
+        SELECT 'report_threshold_untrusted',
+               jsonb_build_object(
+                   'target_type', @targetType,
+                   'target_id', @targetId::text,
+                   'priority', @priority,
+                   'reason', @reason,
+                   'detected_at', NOW()
+               )
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM admin_alerts
+            WHERE type = 'report_threshold_untrusted'
+              AND is_resolved = FALSE
+              AND payload->>'target_type' = @targetType
+              AND payload->>'target_id' = @targetId::text
+        )
+        """,
+        connection,
+        transaction
+    );
+    command.Parameters.AddWithValue("targetType", targetType);
+    command.Parameters.AddWithValue("targetId", targetId);
+    command.Parameters.AddWithValue("priority", decision.Priority);
+    command.Parameters.AddWithValue("reason", decision.Reason ?? string.Empty);
+    await command.ExecuteNonQueryAsync();
 }
 
 static string? GetClientIpBlock(HttpRequest request)

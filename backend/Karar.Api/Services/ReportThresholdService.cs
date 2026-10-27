@@ -42,6 +42,58 @@ public sealed class ReportThresholdService(IConfiguration? configuration = null)
         return ReportThresholdDecision.KeepPending();
     }
 
+    // Bekleyen raporları ağırlıklandırıp eşik kararını verir.
+    // Yalnızca yerleşik cihazların (ReportAbuseProtectionService.EstablishedReporterMinAge) raporları
+    // otomatik gizlemeye sayılır: cihaz kaydı hesapsız ve ucuz olduğundan birkaç taze cihazla
+    // (farklı ağlardan bile) içerik 'under_review'a alınıp sansürlenebiliyordu. Taze cihazların
+    // raporları tek başına eşiği aşacak kadar birikirse içerik gizlenmez, admin uyarısı istenir.
+    public ReportThresholdDecision EvaluateReporters(
+        string targetType,
+        IReadOnlyCollection<ReporterSnapshot> reporters
+    )
+    {
+        var established = reporters
+            .Where(r => ReportAbuseProtectionService.IsEstablishedReporter(r.DeviceAge))
+            .ToList();
+
+        var decision = EvaluateWeighted(targetType, established);
+        if (decision.ShouldAutoHide)
+        {
+            return decision;
+        }
+
+        var unfiltered = EvaluateWeighted(targetType, reporters.ToList());
+        return unfiltered.ShouldAutoHide
+            ? ReportThresholdDecision.HoldForAdminReview(unfiltered.Priority, unfiltered.Reason)
+            : decision;
+    }
+
+    // Her raporcu diğerleriyle (kendisi hariç) karşılaştırılır: aynı ağ bloğunda başka raporcu
+    // varsa koordineli küme şüphesiyle düşük ağırlık alır; sonuç itibar ağırlığıyla çarpılır.
+    private ReportThresholdDecision EvaluateWeighted(string targetType, IReadOnlyList<ReporterSnapshot> reporters)
+    {
+        var networks = reporters.Select(r => (r.Fingerprint, r.IpBlock)).ToList();
+        var weightedReporters = 0.0;
+        var weightedCritical = 0.0;
+
+        for (var i = 0; i < reporters.Count; i++)
+        {
+            var reporter = reporters[i];
+            var others = networks.Where((_, j) => j != i);
+            var weight =
+                ReportAbuseProtectionService.ComputeReportWeight(reporter.Fingerprint, reporter.IpBlock, others)
+                * ReporterReputationService.ComputeWeight(reporter.AccurateCount, reporter.TotalCount);
+
+            weightedReporters += weight;
+            if (IsCriticalReason(reporter.Reason))
+            {
+                weightedCritical += weight;
+            }
+        }
+
+        return Evaluate(targetType, weightedReporters, weightedCritical);
+    }
+
     // Returns the weighted count of independent reporters.
     // Within each IP block, only the highest-weight reporter counts.
     // Reporters without IP data contribute their weight directly.
@@ -88,10 +140,21 @@ public sealed class ReportThresholdService(IConfiguration? configuration = null)
 
 public sealed record ReportSignal(string Fingerprint, string? IpBlock, string Reason, double Weight = 1.0);
 
+// Bir hedefteki tek bir bekleyen raporun değerlendirme girdisi.
+public sealed record ReporterSnapshot(
+    string Fingerprint,
+    string? IpBlock,
+    string Reason,
+    int AccurateCount,
+    int TotalCount,
+    TimeSpan DeviceAge
+);
+
 public sealed record ReportThresholdDecision(
     bool ShouldAutoHide,
     string Priority,
-    string? Reason
+    string? Reason,
+    bool NeedsAdminAttention = false
 )
 {
     public static ReportThresholdDecision AutoHide(string priority, string reason) =>
@@ -99,4 +162,8 @@ public sealed record ReportThresholdDecision(
 
     public static ReportThresholdDecision KeepPending() =>
         new(false, "low", null);
+
+    // İçerik yayında kalır; eşik yalnızca yeni cihazların raporlarıyla aşıldığı için admin uyarılır.
+    public static ReportThresholdDecision HoldForAdminReview(string priority, string? reason) =>
+        new(false, priority, reason, NeedsAdminAttention: true);
 }
