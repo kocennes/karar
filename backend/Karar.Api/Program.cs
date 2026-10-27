@@ -11322,7 +11322,9 @@ app.MapGet("/api/v1/admin/categories/health", async (
                 WHEN EXTRACT(EPOCH FROM (NOW() - d.created_at)) / 86400.0 < 7
                 THEN 1.0 ELSE 0.0
             END) AS new_user_comment_ratio,
-            COUNT(DISTINCT r.id)::float / NULLIF(COUNT(DISTINCT v.id), 0) AS report_vote_ratio,
+            -- votes has no id column (PK is post_id, device_id); reports point at posts via target_type/target_id.
+            COUNT(DISTINCT r.id)::float
+                / NULLIF(COUNT(DISTINCT (v.post_id, v.device_id)) FILTER (WHERE v.post_id IS NOT NULL), 0) AS report_vote_ratio,
             AVG(p.perspective_toxicity) AS avg_toxicity
         FROM categories c
         LEFT JOIN posts p ON p.category_id = c.id
@@ -11330,11 +11332,12 @@ app.MapGet("/api/v1/admin/categories/health", async (
             AND p.created_at > NOW() - (@days || ' days')::INTERVAL
         LEFT JOIN comments cm ON cm.post_id = p.id AND cm.status = 'active'
         LEFT JOIN devices d ON d.id = cm.device_id
-        LEFT JOIN reports r ON r.post_id = p.id
+        LEFT JOIN reports r ON r.target_type = 'post' AND r.target_id = p.id
         LEFT JOIN votes v ON v.post_id = p.id
         WHERE c.id > 0
         GROUP BY c.id, c.name, c.emoji
-        ORDER BY COALESCE(controversial_ratio, 0) DESC
+        -- An output alias is only valid as a bare ORDER BY item, not inside COALESCE(...).
+        ORDER BY controversial_ratio DESC NULLS LAST
         """,
         connection
     );
