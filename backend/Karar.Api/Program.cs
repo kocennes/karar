@@ -3559,7 +3559,8 @@ app.MapGet("/api/v1/search/users", async (
         """
         SELECT u.username,
                u.karma,
-               (SELECT COUNT(*) FROM posts p WHERE p.user_id = u.id AND p.status = 'active') AS post_count
+               (SELECT COUNT(*) FROM posts p WHERE p.user_id = u.id AND p.status = 'active'
+                  AND p.is_anonymous = FALSE AND p.is_unlisted = FALSE) AS post_count
         FROM users u
         WHERE u.deleted_at IS NULL
           AND u.is_banned = FALSE
@@ -9950,8 +9951,11 @@ app.MapGet("/api/v1/users/{username}/profile", async (
                u.created_at,
                u.bio,
                u.username_changed_at,
-               (SELECT COUNT(*) FROM posts p WHERE p.user_id = u.id AND p.status != 'deleted') AS post_count,
-               (SELECT COUNT(*) FROM comments cm WHERE cm.user_id = u.id AND cm.status != 'deleted') AS comment_count
+               (SELECT COUNT(*) FROM posts p WHERE p.user_id = u.id AND p.status = 'active'
+                  AND p.is_anonymous = FALSE AND p.is_unlisted = FALSE) AS post_count,
+               (SELECT COUNT(*) FROM comments cm JOIN posts cp ON cp.id = cm.post_id
+                WHERE cm.user_id = u.id AND cm.status = 'active' AND cp.status = 'active'
+                  AND cp.is_unlisted = FALSE AND NOT (cp.is_anonymous = TRUE AND cp.user_id = cm.user_id)) AS comment_count
         FROM users u
         WHERE lower(u.username) = lower(@username) AND u.deleted_at IS NULL
         """,
@@ -10275,7 +10279,7 @@ app.MapGet("/api/v1/users/{username}/posts", async (
     if (ownerId is null) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
 
     await using var countCmd = new NpgsqlCommand(
-        "SELECT COUNT(*) FROM posts WHERE user_id = @ownerId AND status = 'active'",
+        "SELECT COUNT(*) FROM posts WHERE user_id = @ownerId AND status = 'active' AND is_anonymous = FALSE AND is_unlisted = FALSE",
         connection
     );
     countCmd.Parameters.AddWithValue("ownerId", ownerId);
@@ -10295,6 +10299,7 @@ app.MapGet("/api/v1/users/{username}/posts", async (
         JOIN users u ON u.id = p.user_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceParam
         WHERE p.user_id = @ownerId AND p.status = 'active'
+          AND p.is_anonymous = FALSE AND p.is_unlisted = FALSE
         ORDER BY {orderBy}
         LIMIT @limit OFFSET @offset
         """,
@@ -10414,6 +10419,7 @@ app.MapGet("/api/v1/users/{username}/comments", async (
         FROM comments cm
         JOIN posts p ON p.id = cm.post_id
         WHERE cm.user_id = @userId AND cm.status = 'active' AND p.status = 'active'
+          AND p.is_unlisted = FALSE AND NOT (p.is_anonymous = TRUE AND p.user_id = cm.user_id)
         """,
         connection
     );
@@ -10428,6 +10434,7 @@ app.MapGet("/api/v1/users/{username}/comments", async (
         FROM comments cm
         JOIN posts p ON p.id = cm.post_id
         WHERE cm.user_id = @userId AND cm.status = 'active' AND p.status = 'active'
+          AND p.is_unlisted = FALSE AND NOT (p.is_anonymous = TRUE AND p.user_id = cm.user_id)
         ORDER BY cm.created_at DESC
         LIMIT @limit OFFSET @offset
         """,

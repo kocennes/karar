@@ -37,6 +37,74 @@ public sealed class AnonymousPostContractTests
     }
 
     [Fact]
+    public void PublicUserPosts_ExcludesAnonymousAndUnlistedPostsFromCountAndList()
+    {
+        // Listing anonymous posts under the author's username de-anonymizes them, even with the
+        // card name redacted; unlisted (link-only) posts must not be discoverable from a profile.
+        var block = SliceBlock(
+            ProgramText,
+            "app.MapGet(\"/api/v1/users/{username}/posts\"",
+            "app.MapGet(\"/api/v1/users/me/comments\"");
+        var countSql = SliceBlock(block, "countCmd = new NpgsqlCommand(", "countCmd.Parameters");
+        var listSql = SliceBlock(block, "await using var cmd = new NpgsqlCommand(", "cmd.Parameters");
+
+        countSql.Should().Contain("is_anonymous = FALSE",
+            "the public total must not count anonymous posts, otherwise it leaks how many the user wrote");
+        countSql.Should().Contain("is_unlisted = FALSE");
+        listSql.Should().Contain("p.is_anonymous = FALSE",
+            "anonymous posts must never be listed under the author's public profile");
+        listSql.Should().Contain("p.is_unlisted = FALSE",
+            "link-only posts must not be listed on public profiles");
+    }
+
+    [Fact]
+    public void PublicProfileAndUserSearch_CountsExcludeAnonymousActivity()
+    {
+        // Public counters must match what the public lists show; otherwise polling a user's
+        // counter and correlating it with new anonymous posts/comments attributes them.
+        var profile = SliceBlock(
+            ProgramText,
+            "app.MapGet(\"/api/v1/users/{username}/profile\"",
+            "app.MapPost(\"/api/v1/auth/2fa/setup\"");
+        var profilePostCount = SliceBlock(profile, "(SELECT COUNT(*) FROM posts p", "AS post_count");
+        profilePostCount.Should().Contain("p.status = 'active'");
+        profilePostCount.Should().Contain("p.is_anonymous = FALSE");
+        profilePostCount.Should().Contain("p.is_unlisted = FALSE");
+
+        var profileCommentCount = SliceBlock(profile, "(SELECT COUNT(*) FROM comments cm", "AS comment_count");
+        profileCommentCount.Should().Contain("NOT (cp.is_anonymous = TRUE AND cp.user_id = cm.user_id)",
+            "replies by the anonymous author on their own post are shown as '@anonim' and must not move the public counter");
+        profileCommentCount.Should().Contain("cp.is_unlisted = FALSE");
+
+        var userSearch = SliceBlock(
+            ProgramText,
+            "app.MapGet(\"/api/v1/search/users\"",
+            "app.MapPost(\"/api/v1/posts/{id:guid}/vote\"");
+        var searchPostCount = SliceBlock(userSearch, "(SELECT COUNT(*) FROM posts p", "AS post_count");
+        searchPostCount.Should().Contain("p.is_anonymous = FALSE");
+        searchPostCount.Should().Contain("p.is_unlisted = FALSE");
+    }
+
+    [Fact]
+    public void PublicUserComments_ExcludeOwnAnonymousPostRepliesAndUnlistedPosts()
+    {
+        // A comment the author wrote on their own anonymous post is rendered as '@anonim [Yargilanan]';
+        // listing it (with the post id/title) under their username reveals who wrote the post.
+        var block = SliceBlock(
+            ProgramText,
+            "app.MapGet(\"/api/v1/users/{username}/comments\"",
+            "app.MapGet(\"/api/v1/users/me/karma-history\"");
+        var countSql = SliceBlock(block, "countCmd = new NpgsqlCommand(", "countCmd.Parameters");
+        var listSql = SliceBlock(block, "await using var cmd = new NpgsqlCommand(", "cmd.Parameters");
+
+        foreach (var sql in new[] { countSql, listSql })
+        {
+            sql.Should().Contain("NOT (p.is_anonymous = TRUE AND p.user_id = cm.user_id)");
+            sql.Should().Contain("p.is_unlisted = FALSE");
+        }
+    }
+
+    [Fact]
     public void ReadPostsAsync_UsesColumnNamesForOptionalFields()
     {
         var block = SliceBlock(
