@@ -790,6 +790,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   void _disable2fa(BuildContext context, WidgetRef ref) {
     final passwordCtrl = TextEditingController();
+    final codeCtrl = TextEditingController();
+    // Google ile açılan hesapların şifresi yoktur; sunucu yalnızca ikinci faktörü ister.
+    final needsPassword =
+        (ref.read(currentUserProvider)?.authProvider ?? 'password') ==
+            'password';
     var isDisabling = false;
     String? errorText;
 
@@ -799,8 +804,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setState) {
           Future<void> submit() async {
-            if (passwordCtrl.text.trim().isEmpty) {
+            if (needsPassword && passwordCtrl.text.trim().isEmpty) {
               setState(() => errorText = 'Şifreni gir.');
+              return;
+            }
+            if (codeCtrl.text.trim().isEmpty) {
+              setState(() => errorText =
+                  'Doğrulama uygulamandaki kodu veya bir yedek kodu gir.');
               return;
             }
             setState(() {
@@ -808,7 +818,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               errorText = null;
             });
             try {
-              await ref.read(authServiceProvider).disable2fa();
+              await ref.read(authServiceProvider).disable2fa(
+                    password: needsPassword ? passwordCtrl.text : null,
+                    secondFactor: codeCtrl.text,
+                  );
               if (!ctx.mounted) return;
               Navigator.pop(ctx);
               ScaffoldMessenger.of(context).showSnackBar(
@@ -836,16 +849,31 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                    'Hesabınızın güvenliği azalacaktır. Devam etmek için şifreni gir.'),
+                Text(needsPassword
+                    ? 'Hesabınızın güvenliği azalacaktır. Devam etmek için '
+                        'şifreni ve doğrulama kodunu gir.'
+                    : 'Hesabınızın güvenliği azalacaktır. Devam etmek için '
+                        'doğrulama kodunu gir.'),
                 const SizedBox(height: 16),
+                if (needsPassword) ...[
+                  TextField(
+                    controller: passwordCtrl,
+                    enabled: !isDisabling,
+                    obscureText: true,
+                    autofocus: true,
+                    decoration: const InputDecoration(labelText: 'Şifre'),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 TextField(
-                  controller: passwordCtrl,
+                  controller: codeCtrl,
                   enabled: !isDisabling,
-                  obscureText: true,
-                  autofocus: true,
-                  decoration:
-                      InputDecoration(labelText: 'Şifre', errorText: errorText),
+                  autofocus: !needsPassword,
+                  autocorrect: false,
+                  decoration: InputDecoration(
+                    labelText: 'Doğrulama kodu veya yedek kod',
+                    errorText: errorText,
+                  ),
                 ),
               ],
             ),
@@ -866,7 +894,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           );
         },
       ),
-    ).whenComplete(passwordCtrl.dispose);
+    ).whenComplete(() {
+      passwordCtrl.dispose();
+      codeCtrl.dispose();
+    });
   }
 
   void _showSilentHoursPicker(

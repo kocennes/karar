@@ -317,14 +317,22 @@ class AuthService {
     }
   }
 
+  /// Sunucu şifre değişince diğer tüm oturumları kapatır; bu oturumun refresh
+  /// token'ı gönderilmezse bu cihaz da bir sonraki yenilemede çıkış yapar.
   Future<void> changePassword({
     required String currentPassword,
     required String newPassword,
-  }) =>
-      _apiClient.putJson<void>(
-        ApiEndpoints.userMePassword,
-        body: {'currentPassword': currentPassword, 'newPassword': newPassword},
-      );
+  }) async {
+    final refreshToken = await _storage.readRefreshToken();
+    await _apiClient.putJson<void>(
+      ApiEndpoints.userMePassword,
+      body: {
+        'currentPassword': currentPassword,
+        'newPassword': newPassword,
+        if (refreshToken != null) 'refreshToken': refreshToken,
+      },
+    );
+  }
 
   Future<void> forgotPassword(String email) => _apiClient.postJson<void>(
         ApiEndpoints.authForgotPassword,
@@ -437,9 +445,21 @@ class AuthService {
     await init();
   }
 
-  Future<void> disable2fa() async {
+  /// Sunucu 2FA'yı kapatmak için oturumun yanında şifre (şifreli hesapta) ve
+  /// geçerli bir TOTP kodu ya da yedek kod ister. 6 haneli giriş TOTP kodu,
+  /// diğer her giriş yedek kod olarak gönderilir.
+  Future<void> disable2fa({
+    String? password,
+    required String secondFactor,
+  }) async {
+    final factor = secondFactor.trim();
+    final isTotp = RegExp(r'^\d{6}$').hasMatch(factor);
     await _apiClient.postJson<void>(
       '/api/v1/auth/2fa/disable',
+      body: {
+        if (password != null && password.isNotEmpty) 'password': password,
+        if (isTotp) 'code': factor else 'backupCode': factor,
+      },
     );
     await init();
   }
@@ -480,13 +500,20 @@ class AuthService {
         body: {'newEmail': newEmail, 'password': password},
       );
 
+  /// E-posta değişince sunucu diğer oturumları kapatır; bu oturum korunsun diye
+  /// refresh token da gönderilir.
   Future<void> confirmEmailChange({
     required String newEmail,
     required String otp,
   }) async {
+    final refreshToken = await _storage.readRefreshToken();
     await _apiClient.postJson<void>(
       ApiEndpoints.authChangeEmailConfirm,
-      body: {'newEmail': newEmail, 'otp': otp},
+      body: {
+        'newEmail': newEmail,
+        'otp': otp,
+        if (refreshToken != null) 'refreshToken': refreshToken,
+      },
     );
     await init();
   }
