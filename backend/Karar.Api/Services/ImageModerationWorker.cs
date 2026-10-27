@@ -170,10 +170,18 @@ public sealed class ImageModerationWorker(
             detected_at = DateTimeOffset.UtcNow
         });
 
+        // One open alert per hour is enough: a Vision outage stalls every pending image at once and
+        // must not bury other admin alerts.
         await using var cmd = new NpgsqlCommand(
             """
             INSERT INTO admin_alerts (type, payload)
-            VALUES ('image_moderation_stalled', @payload::jsonb)
+            SELECT 'image_moderation_stalled', @payload::jsonb
+            WHERE NOT EXISTS (
+                SELECT 1 FROM admin_alerts
+                WHERE type = 'image_moderation_stalled'
+                  AND is_resolved = FALSE
+                  AND created_at > NOW() - INTERVAL '1 hour'
+            )
             """,
             connection
         );

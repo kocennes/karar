@@ -96,6 +96,16 @@ public sealed class ImageModerationFailClosedTests
     }
 
     [Fact]
+    public void Worker_StalledAlert_IsDeduplicatedDuringAnOutage()
+    {
+        var worker = WorkerText;
+
+        worker.Should().Contain("'image_moderation_stalled'");
+        worker.Should().Contain("WHERE type = 'image_moderation_stalled'",
+            "a Vision outage stalls every pending image at once and must raise one alert, not hundreds");
+    }
+
+    [Fact]
     public void Worker_ProcessesOldestDueImagesWithoutDroppingOldOnes()
     {
         var worker = WorkerText;
