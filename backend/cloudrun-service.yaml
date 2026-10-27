@@ -67,16 +67,8 @@ spec:
                 secretKeyRef:
                   name: jwt-previous-key-id
                   key: latest
-            - name: Admin__Token
-              valueFrom:
-                secretKeyRef:
-                  name: admin-token
-                  key: latest
-            - name: Admin__PreviousToken
-              valueFrom:
-                secretKeyRef:
-                  name: admin-previous-token
-                  key: latest
+            # Admin API statik token kabul etmez; admin oturumu /api/v1/admin/auth/login
+            # ile alınan kısa ömürlü JWT'dir ve e-posta OTP gerektirir (Brevo/Resend/SMTP zorunlu).
             - name: AuditLogs__GcsBucket
               valueFrom:
                 secretKeyRef:
@@ -86,7 +78,7 @@ spec:
           # Secret Manager referansları — Secret Manager'da bu secretlar oluşturulmuş olmalı.
           # gcloud run services update ile eklenebilir:
           #   --set-secrets=ConnectionStrings__Postgres=db-connection-string:latest
-          #   --set-secrets=Admin__Token=admin-token:latest
+          #   --set-secrets=Brevo__ApiKey=brevo-api-key:latest   (admin e-posta OTP için zorunlu)
           #   --set-secrets=Jwt__Secret=jwt-secret:latest
           #   --set-secrets=Compliance__DailySalt=compliance-daily-salt:latest
           #   --set-secrets=AuditLogs__GcsBucket=audit-logs-bucket:latest

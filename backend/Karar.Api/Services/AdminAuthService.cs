@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Security.Claims;
+using Karar.Api.Contracts;
 
 namespace Karar.Api.Services;
 
@@ -9,7 +10,6 @@ public sealed class AdminAuthService
     private readonly string _email;
     private readonly string _password;
     private readonly string? _passwordHash;
-    private readonly string? _plainToken;
     private readonly HashSet<IPAddress> _ipAllowlist;
     private readonly JwtService _jwt;
 
@@ -17,17 +17,18 @@ public sealed class AdminAuthService
     {
         _jwt = jwt;
 
-        var isProduction = env.IsProduction();
+        // Yayınlanmış varsayılan şifre yalnızca Development/Testing'de kabul edilir; Staging dahil
+        // internete açılabilecek her ortamda gerçek bir şifre/hash zorunludur.
+        var allowsDevDefaults = env.IsDevelopment() || env.IsEnvironment("Testing");
 
         _email = configuration["Admin:Email"] ?? "admin@karar.local";
         _password = configuration["Admin:Password"] ?? "dev-admin-password";
         _passwordHash = configuration["Admin:PasswordHash"];
-        _plainToken = configuration["Admin:Token"];
 
-        if (isProduction && _passwordHash is null or { Length: 0 } &&
+        if (!allowsDevDefaults && _passwordHash is null or { Length: 0 } &&
             (_password == "dev-admin-password" || string.IsNullOrWhiteSpace(_password)))
             throw new InvalidOperationException(
-                "Admin:Password veya Admin:PasswordHash production ortaminda zorunludur.");
+                "Admin:Password veya Admin:PasswordHash Development/Testing disinda zorunludur.");
 
         var allowlistRaw = configuration["Admin:IpAllowlist"] ?? "";
         _ipAllowlist = ParseIpAllowlist(allowlistRaw);
@@ -43,7 +44,12 @@ public sealed class AdminAuthService
             : password == _password;
     }
 
-    public string IssueToken() => _plainToken ?? _jwt.GenerateAdminToken(_email);
+    // Her girişte yeni, imzalı ve süreli bir admin JWT'si üretir. Statik/paylaşılan token yoktur.
+    public AdminLoginResponse IssueToken()
+    {
+        var (token, expiresAt) = _jwt.GenerateAdminToken(_email);
+        return new AdminLoginResponse(token, expiresAt);
+    }
 
     public string? TryGetAdminEmail(HttpRequest request)
     {
@@ -63,10 +69,7 @@ public sealed class AdminAuthService
     {
         if (string.IsNullOrWhiteSpace(token)) return null;
 
-        // Plain token öncelikli — JWT validasyon sorunlarını bypass eder
-        if (_plainToken is { Length: > 0 } && token == _plainToken)
-            return _email;
-
+        // Yalnızca imzası, süresi, issuer/audience'ı geçerli ve role=admin olan JWT kabul edilir.
         var principal = _jwt.ValidateAccessToken(token);
         if (principal is null) return null;
         var role = principal.FindFirstValue(ClaimTypes.Role);

@@ -50,7 +50,6 @@ services:
       ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=karar;Username=karar;Password=karar_dev_password
       ConnectionStrings__Redis: redis:6379
       Admin__Email: admin@karar.local
-      Admin__Token: dev-admin-token
     ports:
       - "5088:8080"
 

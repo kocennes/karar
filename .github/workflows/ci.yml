@@ -76,7 +76,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: '10.0.x'
 
       - name: Restore
         run: dotnet restore tests/Karar.UnitTests/Karar.UnitTests.csproj
@@ -158,7 +158,8 @@ jobs:
           format: spdx-json
 
       - name: Vulnerability scan — SARIF upload
-        uses: aquasecurity/trivy-action@0.28.0
+        # SHA ile sabitlendi: "0.28.0" etiketi artık yok (job "Set up job"da düşüyordu).
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
           image-ref: karar-api:${{ github.sha }}
           format: sarif
@@ -174,7 +175,7 @@ jobs:
           category: container
 
       - name: Block on CRITICAL/HIGH vulnerabilities
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
           image-ref: karar-api:${{ github.sha }}
           format: table
