@@ -563,8 +563,12 @@ class _ComposeCard extends StatelessWidget {
     final showAnonymous = anonymous || username == null;
     final handle = showAnonymous ? '@anonim' : '@$username';
 
+    // No “ watermark (the title field sits at the top of this card, so the
+    // quote landed right behind its first letters) and no rail glow (no
+    // rail here) — same as the detail hero.
     return PostSurface.tinted(
       style: style,
+      showQuote: false,
       showRailSheen: false,
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 230),
