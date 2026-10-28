@@ -6,6 +6,10 @@ import 'dart:html' as html;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/karar_tokens.dart';
+import '../../core/theme/motion.dart';
+
 class DropZoneWidget extends StatefulWidget {
   const DropZoneWidget({
     super.key,
@@ -83,14 +87,15 @@ class _DropZoneWidgetState extends State<DropZoneWidget> {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final kc = context.kc;
+    final radius = KararRadius.all(KararRadius.tile);
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
+      duration: KararMotion.d(context, KararMotion.base),
+      curve: KararMotion.standard,
       decoration: _isDragging
           ? BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: scheme.primary, width: 2),
-              color: scheme.primary.withValues(alpha: 0.06),
+              borderRadius: radius,
+              border: Border.all(color: kc.primary, width: 2),
             )
           : null,
       child: Stack(
@@ -98,25 +103,39 @@ class _DropZoneWidgetState extends State<DropZoneWidget> {
           widget.child,
           if (_isDragging)
             Positioned.fill(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: scheme.primary.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.upload_file_outlined,
-                        size: 40, color: scheme.primary),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Fotoğrafı buraya bırak',
-                      style: TextStyle(
-                        color: scheme.primary,
-                        fontWeight: FontWeight.w600,
-                      ),
+              child: Semantics(
+                liveRegion: true,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: kc.primaryContainer.withValues(alpha: 0.94),
+                    borderRadius: radius,
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: KararSpace.s16,
+                  ),
+                  child: Center(
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.upload_file_rounded,
+                          size: 24,
+                          color: kc.primary,
+                        ),
+                        const SizedBox(width: KararSpace.s10),
+                        Flexible(
+                          child: Text(
+                            'Fotoğrafı buraya bırak',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTypography.bodyStrong.copyWith(
+                              color: kc.onPrimaryContainer,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               ),
             ),

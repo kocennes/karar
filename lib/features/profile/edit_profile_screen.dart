@@ -3,8 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/auth/auth_service.dart';
+import '../../core/layout/breakpoints.dart';
 import '../../core/providers.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/karar_tokens.dart';
 import '../../shared/widgets/karar_avatar.dart';
+import '../../shared/widgets/karar_button.dart';
 import '../../shared/widgets/centered_content.dart';
 
 class EditProfileScreen extends ConsumerStatefulWidget {
@@ -110,6 +114,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
     final user = ref.watch(currentUserProvider) ?? widget.user;
     if (user == null) {
       return Scaffold(
@@ -124,22 +129,36 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(
-                  Icons.account_circle_outlined,
-                  size: 56,
-                  color: Theme.of(context).colorScheme.primary,
+                ExcludeSemantics(
+                  child: Container(
+                    width: 88,
+                    height: 88,
+                    decoration: BoxDecoration(
+                      color: kc.primaryContainer,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.account_circle_rounded,
+                      size: 40,
+                      color: kc.primary,
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 16),
                 Text(
                   'Profilini düzenlemek için giriş yapmalısın.',
                   textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleMedium,
+                  style: AppTypography.bodyStrong.copyWith(
+                    fontSize: 16,
+                    color: kc.text1,
+                  ),
                 ),
-                const SizedBox(height: 16),
-                FilledButton(
+                const SizedBox(height: 20),
+                KararButton(
+                  label: 'Giriş yap',
+                  expand: false,
                   onPressed: () =>
                       context.push('/auth/login?returnTo=/profile/edit'),
-                  child: const Text('Giriş yap'),
                 ),
               ],
             ),
@@ -150,6 +169,10 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
 
     final canChangeUsername = user.canChangeUsername;
     final changedAt = user.usernameChangedAt;
+    final labelStyle = AppTypography.labelS.copyWith(
+      fontWeight: FontWeight.w800,
+      color: kc.text2,
+    );
 
     return PopScope(
       canPop: false,
@@ -190,26 +213,12 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
         appBar: AppBar(
           title: const Text('Profili Düzenle'),
           centerTitle: true,
-          actions: [
-            _saving
-                ? const Padding(
-                    padding: EdgeInsets.all(16),
-                    child: SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  )
-                : TextButton(
-                    onPressed: _save,
-                    child: const Text('Kaydet'),
-                  ),
-          ],
         ),
         body: CenteredContent(
           maxWidth: 500,
           child: ListView(
-            padding: const EdgeInsets.all(24),
+            padding: EdgeInsets.fromLTRB(
+                24, 8, 24, context.navBottomInset + 24),
             children: [
               Center(
                 child: Column(
@@ -217,9 +226,10 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                     KararAvatar(
                       username: user.username,
                       radius: 48,
-                      fontSize: 32,
+                      fontSize: 38,
+                      ring: KararAvatarRing.gradient,
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 8),
                     const TextButton(
                       onPressed: null, // fotoğraf yükleme gelecek fazda
                       child: Text('Fotoğrafı Değiştir'),
@@ -227,21 +237,15 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                   ],
                 ),
               ),
-              const SizedBox(height: 32),
-              Text(
-                'Kullanıcı adı',
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-              ),
+              const SizedBox(height: 20),
+              Text('Kullanıcı adı', style: labelStyle),
               const SizedBox(height: 8),
               TextField(
                 controller: _usernameCtrl,
                 enabled: canChangeUsername,
                 decoration: InputDecoration(
-                  border: const OutlineInputBorder(),
                   errorText: _usernameError,
-                  prefixText: '@',
+                  prefixIcon: const Icon(Icons.alternate_email_rounded),
                   helperText: canChangeUsername
                       ? '3-20 karakter, harf/rakam/alt çizgi'
                       : changedAt != null
@@ -255,22 +259,14 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                 },
               ),
               if (!canChangeUsername) ...[
-                const SizedBox(height: 4),
+                const SizedBox(height: 6),
                 Text(
                   'Kullanıcı adını 30 günde bir değiştirebilirsin.',
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodySmall
-                      ?.copyWith(color: Theme.of(context).colorScheme.error),
+                  style: AppTypography.meta.copyWith(color: kc.haksizText),
                 ),
               ],
               const SizedBox(height: 24),
-              Text(
-                'Biyografi',
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-              ),
+              Text('Biyografi', style: labelStyle),
               const SizedBox(height: 8),
               ValueListenableBuilder<TextEditingValue>(
                 valueListenable: _bioCtrl,
@@ -279,12 +275,18 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                   maxLines: 4,
                   maxLength: _bioMaxLength,
                   decoration: InputDecoration(
-                    border: const OutlineInputBorder(),
                     hintText: 'Kendini topluluğa tanıt...',
                     alignLabelWithHint: true,
                     counterText: '${value.text.length}/$_bioMaxLength',
                   ),
                 ),
+              ),
+              const SizedBox(height: 24),
+              KararButton(
+                label: 'Kaydet',
+                size: KararButtonSize.large,
+                isLoading: _saving,
+                onPressed: _saving ? null : _save,
               ),
             ],
           ),

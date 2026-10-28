@@ -6,13 +6,17 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/layout/breakpoints.dart';
 import '../../core/providers.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/karar_tokens.dart';
 import '../../core/utils/pwa_helper.dart';
 import '../../shared/widgets/connectivity_banner.dart';
 import '../../shared/widgets/content_policy_update_banner.dart';
+import '../../shared/widgets/karar_surface.dart';
 import '../../shared/widgets/kvkk_banner.dart';
 import '../../shared/widgets/login_nudge.dart';
 import '../feed/feed_provider.dart';
 import '../notifications/notifications_provider.dart';
+import 'widgets/karar_bottom_nav.dart';
 import 'widgets/karar_side_nav.dart';
 
 class HomeShell extends ConsumerStatefulWidget {
@@ -181,53 +185,90 @@ class _HomeShellState extends ConsumerState<HomeShell>
     final unreadCount = ref.watch(
       notificationsProvider.select((state) => state.unreadCount),
     );
+    final isDesktop = context.isDesktop;
+    final currentIndex = widget.navigationShell.currentIndex;
+
+    // Hide the floating nav only while the on-screen keyboard is actually
+    // up (on mobile web it would sit on top of it), not merely because a
+    // field has focus: a screen that autofocuses its field (Arama opened as
+    // a root) would otherwise lose its only way out.
+    final keyboardUp = MediaQuery.viewInsetsOf(context).bottom > 0;
+    final navHidden = _textInputFocused && keyboardUp;
+    final navHeight =
+        KararBottomNav.heightFor(MediaQuery.paddingOf(context).bottom);
 
     Widget shell = Scaffold(
-      body: Column(
+      // Mobile/tablet: the content runs under the floating pill nav; tabs
+      // receive the nav height as MediaQuery bottom padding
+      // (`context.navBottomInset`).
+      extendBody: !isDesktop,
+      body: Stack(
         children: [
-          const ConnectivityBanner(),
-          const ContentPolicyUpdateBanner(),
-          if (_showPwaBanner) _buildPwaBanner(),
-          Expanded(child: _buildLayout(context, unreadCount)),
-          const KvkkBanner(),
+          Column(
+            children: [
+              const ConnectivityBanner(),
+              const ContentPolicyUpdateBanner(),
+              Expanded(child: _buildLayout(context, unreadCount)),
+            ],
+          ),
+          // Canvas fade behind the floating nav, starting a little above the
+          // notch (Keşfet pages are full-bleed, so none there).
+          if (!isDesktop && currentIndex != 5 && !navHidden)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: navHeight + _NavFade.lead,
+              child: const _NavFade(),
+            ),
+          // PWA install + KVKK notices float as cards above the nav.
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: Builder(
+              builder: (context) => Padding(
+                padding: EdgeInsets.fromLTRB(
+                  12,
+                  0,
+                  12,
+                  MediaQuery.paddingOf(context).bottom + 12,
+                ),
+                child: Align(
+                  alignment: Alignment.bottomCenter,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 560),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (_showPwaBanner)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: _buildPwaBanner(),
+                          ),
+                        MediaQuery.removePadding(
+                          context: context,
+                          removeBottom: true,
+                          child: const _FloatingCard(child: KvkkBanner()),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
-      bottomNavigationBar: context.isDesktop
+      bottomNavigationBar: isDesktop
           ? null
-          : NavigationBar(
-              // Branches 4 (search) and 5 (discover) are desktop-only;
-              // fall back to Feed tab highlight on mobile.
-              selectedIndex: widget.navigationShell.currentIndex < 4
-                  ? widget.navigationShell.currentIndex
-                  : 0,
-              onDestinationSelected: _onDestinationSelected,
-              destinations: [
-                const NavigationDestination(
-                    icon: Icon(Icons.home_outlined),
-                    selectedIcon: Icon(Icons.home),
-                    label: 'Anasayfa'),
-                const NavigationDestination(
-                    icon: Icon(Icons.edit_outlined),
-                    selectedIcon: Icon(Icons.edit),
-                    label: 'Paylaş'),
-                NavigationDestination(
-                  icon: Badge.count(
-                    count: unreadCount.clamp(0, 99),
-                    isLabelVisible: unreadCount > 0,
-                    child: const Icon(Icons.notifications_outlined),
-                  ),
-                  selectedIcon: Badge.count(
-                    count: unreadCount.clamp(0, 99),
-                    isLabelVisible: unreadCount > 0,
-                    child: const Icon(Icons.notifications),
-                  ),
-                  label: 'Bildirimler',
-                ),
-                const NavigationDestination(
-                    icon: Icon(Icons.person_outline),
-                    selectedIcon: Icon(Icons.person),
-                    label: 'Profilim'),
-              ],
+          : KararBottomNav(
+              currentIndex: currentIndex,
+              onSelect: _onDestinationSelected,
+              unreadCount: unreadCount,
+              hidden: navHidden,
+              // Keşfet is a full-bleed photo page under the nav.
+              overMedia: currentIndex == 5,
             ),
     );
 
@@ -279,43 +320,63 @@ class _HomeShellState extends ConsumerState<HomeShell>
   }
 
   Widget _buildPwaBanner() {
-    final scheme = Theme.of(context).colorScheme;
+    final kc = context.kc;
+    final titleStyle = AppTypography.labelS.copyWith(
+      fontWeight: FontWeight.w800,
+      color: kc.text1,
+    );
+    final bodyStyle = AppTypography.meta.copyWith(
+      fontWeight: FontWeight.w500,
+      letterSpacing: 0,
+      height: 1.4,
+      color: kc.text2,
+    );
+
+    final icon = ExcludeSemantics(
+      child: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: kc.primaryContainer,
+          borderRadius: KararRadius.all(KararRadius.iconTile),
+        ),
+        alignment: Alignment.center,
+        child: Icon(
+          _iosGuide ? Icons.ios_share_rounded : Icons.install_mobile_rounded,
+          size: 20,
+          color: kc.primary,
+        ),
+      ),
+    );
+
     if (_iosGuide) {
-      return Container(
-        color: scheme.primaryContainer,
-        padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+      return KararSurface(
+        radius: KararRadius.tile,
+        shadow: KararShadowKind.float,
+        color: kc.isDark ? kc.elevated : kc.surface,
+        padding: const EdgeInsets.fromLTRB(14, 12, 4, 12),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Icon(Icons.ios_share_outlined, size: 20),
+            icon,
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    'Karar\'ı cihazına ekle',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
-                      color: scheme.onPrimaryContainer,
-                    ),
-                  ),
+                  Text('Karar\'ı cihazına ekle', style: titleStyle),
                   const SizedBox(height: 2),
                   Text(
                     'Safari\'de  Paylaş  ikonuna dokun, "Ana Ekrana Ekle" seçeneğini seç.',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: scheme.onPrimaryContainer,
-                    ),
+                    style: bodyStyle,
                   ),
                 ],
               ),
             ),
             IconButton(
-              icon: const Icon(Icons.close, size: 18),
-              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.close_rounded, size: 20),
+              color: kc.text2,
               onPressed: _dismissPwaBanner,
               tooltip: 'Kapat',
             ),
@@ -324,50 +385,58 @@ class _HomeShellState extends ConsumerState<HomeShell>
       );
     }
 
-    return Container(
-      color: scheme.primaryContainer,
-      padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
-      child: Row(
+    return KararSurface(
+      radius: KararRadius.tile,
+      shadow: KararShadowKind.float,
+      color: kc.isDark ? kc.elevated : kc.surface,
+      padding: const EdgeInsets.fromLTRB(14, 12, 12, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.install_mobile, size: 20),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Karar\'ı cihazına ekle',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                    color: scheme.onPrimaryContainer,
-                  ),
+          Row(
+            children: [
+              icon,
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('Karar\'ı cihazına ekle', style: titleStyle),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Daha hızlı açılır, bildirim alırsın.',
+                      style: bodyStyle,
+                    ),
+                  ],
                 ),
-                Text(
-                  'Daha hızlı açılır, bildirim alırsın.',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: scheme.onPrimaryContainer,
-                  ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Wrap(
+            alignment: WrapAlignment.end,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 4,
+            children: [
+              TextButton(
+                onPressed: _dismissPwaBanner,
+                child: const Text('Şimdilik değil'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  PwaHelper.promptInstall();
+                  setState(() => _showPwaBanner = false);
+                },
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(64, 44),
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  textStyle: AppTypography.label,
                 ),
-              ],
-            ),
-          ),
-          TextButton(
-            onPressed: _dismissPwaBanner,
-            child: const Text('Şimdilik değil'),
-          ),
-          FilledButton(
-            onPressed: () {
-              PwaHelper.promptInstall();
-              setState(() => _showPwaBanner = false);
-            },
-            style: FilledButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              visualDensity: VisualDensity.compact,
-            ),
-            child: const Text('Ekle'),
+                child: const Text('Ekle'),
+              ),
+            ],
           ),
         ],
       ),
@@ -384,7 +453,6 @@ class _HomeShellState extends ConsumerState<HomeShell>
             unreadCount: unreadCount,
             collapsed: !context.isSideNavExpanded,
           ),
-          const VerticalDivider(width: 1),
           Expanded(child: widget.navigationShell),
         ],
       );
@@ -394,3 +462,82 @@ class _HomeShellState extends ConsumerState<HomeShell>
   }
 }
 
+/// Canvas scrim behind the floating nav, [lead] px taller than the nav: it
+/// starts clear [lead] px above the notch, veils 30 % at the notch top,
+/// 68 % at the pill's top edge, 95 % at its middle and is solid canvas from
+/// its bottom edge to the screen edge.
+///
+/// Content scrolling under the nav (a violet card, the create form's tag
+/// row and its "+" button) recedes into the canvas instead of peeking out
+/// beside the notch as a second, ghost pill; nothing shows in the gap below
+/// the pill.
+class _NavFade extends StatelessWidget {
+  const _NavFade();
+
+  /// How far above the notch top the fade begins.
+  static const double lead = 20;
+
+  @override
+  Widget build(BuildContext context) {
+    final canvas = context.kc.canvas;
+    return IgnorePointer(
+      child: ExcludeSemantics(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final h = constraints.maxHeight;
+            if (!h.isFinite || h <= 0) return const SizedBox.shrink();
+            const notchTop = lead;
+            const pillTop = notchTop + KararBottomNav.notchRise;
+            const pill = KararBottomNav.pillHeight;
+            double at(double y) => (y / h).clamp(0.0, 1.0);
+            return DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    canvas.withValues(alpha: 0),
+                    canvas.withValues(alpha: 0.30),
+                    canvas.withValues(alpha: 0.68),
+                    canvas.withValues(alpha: 0.95),
+                    canvas,
+                    canvas,
+                  ],
+                  stops: [
+                    0,
+                    at(notchTop),
+                    at(pillTop),
+                    at(pillTop + pill / 2),
+                    at(pillTop + pill),
+                    1,
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+/// Rounded floating frame (radius 20, float shadow) for notices that paint
+/// their own background (KVKK). Paints nothing visible while the notice is
+/// hidden (zero size).
+class _FloatingCard extends StatelessWidget {
+  const _FloatingCard({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final radius = KararRadius.all(KararRadius.tile);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: radius,
+        boxShadow: KararShadow.float(Theme.of(context).brightness),
+      ),
+      child: ClipRRect(borderRadius: radius, child: child),
+    );
+  }
+}

@@ -4,7 +4,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/notifications/notification_permission_dialog.dart';
 import '../../core/providers.dart';
-import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/karar_tokens.dart';
 import '../../core/update/force_update_dialog.dart';
 import '../onboarding/onboarding_screen.dart';
 
@@ -79,27 +80,37 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
+    // Brand panel in both themes (the violet → deep-violet gradient, so the
+    // dark theme does not open on a flat bright block), with the logo's
+    // balance mark.
     return Scaffold(
-      backgroundColor: AppColors.primary,
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(
-              Icons.gavel_rounded,
-              size: 80,
-              color: Colors.white,
-            ),
-            const SizedBox(height: 24),
-            Text(
-              'karar',
-              style: Theme.of(context).textTheme.headlineLarge?.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: -1,
-                  ),
-            ),
-          ],
+      backgroundColor: kc.primaryFill,
+      body: DecoratedBox(
+        decoration: const BoxDecoration(gradient: KararGradients.brand),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ExcludeSemantics(
+                child: Icon(
+                  Icons.balance_rounded,
+                  size: 80,
+                  color: kc.onColor,
+                ),
+              ),
+              const SizedBox(height: 24),
+              Text(
+                'karar',
+                style: AppTypography.display.copyWith(
+                  fontSize: 40,
+                  height: 1.1,
+                  color: kc.onColor,
+                  letterSpacing: -1,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

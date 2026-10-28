@@ -5,7 +5,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../core/api/api_exception.dart';
 import '../../core/auth/auth_service.dart';
 import '../../core/providers.dart';
-import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/karar_tokens.dart';
 import '../../shared/widgets/centered_content.dart';
 
 // ── Provider ─────────────────────────────────────────────────────────────────
@@ -97,21 +98,31 @@ class _EmptyState extends StatelessWidget {
       children: [
         _SummaryRow(summary: summary),
         const SizedBox(height: 40),
-        const Column(
+        Column(
           children: [
-            Icon(Icons.verified_outlined,
-                size: 56, color: AppColors.textTertiary),
-            SizedBox(height: 16),
+            ExcludeSemantics(
+              child: Container(
+                width: 88,
+                height: 88,
+                decoration: BoxDecoration(
+                  color: context.kc.hakliSoft,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.verified_rounded,
+                    size: 36, color: context.kc.hakliText),
+              ),
+            ),
+            const SizedBox(height: 16),
             Text(
               'Herhangi bir moderasyon kaydın yok.',
-              style: TextStyle(color: AppColors.textSecondary),
+              style: AppTypography.bodyStrong.copyWith(color: context.kc.text1),
               textAlign: TextAlign.center,
             ),
-            SizedBox(height: 8),
+            const SizedBox(height: 8),
             Text(
               'Topluluk kurallarına uygun içerikler için teşekkürler.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: AppColors.textTertiary, fontSize: 13),
+              style: AppTypography.body.copyWith(color: context.kc.text2),
             ),
           ],
         ),
@@ -140,10 +151,10 @@ class _HistoryList extends StatelessWidget {
           const SizedBox(height: 20),
           Text(
             'Moderasyon Olayları',
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  color: AppColors.textSecondary,
-                  fontWeight: FontWeight.w700,
-                ),
+            style: AppTypography.labelS.copyWith(
+              fontWeight: FontWeight.w800,
+              color: context.kc.text3,
+            ),
           ),
           const SizedBox(height: 8),
           ...List.generate(summary.events.length, (i) {
@@ -158,21 +169,21 @@ class _HistoryList extends StatelessWidget {
         const SizedBox(height: 20),
         Text(
           'Raporlarım',
-          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                color: AppColors.textSecondary,
-                fontWeight: FontWeight.w700,
-              ),
+          style: AppTypography.labelS.copyWith(
+            fontWeight: FontWeight.w800,
+            color: context.kc.text3,
+          ),
         ),
         const SizedBox(height: 8),
         if (reportsError)
-          const Text(
+          Text(
             'Rapor durumları yüklenemedi.',
-            style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+            style: TextStyle(color: context.kc.text2, fontSize: 13),
           )
         else if (reports.reports.isEmpty)
-          const Text(
+          Text(
             'Henüz gönderdiğin bir rapor yok.',
-            style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+            style: TextStyle(color: context.kc.text2, fontSize: 13),
           )
         else
           ...List.generate(reports.reports.length, (i) {
@@ -198,8 +209,8 @@ class _SummaryRow extends StatelessWidget {
       children: [
         Expanded(
           child: _StatCard(
-            icon: Icons.check_circle_outline,
-            color: AppColors.hakli,
+            icon: Icons.check_circle_rounded,
+            color: context.kc.hakliText,
             value: '${summary.activePosts}',
             label: 'Aktif Gönderi',
           ),
@@ -207,8 +218,8 @@ class _SummaryRow extends StatelessWidget {
         const SizedBox(width: 10),
         Expanded(
           child: _StatCard(
-            icon: Icons.remove_circle_outline,
-            color: AppColors.haksiz,
+            icon: Icons.remove_circle_rounded,
+            color: context.kc.haksizText,
             value: '${summary.removedPosts}',
             label: 'Kaldırılan',
           ),
@@ -217,7 +228,7 @@ class _SummaryRow extends StatelessWidget {
         Expanded(
           child: _StatCard(
             icon: Icons.warning_amber_rounded,
-            color: Colors.orange,
+            color: context.kc.warnText,
             value: '${summary.warnings}',
             label: 'Uyarı',
           ),
@@ -242,14 +253,13 @@ class _StatCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
       decoration: BoxDecoration(
-        color: isDark
-            ? AppColors.darkSurfaceContainerHighest
-            : AppColors.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(12),
+        color: context.kc.surface,
+        borderRadius: KararRadius.all(KararRadius.tile),
+        boxShadow: KararShadow.soft(Theme.of(context).brightness),
+        border: context.isDark ? Border.all(color: context.kc.hairline) : null,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -269,7 +279,7 @@ class _StatCard extends StatelessWidget {
             style: Theme.of(context)
                 .textTheme
                 .labelSmall
-                ?.copyWith(color: AppColors.textSecondary),
+                ?.copyWith(color: context.kc.text2),
           ),
         ],
       ),
@@ -283,7 +293,7 @@ class _ReportTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (color, icon) = _statusStyle(report.status);
+    final (color, icon) = _statusStyle(context, report.status);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
       child: Row(
@@ -308,8 +318,7 @@ class _ReportTile extends StatelessWidget {
                     const Spacer(),
                     Text(
                       _formatDate(report.createdAt),
-                      style: const TextStyle(
-                          color: AppColors.textTertiary, fontSize: 12),
+                      style: TextStyle(color: context.kc.text3, fontSize: 12),
                     ),
                   ],
                 ),
@@ -340,15 +349,13 @@ class _ReportTile extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   'Sebep: ${_reasonLabel(report.reason)}',
-                  style: const TextStyle(
-                      color: AppColors.textSecondary, fontSize: 13),
+                  style: TextStyle(color: context.kc.text2, fontSize: 13),
                 ),
                 if (report.publicReason != null) ...[
                   const SizedBox(height: 4),
                   Text(
                     report.publicReason!,
-                    style: const TextStyle(
-                        color: AppColors.textSecondary, fontSize: 13),
+                    style: TextStyle(color: context.kc.text2, fontSize: 13),
                   ),
                 ],
                 if (report.targetPreview != null) ...[
@@ -357,8 +364,7 @@ class _ReportTile extends StatelessWidget {
                     '"${report.targetPreview}"',
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        color: AppColors.textTertiary, fontSize: 13),
+                    style: TextStyle(color: context.kc.text3, fontSize: 13),
                   ),
                 ],
               ],
@@ -369,11 +375,12 @@ class _ReportTile extends StatelessWidget {
     );
   }
 
-  (Color, IconData) _statusStyle(String status) => switch (status) {
-        'actioned' => (AppColors.hakli, Icons.check_circle_outline),
-        'dismissed' => (AppColors.haksiz, Icons.cancel_outlined),
-        'under_review' => (Colors.blue, Icons.manage_search_outlined),
-        _ => (Colors.orange, Icons.hourglass_empty_outlined),
+  (Color, IconData) _statusStyle(BuildContext context, String status) =>
+      switch (status) {
+        'actioned' => (context.kc.hakliText, Icons.check_circle_rounded),
+        'dismissed' => (context.kc.haksizText, Icons.cancel_rounded),
+        'under_review' => (context.kc.primaryText, Icons.manage_search_rounded),
+        _ => (context.kc.warnText, Icons.hourglass_empty_rounded),
       };
 
   String _targetLabel(String targetType) =>
@@ -424,12 +431,12 @@ class _EventTileState extends ConsumerState<_EventTile> {
   Widget build(BuildContext context) {
     final event = widget.event;
     final (icon, color) = switch (event.action) {
-      'removed' => (Icons.remove_circle_outline, AppColors.haksiz),
-      'review' => (Icons.manage_search_outlined, Colors.blueGrey),
-      'warning' => (Icons.warning_amber_rounded, Colors.orange),
-      'strike' => (Icons.report_outlined, Colors.deepOrange),
-      'ban' => (Icons.block_outlined, Colors.red.shade900),
-      _ => (Icons.info_outline, AppColors.textSecondary),
+      'removed' => (Icons.remove_circle_rounded, context.kc.haksizText),
+      'review' => (Icons.manage_search_rounded, context.kc.text2),
+      'warning' => (Icons.warning_amber_rounded, context.kc.warnText),
+      'strike' => (Icons.report_rounded, context.kc.haksizText),
+      'ban' => (Icons.block_rounded, context.kc.haksizText),
+      _ => (Icons.info_outline_rounded, context.kc.text2),
     };
 
     final actionLabel = _decisionLabel(event.action);
@@ -465,8 +472,7 @@ class _EventTileState extends ConsumerState<_EventTile> {
                     const Spacer(),
                     Text(
                       _formatDate(event.createdAt),
-                      style: const TextStyle(
-                          color: AppColors.textTertiary, fontSize: 12),
+                      style: TextStyle(color: context.kc.text3, fontSize: 12),
                     ),
                   ],
                 ),
@@ -474,8 +480,7 @@ class _EventTileState extends ConsumerState<_EventTile> {
                   const SizedBox(height: 4),
                   Text(
                     '"${event.contentExcerpt}"',
-                    style: const TextStyle(
-                        color: AppColors.textSecondary, fontSize: 13),
+                    style: TextStyle(color: context.kc.text2, fontSize: 13),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -492,8 +497,7 @@ class _EventTileState extends ConsumerState<_EventTile> {
                 const SizedBox(height: 4),
                 Text(
                   'Neden: ${event.reason}',
-                  style: const TextStyle(
-                      color: AppColors.textSecondary, fontSize: 13),
+                  style: TextStyle(color: context.kc.text2, fontSize: 13),
                 ),
                 if (appealLabel != null) ...[
                   const SizedBox(height: 4),
@@ -526,7 +530,7 @@ class _EventTileState extends ConsumerState<_EventTile> {
                             height: 16,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : const Icon(Icons.gavel_outlined, size: 16),
+                        : const Icon(Icons.gavel_rounded, size: 16),
                     label: const Text('İtiraz Et'),
                     style: OutlinedButton.styleFrom(
                       visualDensity: VisualDensity.compact,
@@ -544,13 +548,13 @@ class _EventTileState extends ConsumerState<_EventTile> {
   }
 
   Color _appealColor(String status) => switch (status) {
-        'approved' => AppColors.hakli,
-        'rejected' => AppColors.haksiz,
-        _ => Colors.orange,
+        'approved' => context.kc.hakliText,
+        'rejected' => context.kc.haksizText,
+        _ => context.kc.warnText,
       };
 
   String _decisionLabel(String action) => switch (action) {
-        'review' => 'Incelemede',
+        'review' => 'İncelemede',
         'removed' => 'İçerik Kaldırıldı',
         'warning' => 'Uyarı',
         'strike' => 'Strike',

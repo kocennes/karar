@@ -6,6 +6,7 @@ import '../../core/providers.dart';
 import '../../core/utils/date_formatter.dart';
 import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/error_view.dart';
+import '../../shared/widgets/karar_avatar.dart';
 import '../../shared/widgets/loading_indicator.dart';
 import '../../shared/widgets/centered_content.dart';
 
@@ -86,7 +87,7 @@ class _BlockedUsersScreenState extends ConsumerState<BlockedUsersScreen> {
     if (users.isEmpty) {
       return const EmptyState(
         message: 'Engellenen kullanıcı yok.',
-        icon: Icons.block_outlined,
+        icon: Icons.block_rounded,
       );
     }
 
@@ -99,10 +100,7 @@ class _BlockedUsersScreenState extends ConsumerState<BlockedUsersScreen> {
         itemBuilder: (context, index) {
           final user = users[index];
           return ListTile(
-            leading: CircleAvatar(
-              child: Text(
-                  user.username.isEmpty ? '?' : user.username[0].toUpperCase()),
-            ),
+            leading: KararAvatar(username: user.username, radius: 20),
             title: Text(
               '@${user.username}',
               maxLines: 1,
@@ -115,7 +113,7 @@ class _BlockedUsersScreenState extends ConsumerState<BlockedUsersScreen> {
             ),
             trailing: TextButton.icon(
               onPressed: () => _confirmUnblock(user),
-              icon: const Icon(Icons.lock_open_outlined),
+              icon: const Icon(Icons.lock_open_rounded),
               label: const Text('Kaldır'),
             ),
           );

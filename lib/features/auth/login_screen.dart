@@ -3,10 +3,12 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/api/api_exception.dart';
 import '../../core/auth/auth_service.dart';
+import '../../core/layout/breakpoints.dart';
 import '../../core/utils/validators.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/karar_tokens.dart';
 import '../../shared/widgets/karar_button.dart';
-import '../../shared/widgets/centered_content.dart';
-import '../../shared/widgets/karar_logo.dart';
+import 'widgets/auth_layout.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key, required this.authService, this.onSuccess});
@@ -109,254 +111,202 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
+    final kc = context.kc;
+    final codeStyle = AppTypography.headline.copyWith(
+      fontSize: 24,
+      height: 30 / 24,
+      letterSpacing: 10,
+      color: kc.text1,
+      fontFeatures: AppTypography.tabular,
+    );
 
-    return Scaffold(
-      appBar: AppBar(
-        leadingWidth: 180,
-        leading: InkWell(
-          onTap: () => context.go('/'),
-          child: const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: KararLogo(size: LogoSize.medium),
-          ),
-        ),
-        title: const Text('Giriş Yap'),
-        centerTitle: true,
-      ),
-      body: SafeArea(
-        child: CenteredContent(
-          maxWidth: 400,
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Hero(
-                    tag: 'auth_logo',
-                    child: Icon(
-                      Icons.gavel_rounded,
-                      size: 64,
-                      color: colorScheme.primary,
+    return AuthScaffold(
+      child: Form(
+        key: _formKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Desktop: the brand panel beside the form already says this
+            // sentence, so the form keeps only the headline.
+            AuthHeader(
+              title: 'Tekrar Hoş Geldin',
+              subtitle: context.isDesktop
+                  ? null
+                  : const Text(
+                      'Hüküm vermek için sabırsızlanan bir topluluk var.',
                     ),
+            ),
+            TextFormField(
+              controller: _identifierCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Kullanıcı adı veya e-posta',
+                prefixIcon: Icon(Icons.person_outline_rounded),
+              ),
+              keyboardType: TextInputType.emailAddress,
+              textInputAction: TextInputAction.next,
+              validator: (v) =>
+                  v == null || v.trim().isEmpty ? 'Bu alan gerekli.' : null,
+            ),
+            const SizedBox(height: 14),
+            TextFormField(
+              controller: _passwordCtrl,
+              decoration: InputDecoration(
+                labelText: 'Şifre',
+                prefixIcon: const Icon(Icons.lock_outline_rounded),
+                suffixIcon: IconButton(
+                  onPressed: () => setState(() => _obscure = !_obscure),
+                  icon: Icon(
+                    _obscure
+                        ? Icons.visibility_off_rounded
+                        : Icons.visibility_rounded,
                   ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Tekrar Hoş Geldin',
-                    style: textTheme.headlineMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Hüküm vermek için sabırsızlanan bir topluluk var.',
-                    style: textTheme.bodyMedium?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 40),
-                  TextFormField(
-                    controller: _identifierCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Kullanıcı adı veya e-posta',
-                      prefixIcon: Icon(Icons.person_outline),
-                      border: OutlineInputBorder(),
-                    ),
-                    keyboardType: TextInputType.emailAddress,
-                    textInputAction: TextInputAction.next,
-                    validator: (v) => v == null || v.trim().isEmpty
-                        ? 'Bu alan gerekli.'
-                        : null,
-                  ),
-                  const SizedBox(height: 20),
-                  TextFormField(
-                    controller: _passwordCtrl,
-                    decoration: InputDecoration(
-                      labelText: 'Şifre',
-                      prefixIcon: const Icon(Icons.lock_outline),
-                      border: const OutlineInputBorder(),
-                      suffixIcon: IconButton(
-                        onPressed: () => setState(() => _obscure = !_obscure),
-                        icon: Icon(
-                          _obscure ? Icons.visibility_off : Icons.visibility,
-                        ),
-                      ),
-                    ),
-                    obscureText: _obscure,
-                    textInputAction: TextInputAction.done,
-                    onFieldSubmitted: (_) => _submit(),
-                    validator: Validators.password,
-                  ),
-                  if (_showMfaField) ...[
-                    const SizedBox(height: 20),
-                    if (!_useBackupCode)
-                      TextFormField(
-                        controller: _totpCtrl,
-                        decoration: const InputDecoration(
-                          labelText: '2FA Kodu',
-                          hintText: '6 haneli doğrulama kodu',
-                          prefixIcon: Icon(Icons.shield_outlined),
-                          border: OutlineInputBorder(),
-                        ),
-                        keyboardType: TextInputType.number,
-                        maxLength: 6,
-                        textInputAction: TextInputAction.done,
-                        onFieldSubmitted: (_) => _submit(),
-                        validator: (v) =>
-                            _useBackupCode || (v != null && v.length == 6)
-                                ? null
-                                : 'Geçerli bir kod girin.',
-                      )
-                    else
-                      TextFormField(
-                        controller: _backupCodeCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'Yedek Kod',
-                          hintText: 'XXXX-XXXX',
-                          prefixIcon: Icon(Icons.key_outlined),
-                          border: OutlineInputBorder(),
-                        ),
-                        textCapitalization: TextCapitalization.characters,
-                        textInputAction: TextInputAction.done,
-                        onFieldSubmitted: (_) => _submit(),
-                        validator: (v) => !_useBackupCode ||
-                                (v != null && v.trim().isNotEmpty)
-                            ? null
-                            : 'Yedek kodu girin.',
-                      ),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: TextButton(
-                        onPressed: () => setState(() {
-                          _useBackupCode = !_useBackupCode;
-                          _error = null;
-                        }),
-                        child: Text(
-                          _useBackupCode
-                              ? '2FA kodunu kullan'
-                              : 'Yedek kod kullan',
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                      ),
-                    ),
-                  ],
-                  if (_isLocked) ...[
-                    const SizedBox(height: 16),
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: colorScheme.errorContainer.withValues(alpha: 0.4),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: colorScheme.error),
-                      ),
-                      child: Column(
-                        children: [
-                          Icon(Icons.lock_clock_outlined,
-                              color: colorScheme.error, size: 32),
-                          const SizedBox(height: 8),
-                          const Text(
-                            'Hesabın geçici olarak kilitlendi',
-                            style: TextStyle(fontWeight: FontWeight.bold),
-                            textAlign: TextAlign.center,
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            '5 başarısız deneme yapıldı. Lütfen 30 dakika bekle veya şifreni sıfırla.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                color: colorScheme.onSurfaceVariant,
-                                fontSize: 13),
-                          ),
-                          const SizedBox(height: 12),
-                          TextButton(
-                            onPressed: () =>
-                                context.push('/auth/forgot-password'),
-                            child: const Text('Şifremi Sıfırla'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ] else if (_error != null) ...[
-                    const SizedBox(height: 16),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color:
-                            colorScheme.errorContainer.withValues(alpha: 0.3),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        _error!,
-                        style: TextStyle(
-                          color: colorScheme.error,
-                          fontSize: 13,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 32),
-                  KararButton(
-                    label: 'Giriş Yap',
-                    onPressed: _isLocked ? null : _submit,
-                    isLoading: _isLoading,
-                  ),
-                  const SizedBox(height: 16),
-                  Row(children: [
-                    const Expanded(child: Divider()),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Text(
-                        'veya',
-                        style: textTheme.bodySmall?.copyWith(
-                          color: colorScheme.outline,
-                        ),
-                      ),
-                    ),
-                    const Expanded(child: Divider()),
-                  ]),
-                  const SizedBox(height: 16),
-                  KararButton(
-                    label: 'Google ile Devam Et',
-                    onPressed: _isLoading ? null : _googleSignIn,
-                    variant: KararButtonVariant.outlined,
-                    icon: Icons.g_mobiledata,
-                  ),
-                  const SizedBox(height: 16),
-                  TextButton(
-                    onPressed: _isLoading
-                        ? null
-                        : () => context.push('/auth/forgot-password'),
-                    child: const Text('Şifremi Unuttum'),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Text('Hesabın yok mu?'),
-                      TextButton(
-                        onPressed: _isLoading
-                            ? null
-                            : () => context.go('/auth/register'),
-                        child: const Text('Hemen Kaydol'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 24),
-                  KararButton(
-                    label: 'Misafir Olarak Dene',
-                    onPressed: _isLoading ? null : () => Navigator.pop(context),
-                    variant: KararButtonVariant.text,
-                  ),
-                ],
+                ),
+              ),
+              obscureText: _obscure,
+              textInputAction: TextInputAction.done,
+              onFieldSubmitted: (_) => _submit(),
+              validator: Validators.password,
+            ),
+            Align(
+              alignment: AlignmentDirectional.centerEnd,
+              child: TextButton(
+                onPressed: _isLoading
+                    ? null
+                    : () => context.push('/auth/forgot-password'),
+                child: const Text('Şifremi Unuttum'),
               ),
             ),
-          ),
+            if (_showMfaField) ...[
+              const SizedBox(height: 6),
+              if (!_useBackupCode)
+                TextFormField(
+                  controller: _totpCtrl,
+                  decoration: const InputDecoration(
+                    labelText: '2FA Kodu',
+                    hintText: '6 haneli doğrulama kodu',
+                    prefixIcon: Icon(Icons.shield_rounded),
+                  ),
+                  style: codeStyle,
+                  textAlign: TextAlign.center,
+                  keyboardType: TextInputType.number,
+                  maxLength: 6,
+                  textInputAction: TextInputAction.done,
+                  onFieldSubmitted: (_) => _submit(),
+                  validator: (v) =>
+                      _useBackupCode || (v != null && v.length == 6)
+                          ? null
+                          : 'Geçerli bir kod girin.',
+                )
+              else
+                TextFormField(
+                  controller: _backupCodeCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Yedek Kod',
+                    hintText: 'XXXX-XXXX',
+                    prefixIcon: Icon(Icons.key_rounded),
+                  ),
+                  textCapitalization: TextCapitalization.characters,
+                  textInputAction: TextInputAction.done,
+                  onFieldSubmitted: (_) => _submit(),
+                  validator: (v) =>
+                      !_useBackupCode || (v != null && v.trim().isNotEmpty)
+                          ? null
+                          : 'Yedek kodu girin.',
+                ),
+              Align(
+                alignment: AlignmentDirectional.centerEnd,
+                child: TextButton(
+                  onPressed: () => setState(() {
+                    _useBackupCode = !_useBackupCode;
+                    _error = null;
+                  }),
+                  child: Text(
+                    _useBackupCode ? '2FA kodunu kullan' : 'Yedek kod kullan',
+                  ),
+                ),
+              ),
+            ],
+            if (_isLocked) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                decoration: BoxDecoration(
+                  color: kc.warnSoft,
+                  borderRadius: KararRadius.all(KararRadius.input),
+                ),
+                child: Column(
+                  children: [
+                    Icon(Icons.lock_clock_rounded, color: kc.warnText, size: 32),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Hesabın geçici olarak kilitlendi',
+                      style: AppTypography.bodyStrong.copyWith(
+                        color: kc.warnText,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '5 başarısız deneme yapıldı. Lütfen 30 dakika bekle veya şifreni sıfırla.',
+                      textAlign: TextAlign.center,
+                      style: AppTypography.bodyS.copyWith(color: kc.text1),
+                    ),
+                    const SizedBox(height: 4),
+                    TextButton(
+                      onPressed: () => context.push('/auth/forgot-password'),
+                      child: const Text('Şifremi Sıfırla'),
+                    ),
+                  ],
+                ),
+              ),
+            ] else if (_error != null) ...[
+              const SizedBox(height: 12),
+              AuthErrorBox(message: _error!),
+            ],
+            const SizedBox(height: 24),
+            KararButton(
+              label: 'Giriş Yap',
+              size: KararButtonSize.large,
+              onPressed: _isLocked ? null : _submit,
+              isLoading: _isLoading,
+            ),
+            const SizedBox(height: 16),
+            const AuthOrDivider(),
+            const SizedBox(height: 16),
+            KararButton(
+              label: 'Google ile Devam Et',
+              onPressed: _isLoading ? null : _googleSignIn,
+              variant: KararButtonVariant.outlined,
+              size: KararButtonSize.large,
+              // `g_mobiledata` rendered as a tiny broken "G" (no brand
+              // asset is bundled); a neutral sign-in glyph instead.
+              icon: Icons.login_rounded,
+            ),
+            const SizedBox(height: 20),
+            Wrap(
+              alignment: WrapAlignment.center,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  'Hesabın yok mu?',
+                  style: AppTypography.bodyS.copyWith(color: kc.text2),
+                ),
+                TextButton(
+                  onPressed:
+                      _isLoading ? null : () => context.go('/auth/register'),
+                  child: const Text('Hemen Kaydol'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            // Text button: a third 56 px slab made the CTA stack heavy, and
+            // the dark tonal fill read as disabled.
+            KararButton(
+              label: 'Misafir Olarak Dene',
+              onPressed: _isLoading ? null : () => Navigator.pop(context),
+              variant: KararButtonVariant.text,
+            ),
+          ],
         ),
       ),
     );

@@ -3,9 +3,17 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
-import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/category_style.dart';
+import '../../core/theme/karar_tokens.dart';
 import '../../shared/models/post.dart';
+import '../../shared/widgets/karar_logo.dart';
+import '../../shared/widgets/on_color_chip.dart';
+import '../../shared/widgets/post_surface.dart';
+import '../../shared/widgets/verdict_chip.dart';
 
+/// Square share card (captured to PNG): a mini feature card — category
+/// gradient, big white quoted title and the verdict chip (spec §6.12).
 class ShareCardWidget extends StatelessWidget {
   const ShareCardWidget({super.key, required this.post});
 
@@ -26,177 +34,70 @@ class _CardBody extends StatelessWidget {
 
   final Post post;
 
-  String _fmt(int n) {
-    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
-    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}B';
-    return n.toString();
-  }
-
   @override
   Widget build(BuildContext context) {
-    final hakliPct = post.hakliPercent;
-    final showPct = post.showPercentage;
-
-    return Container(
-      decoration: const BoxDecoration(color: Color(0xFF0F0F1A)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _Header(),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+    final style = CategoryStyle.of(post.category);
+    final white = context.kc.onColor;
+    return MediaQuery.withNoTextScaling(
+      child: PostSurface(
+        post: post,
+        showPhoto: false,
+        showRailSheen: false,
+        radius: KararRadius.card,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(22, 20, 22, 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
                 children: [
-                  Text(
-                    '"${post.title}"',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      height: 1.4,
-                    ),
-                    maxLines: 5,
-                    overflow: TextOverflow.ellipsis,
+                  KararLogo(
+                    size: LogoSize.small,
+                    wordmarkColor: white,
                   ),
                   const Spacer(),
-                  _VoteBar(hakliPct: hakliPct, showPct: showPct),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Text(
-                        '✅ Haklı  ${_fmt(post.voteCountHakli)}',
-                        style: const TextStyle(
-                          color: AppColors.darkHakli,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const Spacer(),
-                      Text(
-                        '❌ Haksız  ${_fmt(post.voteCountHaksiz)}',
-                        style: const TextStyle(
-                          color: AppColors.darkHaksiz,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
+                  Flexible(
+                    child: OnColorChip(
+                      icon: style.icon,
+                      label: post.category.name,
+                    ),
                   ),
                 ],
               ),
-            ),
-          ),
-          _Footer(postId: post.id),
-        ],
-      ),
-    );
-  }
-}
-
-class _Header extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-      color: AppColors.primary,
-      child: const Row(
-        children: [
-          Text('⚖️', style: TextStyle(fontSize: 20)),
-          SizedBox(width: 8),
-          Text(
-            'karar',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.w900,
-              letterSpacing: -0.5,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _VoteBar extends StatelessWidget {
-  const _VoteBar({required this.hakliPct, required this.showPct});
-
-  final int hakliPct;
-  final bool showPct;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: SizedBox(
-            height: 8,
-            child: Row(
-              children: [
-                Expanded(
-                  flex: hakliPct,
-                  child: const ColoredBox(color: AppColors.darkHakli),
-                ),
-                Expanded(
-                  flex: 100 - hakliPct,
-                  child: const ColoredBox(color: AppColors.darkHaksiz),
-                ),
-              ],
-            ),
+              const Spacer(),
+              Text(
+                '“${post.title}”',
+                maxLines: 5,
+                overflow: TextOverflow.ellipsis,
+                style: AppTypography.cardTitle.copyWith(color: white),
+              ),
+              const SizedBox(height: 16),
+              VerdictChip(post: post),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Text(
+                    'Sen ne düşünüyorsun?',
+                    style: AppTypography.meta.copyWith(
+                      color: white,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'karar.app/posts/${post.id}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.end,
+                      style: AppTypography.meta.copyWith(color: white),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
-        if (showPct) ...[
-          const SizedBox(height: 4),
-          Text(
-            '%$hakliPct Haklı',
-            style: const TextStyle(
-              color: AppColors.darkHakli,
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-}
-
-class _Footer extends StatelessWidget {
-  const _Footer({required this.postId});
-
-  final String postId;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: Color(0xFF2A2A3A))),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Sen ne düşünüyorsun?',
-            style: TextStyle(
-              color: Colors.white70,
-              fontSize: 11,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            'karar.app/posts/$postId',
-            style: TextStyle(
-              color: AppColors.primary.withValues(alpha: 0.8),
-              fontSize: 11,
-            ),
-          ),
-        ],
       ),
     );
   }

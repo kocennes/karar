@@ -6,8 +6,10 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/api/api_exception.dart';
 import '../../core/providers.dart';
-import '../../shared/widgets/centered_content.dart';
-import '../../shared/widgets/karar_logo.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/karar_tokens.dart';
+import '../../shared/widgets/karar_button.dart';
+import 'widgets/auth_layout.dart';
 
 class ForgotPasswordScreen extends ConsumerStatefulWidget {
   const ForgotPasswordScreen({super.key});
@@ -122,52 +124,39 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        leadingWidth: 180,
-        leading: InkWell(
-          onTap: () => context.go('/'),
-          child: const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: KararLogo(size: LogoSize.medium),
+    return AuthScaffold(
+      child: switch (_step) {
+        _Step.email => _EmailStep(
+            controller: _emailCtrl,
+            isLoading: _isLoading,
+            error: _error,
+            onSubmit: _sendCode,
           ),
-        ),
-        title: const Text('Şifre Sıfırla'),
-        centerTitle: true,
-      ),
-      body: SafeArea(
-        child: CenteredContent(
-          maxWidth: 400,
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-            child: switch (_step) {
-              _Step.email => _EmailStep(
-                  controller: _emailCtrl,
-                  isLoading: _isLoading,
-                  error: _error,
-                  onSubmit: _sendCode,
-                ),
-              _Step.verify => _VerifyStep(
-                  email: _email!,
-                  otpCtrl: _otpCtrl,
-                  newPasswordCtrl: _newPasswordCtrl,
-                  confirmCtrl: _confirmCtrl,
-                  obscurePassword: _obscurePassword,
-                  obscureConfirm: _obscureConfirm,
-                  onTogglePassword: () => setState(() => _obscurePassword = !_obscurePassword),
-                  onToggleConfirm: () => setState(() => _obscureConfirm = !_obscureConfirm),
-                  isLoading: _isLoading,
-                  error: _error,
-                  resendCooldown: _resendCooldown,
-                  onSubmit: _resetPassword,
-                  onResend: _resendCode,
-                  onChangeEmail: () { setState(() { _step = _Step.email; _error = null; }); },
-                ),
-              _Step.done => _DoneStep(onLogin: () => context.go('/auth/login')),
+        _Step.verify => _VerifyStep(
+            email: _email!,
+            otpCtrl: _otpCtrl,
+            newPasswordCtrl: _newPasswordCtrl,
+            confirmCtrl: _confirmCtrl,
+            obscurePassword: _obscurePassword,
+            obscureConfirm: _obscureConfirm,
+            onTogglePassword: () =>
+                setState(() => _obscurePassword = !_obscurePassword),
+            onToggleConfirm: () =>
+                setState(() => _obscureConfirm = !_obscureConfirm),
+            isLoading: _isLoading,
+            error: _error,
+            resendCooldown: _resendCooldown,
+            onSubmit: _resetPassword,
+            onResend: _resendCode,
+            onChangeEmail: () {
+              setState(() {
+                _step = _Step.email;
+                _error = null;
+              });
             },
           ),
-        ),
-      ),
+        _Step.done => _DoneStep(onLogin: () => context.go('/auth/login')),
+      },
     );
   }
 }
@@ -189,26 +178,21 @@ class _EmailStep extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    final colorScheme = Theme.of(context).colorScheme;
-
+    final kc = context.kc;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Icon(Icons.lock_reset_rounded, size: 64, color: Colors.amber),
-        const SizedBox(height: 24),
-        Text(
-          'Şifreni mi unuttun?',
-          style: textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
-          textAlign: TextAlign.center,
+        AuthHeader(
+          leading: AuthDisc(
+            icon: Icons.lock_reset_rounded,
+            background: kc.warnSoft,
+            foreground: kc.warnText,
+          ),
+          title: 'Şifreni mi unuttun?',
+          subtitle: const Text(
+            'E-posta adresini gir. Şifre sıfırlama kodu göndereceğiz.',
+          ),
         ),
-        const SizedBox(height: 8),
-        Text(
-          'E-posta adresini gir. Şifre sıfırlama kodu göndereceğiz.',
-          style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 32),
         TextField(
           controller: controller,
           keyboardType: TextInputType.emailAddress,
@@ -218,26 +202,18 @@ class _EmailStep extends StatelessWidget {
           decoration: const InputDecoration(
             labelText: 'E-posta',
             prefixIcon: Icon(Icons.email_outlined),
-            border: OutlineInputBorder(),
           ),
         ),
         if (error != null) ...[
-          const SizedBox(height: 16),
-          Text(
-            error!,
-            style: TextStyle(color: colorScheme.error, fontSize: 13),
-            textAlign: TextAlign.center,
-          ),
+          const SizedBox(height: 12),
+          AuthErrorBox(message: error!),
         ],
         const SizedBox(height: 24),
-        FilledButton(
+        KararButton(
+          label: 'Kod Gönder',
+          size: KararButtonSize.large,
+          isLoading: isLoading,
           onPressed: isLoading ? null : onSubmit,
-          style: FilledButton.styleFrom(
-            minimumSize: const Size.fromHeight(56),
-          ),
-          child: isLoading
-              ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-              : const Text('Kod Gönder'),
         ),
       ],
     );
@@ -279,42 +255,45 @@ class _VerifyStep extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    final colorScheme = Theme.of(context).colorScheme;
-
+    final kc = context.kc;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Icon(Icons.mark_email_read_outlined, size: 64, color: Colors.green),
-        const SizedBox(height: 24),
-        Text(
-          'Kodu Doğrula',
-          style: textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 8),
-        Text.rich(
-          TextSpan(
-            text: 'Kodu şu adrese gönderdik:\n',
-            children: [TextSpan(text: email, style: const TextStyle(fontWeight: FontWeight.bold))],
+        AuthHeader(
+          leading: const AuthDisc(icon: Icons.mark_email_read_rounded),
+          title: 'Kodu Doğrula',
+          subtitle: Text.rich(
+            TextSpan(
+              text: 'Kodu şu adrese gönderdik:\n',
+              children: [
+                TextSpan(
+                  text: email,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ],
+            ),
           ),
-          style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
-          textAlign: TextAlign.center,
         ),
-        const SizedBox(height: 32),
         TextField(
           controller: otpCtrl,
           keyboardType: TextInputType.number,
           textInputAction: TextInputAction.next,
           enabled: !isLoading,
+          textAlign: TextAlign.center,
+          style: AppTypography.headline.copyWith(
+            fontSize: 24,
+            height: 30 / 24,
+            letterSpacing: 10,
+            color: kc.text1,
+            fontFeatures: AppTypography.tabular,
+          ),
           decoration: const InputDecoration(
             labelText: '6 Haneli Kod',
-            prefixIcon: Icon(Icons.pin_outlined),
-            border: OutlineInputBorder(),
+            prefixIcon: Icon(Icons.pin_rounded),
             hintText: '123456',
           ),
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 14),
         TextField(
           controller: newPasswordCtrl,
           obscureText: obscurePassword,
@@ -322,15 +301,18 @@ class _VerifyStep extends StatelessWidget {
           enabled: !isLoading,
           decoration: InputDecoration(
             labelText: 'Yeni Şifre',
-            prefixIcon: const Icon(Icons.lock_outline),
-            border: const OutlineInputBorder(),
+            prefixIcon: const Icon(Icons.lock_outline_rounded),
             suffixIcon: IconButton(
-              icon: Icon(obscurePassword ? Icons.visibility_off : Icons.visibility),
+              icon: Icon(
+                obscurePassword
+                    ? Icons.visibility_off_rounded
+                    : Icons.visibility_rounded,
+              ),
               onPressed: onTogglePassword,
             ),
           ),
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 14),
         TextField(
           controller: confirmCtrl,
           obscureText: obscureConfirm,
@@ -339,31 +321,27 @@ class _VerifyStep extends StatelessWidget {
           onSubmitted: (_) => onSubmit(),
           decoration: InputDecoration(
             labelText: 'Şifre Tekrar',
-            prefixIcon: const Icon(Icons.lock_reset_outlined),
-            border: const OutlineInputBorder(),
+            prefixIcon: const Icon(Icons.lock_reset_rounded),
             suffixIcon: IconButton(
-              icon: Icon(obscureConfirm ? Icons.visibility_off : Icons.visibility),
+              icon: Icon(
+                obscureConfirm
+                    ? Icons.visibility_off_rounded
+                    : Icons.visibility_rounded,
+              ),
               onPressed: onToggleConfirm,
             ),
           ),
         ),
         if (error != null) ...[
-          const SizedBox(height: 16),
-          Text(
-            error!,
-            style: TextStyle(color: colorScheme.error, fontSize: 13),
-            textAlign: TextAlign.center,
-          ),
+          const SizedBox(height: 12),
+          AuthErrorBox(message: error!),
         ],
         const SizedBox(height: 24),
-        FilledButton(
+        KararButton(
+          label: 'Şifreyi Güncelle',
+          size: KararButtonSize.large,
+          isLoading: isLoading,
           onPressed: isLoading ? null : onSubmit,
-          style: FilledButton.styleFrom(
-            minimumSize: const Size.fromHeight(56),
-          ),
-          child: isLoading
-              ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-              : const Text('Şifreyi Güncelle'),
         ),
         const SizedBox(height: 12),
         TextButton(
@@ -387,32 +365,28 @@ class _DoneStep extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const SizedBox(height: 40),
-        const Icon(Icons.check_circle_rounded, size: 80, color: Colors.green),
         const SizedBox(height: 24),
-        Text(
-          'Harika!',
-          style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          'Şifren başarıyla güncellendi. Artık yeni şifrenle giriş yapabilirsin.',
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 40),
-        FilledButton(
-          onPressed: onLogin,
-          style: FilledButton.styleFrom(
-            minimumSize: const Size.fromHeight(56),
+        AuthHeader(
+          leading: AuthDisc(
+            icon: Icons.check_circle_rounded,
+            background: kc.hakliSoft,
+            foreground: kc.voteText(true),
           ),
-          child: const Text('Giriş Yapmaya Git'),
+          title: 'Harika!',
+          subtitle: const Text(
+            'Şifren başarıyla güncellendi. Artık yeni şifrenle giriş yapabilirsin.',
+          ),
+        ),
+        KararButton(
+          label: 'Giriş Yapmaya Git',
+          size: KararButtonSize.large,
+          onPressed: onLogin,
         ),
       ],
     );
   }
 }
-

@@ -1,33 +1,41 @@
 import 'package:flutter/material.dart';
 
-import '../../core/theme/app_colors.dart';
+import '../../core/theme/karar_tokens.dart';
 
+/// Karar logo (spec §4.3): a purple gradient circle with a white
+/// `balance_rounded` mark, plus the "karar" wordmark.
+///
+/// | size   | mark | icon | wordmark |
+/// |--------|------|------|----------|
+/// | small  | 28   | 14   | 15       |
+/// | medium | 40   | 22   | 24       |
+/// | large  | 48   | 24   | 26       |
 class KararLogo extends StatelessWidget {
-  const KararLogo({super.key, this.size = LogoSize.medium});
+  const KararLogo({
+    super.key,
+    this.size = LogoSize.medium,
+    this.showWordmark = true,
+    this.wordmarkColor,
+  });
 
   final LogoSize size;
+  final bool showWordmark;
+
+  /// Defaults to `kc.text1`; pass white on brand panels.
+  final Color? wordmarkColor;
 
   @override
   Widget build(BuildContext context) {
-    final iconBoxSize = switch (size) {
+    final kc = context.kc;
+    final markSize = switch (size) {
       LogoSize.small => 28.0,
-      LogoSize.medium => 43.0,
+      LogoSize.medium => 40.0,
       LogoSize.large => 48.0,
     };
-    final scaleIconSize = switch (size) {
+    final iconSize = switch (size) {
       LogoSize.small => 14.0,
       LogoSize.medium => 22.0,
       LogoSize.large => 24.0,
-    };
-    final badgeSize = switch (size) {
-      LogoSize.small => 10.0,
-      LogoSize.medium => 16.0,
-      LogoSize.large => 17.0,
-    };
-    final badgeIconSize = switch (size) {
-      LogoSize.small => 6.0,
-      LogoSize.medium => 10.0,
-      LogoSize.large => 11.0,
     };
     final wordmarkSize = switch (size) {
       LogoSize.small => 15.0,
@@ -36,85 +44,34 @@ class KararLogo extends StatelessWidget {
     };
     final gap = switch (size) {
       LogoSize.small => 6.0,
-      LogoSize.medium => 8.0,
+      LogoSize.medium => 10.0,
       LogoSize.large => 10.0,
     };
 
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final boxColor = isDark
-        ? AppColors.darkSurfaceContainerHighest
-        : AppColors.surfaceContainerHighest;
-    final boxBorder = isDark ? AppColors.darkBorder : AppColors.border;
-    final scaleColor =
-        isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
-    final wordmarkColor =
-        isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
-    final hakliColor = isDark ? AppColors.darkHakli : AppColors.hakli;
-    final haksizColor = isDark ? AppColors.darkHaksiz : AppColors.haksiz;
+    final mark = Container(
+      width: markSize,
+      height: markSize,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: KararGradients.logo,
+        boxShadow: KararShadow.logo(kc.brightness),
+      ),
+      alignment: Alignment.center,
+      child: Icon(Icons.balance_rounded, size: iconSize, color: kc.onColor),
+    );
+
+    if (!showWordmark) {
+      return Semantics(
+        label: 'karar',
+        image: true,
+        child: ExcludeSemantics(child: mark),
+      );
+    }
 
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        SizedBox(
-          width: iconBoxSize + badgeSize * 0.6,
-          height: iconBoxSize + badgeSize * 0.6,
-          child: Stack(
-            children: [
-              Positioned(
-                bottom: 0,
-                right: 0,
-                child: Container(
-                  width: iconBoxSize,
-                  height: iconBoxSize,
-                  decoration: BoxDecoration(
-                    color: boxColor,
-                    borderRadius: BorderRadius.circular(iconBoxSize * 0.28),
-                    border: Border.all(color: boxBorder),
-                  ),
-                  child: Center(
-                    child: Icon(
-                      Icons.balance_rounded,
-                      size: scaleIconSize,
-                      color: scaleColor,
-                    ),
-                  ),
-                ),
-              ),
-              Positioned(
-                top: 0,
-                left: 0,
-                child: Container(
-                  width: badgeSize,
-                  height: badgeSize,
-                  decoration: BoxDecoration(
-                    color: hakliColor,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Center(
-                    child: Icon(Icons.check,
-                        size: badgeIconSize, color: Colors.white),
-                  ),
-                ),
-              ),
-              Positioned(
-                bottom: 0,
-                right: 0,
-                child: Container(
-                  width: badgeSize,
-                  height: badgeSize,
-                  decoration: BoxDecoration(
-                    color: haksizColor,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Center(
-                    child: Icon(Icons.close,
-                        size: badgeIconSize, color: Colors.white),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+        ExcludeSemantics(child: mark),
         SizedBox(width: gap),
         Flexible(
           child: Text(
@@ -125,8 +82,8 @@ class KararLogo extends StatelessWidget {
               fontFamily: 'PlusJakartaSans',
               fontSize: wordmarkSize,
               fontWeight: FontWeight.w800,
-              color: wordmarkColor,
-              letterSpacing: 0,
+              color: wordmarkColor ?? kc.text1,
+              letterSpacing: -1.0,
               height: 1,
             ),
           ),

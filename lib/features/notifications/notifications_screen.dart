@@ -4,16 +4,25 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/layout/breakpoints.dart';
 import '../../core/providers.dart';
 import '../../core/notifications/notification_deep_link.dart';
 import '../../core/settings/preferences_provider.dart';
-import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/category_style.dart';
+import '../../core/theme/karar_tokens.dart';
+import '../../core/utils/count_format.dart';
+import '../../core/utils/date_formatter.dart';
 import '../../shared/models/post.dart';
 import '../../shared/widgets/centered_content.dart';
 import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/karar_button.dart';
+import '../../shared/widgets/karar_chip.dart';
+import '../../shared/widgets/karar_sheet.dart';
 import '../../shared/widgets/loading_indicator.dart';
+import '../profile/widgets/column_app_bar.dart';
+import '../profile/widgets/hue_tint.dart';
 import 'data/notification_item.dart';
 import 'notifications_provider.dart';
 
@@ -24,26 +33,38 @@ class NotificationsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(currentUserProvider);
     final state = ref.watch(notificationsProvider);
+    final kc = context.kc;
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          state.unreadCount > 0
-              ? 'Bildirimler (${state.unreadCount})'
-              : 'Bildirimler',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+      // Desktop: title and actions line up with the 680 px list column.
+      appBar: ColumnAppBar(
+        centerTitle: false,
+        title: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: AlignmentDirectional.centerStart,
+          child: Text(
+            state.unreadCount > 0
+                ? 'Bildirimler (${state.unreadCount})'
+                : 'Bildirimler',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTypography.screenTitle.copyWith(color: kc.text1),
+          ),
         ),
         actions: [
           if (state.unreadCount > 0)
             TextButton(
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                textStyle: AppTypography.labelS,
+              ),
               onPressed: () =>
                   ref.read(notificationsProvider.notifier).markAllRead(),
               child: const Text('Tümünü okundu say'),
             ),
           if (state.hasReadItems)
             IconButton(
-              icon: const Icon(Icons.cleaning_services_outlined),
+              icon: const Icon(Icons.cleaning_services_rounded),
               tooltip: 'Okunmuşları temizle',
               onPressed: () =>
                   ref.read(notificationsProvider.notifier).clearRead(),
@@ -84,7 +105,7 @@ class NotificationsScreen extends ConsumerWidget {
             child: EmptyState(
               message:
                   'Henüz bildirim yok. Topluluk karar verdikçe burada göreceksin.',
-              icon: Icons.notifications_none_outlined,
+              icon: Icons.notifications_none_rounded,
             ),
           ),
         ],
@@ -99,7 +120,12 @@ class NotificationsScreen extends ConsumerWidget {
           child: RefreshIndicator(
             onRefresh: () => ref.read(notificationsProvider.notifier).load(),
             child: ListView.builder(
-              padding: const EdgeInsets.symmetric(vertical: 8),
+              padding: EdgeInsets.fromLTRB(
+                0,
+                4,
+                0,
+                context.navBottomInset + 24,
+              ),
               itemCount: state.items.length + 1,
               itemBuilder: (context, index) {
                 if (index == 0) return const _DigestWidget();
@@ -120,38 +146,48 @@ class _NotificationControls extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final prefs = ref.watch(userPreferencesProvider);
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 2),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            ActionChip(
-              avatar: const Icon(Icons.notifications_active_outlined, size: 18),
-              label:
-                  Text(prefs.pushEnabled ? 'İzin açık' : 'Bildirim izni ver'),
-              onPressed: () => _requestPermission(context, ref),
-            ),
-            const SizedBox(width: 8),
-            ActionChip(
-              avatar: const Icon(Icons.volume_up_outlined, size: 18),
-              label:
-                  Text(prefs.soundEnabled ? 'Ses açık' : 'Bildirim sesini aç'),
-              onPressed: () => _enableSound(context, ref),
-            ),
-            const SizedBox(width: 8),
-            ActionChip(
-              avatar: const Icon(Icons.notifications_paused_outlined, size: 18),
-              label: const Text('Sessize al'),
-              onPressed: () => _showMuteSheet(context, ref),
-            ),
-            const SizedBox(width: 8),
-            ActionChip(
-              avatar: const Icon(Icons.tune_outlined, size: 18),
-              label: const Text('Tercihleri yönet'),
-              onPressed: () => context.push('/settings/notifications'),
-            ),
-          ],
+    // Start-aligned (the narrower row used to be centred by the parent
+    // Column on desktop), with the same 16 px inset as the cards below.
+    // On-canvas chips (white + soft shadow in light), clipped at the sides
+    // only so the shadow tail is not cut off below the row.
+    return Align(
+      alignment: AlignmentDirectional.centerStart,
+      child: KararChipRowClip(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          clipBehavior: Clip.none,
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+          child: Row(
+            children: [
+              KararChip(
+                icon: Icons.notifications_active_rounded,
+                label: prefs.pushEnabled ? 'İzin açık' : 'Bildirim izni ver',
+                onCanvas: true,
+                onTap: () => _requestPermission(context, ref),
+              ),
+              const SizedBox(width: 8),
+              KararChip(
+                icon: Icons.volume_up_rounded,
+                label: prefs.soundEnabled ? 'Ses açık' : 'Bildirim sesini aç',
+                onCanvas: true,
+                onTap: () => _enableSound(context, ref),
+              ),
+              const SizedBox(width: 8),
+              KararChip(
+                icon: Icons.notifications_paused_rounded,
+                label: 'Sessize al',
+                onCanvas: true,
+                onTap: () => _showMuteSheet(context, ref),
+              ),
+              const SizedBox(width: 8),
+              KararChip(
+                icon: Icons.tune_rounded,
+                label: 'Tercihleri yönet',
+                onCanvas: true,
+                onTap: () => context.push('/settings/notifications'),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -187,34 +223,38 @@ class _NotificationControls extends ConsumerWidget {
   }
 
   Future<void> _showMuteSheet(BuildContext context, WidgetRef ref) async {
-    final duration = await showModalBottomSheet<String>(
-      context: context,
+    final duration = await showKararSheet<String>(
+      context,
       builder: (ctx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const SizedBox(height: 8),
+            KararSheetHeader(
+              title: 'Sessize al',
+              onClose: () => Navigator.pop(ctx),
+            ),
             ListTile(
-              leading: const Icon(Icons.schedule_outlined),
+              leading: const Icon(Icons.schedule_rounded),
               title: const Text('1 saat'),
               onTap: () => Navigator.pop(ctx, '1h'),
             ),
             ListTile(
-              leading: const Icon(Icons.today_outlined),
+              leading: const Icon(Icons.today_rounded),
               title: const Text('Bugün'),
               onTap: () => Navigator.pop(ctx, 'today'),
             ),
             ListTile(
-              leading: const Icon(Icons.date_range_outlined),
+              leading: const Icon(Icons.date_range_rounded),
               title: const Text('7 gün'),
               onTap: () => Navigator.pop(ctx, '7d'),
             ),
             ListTile(
-              leading: const Icon(Icons.notifications_off_outlined),
+              leading: const Icon(Icons.notifications_off_rounded),
               title: const Text('Süresiz'),
               onTap: () => Navigator.pop(ctx, 'indefinite'),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
           ],
         ),
       ),
@@ -333,27 +373,25 @@ class _WebPushBannerState extends ConsumerState<_WebPushBanner> {
       return const SizedBox.shrink();
     }
 
-    final scheme = Theme.of(context).colorScheme;
+    final kc = context.kc;
 
     if (status == AuthorizationStatus.denied) {
       return Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
         child: Container(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: scheme.errorContainer.withValues(alpha: 0.4),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: scheme.error.withValues(alpha: 0.3)),
+            color: kc.haksizSoft,
+            borderRadius: KararRadius.all(KararRadius.tile),
           ),
           child: Row(
             children: [
-              Icon(Icons.notifications_off_outlined, color: scheme.error),
+              Icon(Icons.notifications_off_rounded, color: kc.voteIcon(false)),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   'Bildirimler kapalı. Tarayıcı adres çubuğundaki kilit simgesinden bildirimlere izin verebilirsin.',
-                  style:
-                      TextStyle(fontSize: 13, color: scheme.onErrorContainer),
+                  style: AppTypography.bodyS.copyWith(color: kc.text1),
                 ),
               ),
             ],
@@ -363,51 +401,57 @@ class _WebPushBannerState extends ConsumerState<_WebPushBanner> {
     }
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(
-            children: [
-              const Text('🔔', style: TextStyle(fontSize: 24)),
-              const SizedBox(width: 12),
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'Bildirimleri Aç',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    Text(
-                      'Topluluk karar verince haber ol.',
-                      style: TextStyle(fontSize: 12),
-                    ),
-                  ],
-                ),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+        decoration: BoxDecoration(
+          color: kc.primaryContainer,
+          borderRadius: KararRadius.all(KararRadius.surface),
+        ),
+        child: Row(
+          children: [
+            const ExcludeSemantics(
+              child: Text('🔔', style: TextStyle(fontSize: 24)),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Bildirimleri Aç',
+                    style: AppTypography.bodyStrong
+                        .copyWith(color: kc.onPrimaryContainer),
+                  ),
+                  Text(
+                    'Topluluk karar verince haber ol.',
+                    style: AppTypography.bodyS
+                        .copyWith(color: kc.onPrimaryContainer),
+                  ),
+                ],
               ),
-              const SizedBox(width: 8),
-              FilledButton(
-                onPressed: _isRequesting ? null : _requestPermission,
-                style: FilledButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  minimumSize: const Size(64, 36),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: _isRequesting
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Text('Aç'),
+            ),
+            const SizedBox(width: 8),
+            FilledButton(
+              onPressed: _isRequesting ? null : _requestPermission,
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 18),
+                minimumSize: const Size(64, 44),
+                textStyle: AppTypography.label,
               ),
-            ],
-          ),
+              child: _isRequesting
+                  ? SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: kc.onColor,
+                      ),
+                    )
+                  : const Text('Aç'),
+            ),
+          ],
         ),
       ),
     );
@@ -419,106 +463,149 @@ class _GuestNotificationsView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 32),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(
-            Icons.notifications_outlined,
-            size: 64,
-            color: Colors.grey,
-          ),
-          const SizedBox(height: 24),
-          Text(
-            'Bildirim almak için hesap aç',
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.bold,
+    final kc = context.kc;
+    return Center(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(32, 24, 32, context.navBottomInset + 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ExcludeSemantics(
+              child: Container(
+                width: 96,
+                height: 96,
+                decoration: BoxDecoration(
+                  color: kc.primaryContainer,
+                  shape: BoxShape.circle,
                 ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 12),
-          Text(
-            'Postun oylanınca veya topluluk karar verince seni haberdar edelim.',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                child: Icon(
+                  Icons.notifications_rounded,
+                  size: 40,
+                  color: kc.primary,
                 ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 32),
-          KararButton(
-            label: 'Hesap Aç',
-            onPressed: () => context.push('/auth/register'),
-          ),
-          const SizedBox(height: 12),
-          KararButton(
-            label: 'Giriş Yap',
-            variant: KararButtonVariant.outlined,
-            onPressed: () => context.push('/auth/login'),
-          ),
-        ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Bildirim almak için hesap aç',
+              style: AppTypography.headline.copyWith(
+                fontSize: 22,
+                height: 28 / 22,
+                color: kc.text1,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Postun oylanınca veya topluluk karar verince seni haberdar edelim.',
+              style: AppTypography.body.copyWith(color: kc.text2),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 32),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 360),
+              child: Column(
+                children: [
+                  KararButton(
+                    label: 'Hesap Aç',
+                    size: KararButtonSize.large,
+                    onPressed: () => context.push('/auth/register'),
+                  ),
+                  const SizedBox(height: 12),
+                  KararButton(
+                    label: 'Giriş Yap',
+                    variant: KararButtonVariant.outlined,
+                    size: KararButtonSize.large,
+                    onPressed: () => context.push('/auth/login'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
+/// "Dün Kaçırdıkların" digest: an ink card in the style of the weekly hero
+/// (radial violet-ink gradient, white text, gold vote counts).
 class _DigestWidget extends ConsumerWidget {
   const _DigestWidget();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(digestPostsProvider);
+    final kc = context.kc;
 
     return async.when(
       loading: () => const SizedBox.shrink(),
       error: (_, __) => const SizedBox.shrink(),
       data: (posts) {
         if (posts.isEmpty) return const SizedBox.shrink();
-        final scheme = Theme.of(context).colorScheme;
+        // Bottom 26 (+ the rows' 2 px) = the §2.5 28 px section gap, so the
+        // digest reads as its own block above the notification list.
         return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
-          child: Card(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 26),
+          child: Container(
+            decoration: BoxDecoration(
+              gradient: KararGradients.hero,
+              borderRadius: KararRadius.all(KararRadius.surface),
+              border: context.isDark
+                  ? Border.all(color: KararShadow.cardHairlineDark)
+                  : null,
+              boxShadow: KararShadow.soft(Theme.of(context).brightness),
+            ),
+            padding: const EdgeInsets.fromLTRB(18, 16, 10, 6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Row(
                     children: [
-                      const Text('📊', style: TextStyle(fontSize: 16)),
+                      // Rounded Material icon instead of the colour emoji
+                      // (matches the rest of the icon set).
+                      ExcludeSemantics(
+                        child: Icon(
+                          Icons.insights_rounded,
+                          size: 20,
+                          color: kc.gold,
+                        ),
+                      ),
                       const SizedBox(width: 8),
-                      Text(
-                        'Dün Kaçırdıkların',
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.w700,
-                            ),
+                      Expanded(
+                        child: Text(
+                          'Dün Kaçırdıkların',
+                          style: AppTypography.bodyStrong.copyWith(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                            color: kc.onColor,
+                          ),
+                        ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 10),
-                  ...posts.map((p) => _DigestItem(post: p)),
-                  const SizedBox(height: 6),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton(
-                      style: TextButton.styleFrom(
-                        padding: EdgeInsets.zero,
-                        minimumSize: const Size(44, 32),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      onPressed: () => context.go('/'),
-                      child: Text(
-                        'Hepsini Gör →',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: scheme.primary,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
+                ),
+                const SizedBox(height: 8),
+                ...posts.map((p) => _DigestItem(post: p)),
+                Align(
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: TextButton(
+                    style: TextButton.styleFrom(
+                      foregroundColor: kc.onColor,
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      minimumSize: const Size(44, 44),
+                      textStyle: AppTypography.label,
+                    ),
+                    onPressed: () => context.go('/'),
+                    child: Text(
+                      'Hepsini Gör →',
+                      style: AppTypography.label.copyWith(color: kc.onColor),
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         );
@@ -533,38 +620,72 @@ class _DigestItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final total = post.totalVotes;
-    final votesLabel = total >= 1000
-        ? '${(total / 1000).toStringAsFixed(1)}B oy'
-        : '$total oy';
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: GestureDetector(
-        onTap: () => context.push('/posts/${post.id}', extra: post),
-        child: Row(
-          children: [
-            const Text('•  ', style: TextStyle(fontWeight: FontWeight.w700)),
-            Expanded(
-              child: Text(
-                post.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ),
-            const SizedBox(width: 6),
-            Text(
-              '→ $votesLabel',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+    final kc = context.kc;
+    final votesLabel = '${formatCompactCount(post.totalVotes)} oy';
+    return InkWell(
+      onTap: () => context.push('/posts/${post.id}', extra: post),
+      borderRadius: KararRadius.all(KararRadius.sm),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 36),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(0, 4, 8, 4),
+          child: Row(
+            children: [
+              ExcludeSemantics(
+                child: Text(
+                  '•  ',
+                  style: TextStyle(
+                    color: kc.onColor,
+                    fontWeight: FontWeight.w800,
                   ),
-            ),
-          ],
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  post.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTypography.bodyS.copyWith(color: kc.onColor),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '→ $votesLabel',
+                style: AppTypography.labelS.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: kc.gold,
+                  fontFeatures: AppTypography.tabular,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
+}
+
+/// Icon tile colours per notification type (spec §6.6).
+({Color bg, Color fg}) _tileColors(BuildContext context, String type) {
+  final kc = context.kc;
+  final dark = context.isDark;
+
+  // Dark: a lighter tone of the same hue (not a lerp to white, which made
+  // amber a muddy beige). See [hueTint].
+  ({Color bg, Color fg}) tinted(Color hue) => hueTint(kc, hue);
+
+  return switch (type) {
+    'verdict_milestone' => (bg: kc.warnSoft, fg: kc.goldText),
+    'comment_on_post' ||
+    'verdict_reminder' =>
+      (bg: kc.primaryContainer, fg: dark ? kc.navActive : kc.primary),
+    'reply_on_comment' => tinted(CategoryStyle.ocean.start),
+    'mention' => tinted(CategoryStyle.magenta.start),
+    'moderation_result' => (bg: kc.haksizSoft, fg: kc.voteIcon(false)),
+    'trend_alert' || 'viral_post_owner' => tinted(CategoryStyle.amber.start),
+    'weekly_digest' => (bg: kc.hakliSoft, fg: dark ? kc.hakliText : kc.hakliFill),
+    _ => (bg: kc.muted, fg: kc.text2),
+  };
 }
 
 class _NotificationTile extends ConsumerWidget {
@@ -573,62 +694,126 @@ class _NotificationTile extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
+    final kc = context.kc;
     final notifier = ref.read(notificationsProvider.notifier);
+    final colors = _tileColors(context, item.type);
+    final radius = KararRadius.all(KararRadius.tile);
 
-    return Dismissible(
-      key: ValueKey(item.id),
-      direction: DismissDirection.endToStart,
-      background: Container(
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 20),
-        color: colorScheme.errorContainer,
-        child: Icon(Icons.delete_outline, color: colorScheme.onErrorContainer),
-      ),
-      onDismissed: (_) {
-        ref.read(analyticsServiceProvider).logNotificationDismissed(
-              notificationId: item.id,
-              type: item.type,
-            );
-        notifier.dismiss(item.id);
-      },
-      child: ListTile(
-        tileColor: item.isRead
-            ? null
-            : colorScheme.primaryContainer.withValues(alpha: 0.15),
-        leading: Icon(
-          _iconForType(item.type),
-          color:
-              item.isRead ? colorScheme.onSurfaceVariant : colorScheme.primary,
-        ),
-        title: Text(
-          item.title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: textTheme.bodyMedium?.copyWith(
-            fontWeight: item.isRead ? FontWeight.normal : FontWeight.w700,
+    // Same 16 px inset as the digest card and the chips row, so every
+    // rounded surface in the column shares its edges.
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+      child: Dismissible(
+        key: ValueKey(item.id),
+        direction: DismissDirection.endToStart,
+        background: Container(
+          alignment: AlignmentDirectional.centerEnd,
+          padding: const EdgeInsetsDirectional.only(end: 20),
+          decoration: BoxDecoration(
+            color: kc.haksizSoft,
+            borderRadius: radius,
           ),
+          child: Icon(Icons.delete_outline_rounded, color: kc.haksizText),
         ),
-        subtitle: _NotificationSubtitle(item: item),
-        trailing: !item.isRead
-            ? Icon(Icons.circle, size: 8, color: colorScheme.primary)
-            : null,
-        onTap: () {
-          ref.read(analyticsServiceProvider).logNotificationOpened(
+        onDismissed: (_) {
+          ref.read(analyticsServiceProvider).logNotificationDismissed(
                 notificationId: item.id,
                 type: item.type,
               );
-          notifier.markOpened(item.id);
-          if (!item.isRead) {
-            ref.read(analyticsServiceProvider).logNotificationMarkedRead(
-                  notificationId: item.id,
-                  type: item.type,
-                );
-            notifier.markRead(item.id);
-          }
-          _navigate(context, item);
+          notifier.dismiss(item.id);
         },
+        child: Material(
+          color: item.isRead
+              ? Colors.transparent
+              : kc.primaryContainer.withValues(alpha: 0.45),
+          borderRadius: radius,
+          child: InkWell(
+            borderRadius: radius,
+            onTap: () {
+              ref.read(analyticsServiceProvider).logNotificationOpened(
+                    notificationId: item.id,
+                    type: item.type,
+                  );
+              notifier.markOpened(item.id);
+              if (!item.isRead) {
+                ref.read(analyticsServiceProvider).logNotificationMarkedRead(
+                      notificationId: item.id,
+                      type: item.type,
+                    );
+                notifier.markRead(item.id);
+              }
+              _navigate(context, item);
+            },
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 72),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    ExcludeSemantics(
+                      child: Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: colors.bg,
+                          borderRadius: KararRadius.all(KararRadius.iconTile),
+                        ),
+                        child: Icon(
+                          _iconForType(item.type),
+                          size: 22,
+                          color: colors.fg,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            item.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTypography.bodyStrong.copyWith(
+                              fontWeight: item.isRead
+                                  ? FontWeight.w600
+                                  : FontWeight.w800,
+                              color: kc.text1,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          _NotificationSubtitle(item: item),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          DateFormatter.relative(item.createdAt),
+                          style: AppTypography.meta.copyWith(color: kc.text3),
+                        ),
+                        if (!item.isRead) ...[
+                          const SizedBox(height: 8),
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              color: kc.primary,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -643,17 +828,17 @@ class _NotificationTile extends ConsumerWidget {
   }
 
   IconData _iconForType(String type) => switch (type) {
-        'verdict_milestone' => Icons.emoji_events_outlined,
-        'verdict_reminder' => Icons.how_to_vote_outlined,
-        'comment_on_post' => Icons.chat_bubble_outline,
-        'reply_on_comment' => Icons.reply_outlined,
-        'mention' => Icons.alternate_email_outlined,
-        'moderation_result' => Icons.gavel_outlined,
-        'system_announcement' => Icons.campaign_outlined,
-        'trend_alert' => Icons.trending_up_outlined,
-        'viral_post_owner' => Icons.local_fire_department_outlined,
-        'weekly_digest' => Icons.summarize_outlined,
-        _ => Icons.notifications_none_outlined,
+        'verdict_milestone' => Icons.emoji_events_rounded,
+        'verdict_reminder' => Icons.how_to_vote_rounded,
+        'comment_on_post' => Icons.chat_bubble_rounded,
+        'reply_on_comment' => Icons.reply_rounded,
+        'mention' => Icons.alternate_email_rounded,
+        'moderation_result' => Icons.gavel_rounded,
+        'system_announcement' => Icons.campaign_rounded,
+        'trend_alert' => Icons.trending_up_rounded,
+        'viral_post_owner' => Icons.local_fire_department_rounded,
+        'weekly_digest' => Icons.summarize_rounded,
+        _ => Icons.notifications_rounded,
       };
 }
 
@@ -663,8 +848,15 @@ class _NotificationSubtitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
+    final bodyStyle = AppTypography.bodyS.copyWith(color: kc.text2);
     if (item.type != 'moderation_result') {
-      return Text(item.body, maxLines: 2, overflow: TextOverflow.ellipsis);
+      return Text(
+        item.body,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: bodyStyle,
+      );
     }
 
     final displayBody = _extractAdminMessage();
@@ -673,34 +865,40 @@ class _NotificationSubtitle extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (item.ruleViolated != null) ...[
+          const SizedBox(height: 2),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(
-              color: AppColors.haksiz.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(6),
+              color: kc.haksizSoft,
+              borderRadius: KararRadius.all(KararRadius.xs),
             ),
             child: Text(
               'İhlal: ${item.ruleViolated}',
-              style: const TextStyle(
-                fontSize: 11,
-                color: AppColors.haksiz,
-                fontWeight: FontWeight.w600,
+              style: AppTypography.micro.copyWith(
+                color: kc.haksizText,
+                letterSpacing: 0,
               ),
             ),
           ),
           const SizedBox(height: 4),
         ],
-        Text(displayBody, maxLines: 2, overflow: TextOverflow.ellipsis),
+        Text(
+          displayBody,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: bodyStyle,
+        ),
         const SizedBox(height: 6),
-        TextButton.icon(
+        FilledButton.tonalIcon(
           onPressed: () => context.push('/settings/moderation-history'),
-          icon: const Icon(Icons.gavel_outlined, size: 16),
+          icon: const Icon(Icons.gavel_rounded, size: 16),
           label: const Text('İtiraz Et'),
-          style: TextButton.styleFrom(
-            padding: EdgeInsets.zero,
-            minimumSize: const Size(44, 32),
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            visualDensity: VisualDensity.compact,
+          style: FilledButton.styleFrom(
+            backgroundColor: kc.primaryContainer,
+            foregroundColor: kc.onPrimaryContainer,
+            minimumSize: const Size(44, 36),
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            textStyle: AppTypography.labelS,
           ),
         ),
       ],

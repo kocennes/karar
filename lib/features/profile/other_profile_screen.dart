@@ -3,17 +3,24 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/api/api_exception.dart';
 import '../../core/auth/auth_service.dart';
+import '../../core/layout/breakpoints.dart';
 import '../../core/providers.dart';
-import '../../core/utils/date_formatter.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/karar_tokens.dart';
+import '../../core/theme/motion.dart';
+import '../../core/utils/count_format.dart';
 import '../../shared/models/post.dart';
+import '../../shared/widgets/centered_content.dart';
 import '../../shared/widgets/content_unavailable_view.dart';
 import '../../shared/widgets/error_view.dart';
-import '../../shared/widgets/karar_avatar.dart';
-import '../../shared/widgets/karma_badge.dart';
+import '../../shared/widgets/karar_text_tabs.dart';
 import '../../shared/widgets/loading_indicator.dart';
 import '../feed/feed_provider.dart';
-import '../feed/post_card.dart';
 import '../report/report_bottom_sheet.dart';
+import 'my_comments_screen.dart';
+import 'widgets/column_app_bar.dart';
+import 'widgets/profile_header.dart';
+import 'widgets/verdict_tile.dart';
 
 class OtherProfileScreen extends ConsumerStatefulWidget {
   const OtherProfileScreen({super.key, required this.username});
@@ -23,27 +30,38 @@ class OtherProfileScreen extends ConsumerStatefulWidget {
   ConsumerState<OtherProfileScreen> createState() => _OtherProfileScreenState();
 }
 
-class _OtherProfileScreenState extends ConsumerState<OtherProfileScreen>
-    with SingleTickerProviderStateMixin {
+class _OtherProfileScreenState extends ConsumerState<OtherProfileScreen> {
   AuthUser? _user;
   List<Post> _posts = [];
   List<MyComment> _comments = [];
   bool _isLoading = true;
   String? _error;
   String? _errorCode;
+  int _tab = 0;
 
-  late final TabController _tabController;
+  /// The "@handle" title fades into the app bar only once the header (which
+  /// already shows the handle at 22/800) has scrolled away.
+  final _scroll = ScrollController();
+  bool _showTitle = false;
+  static const double _titleRevealOffset = 200;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _scroll.addListener(_onScroll);
     _load();
+  }
+
+  void _onScroll() {
+    final show = _scroll.hasClients && _scroll.offset > _titleRevealOffset;
+    if (show != _showTitle) setState(() => _showTitle = show);
   }
 
   @override
   void dispose() {
-    _tabController.dispose();
+    _scroll
+      ..removeListener(_onScroll)
+      ..dispose();
     super.dispose();
   }
 
@@ -79,66 +97,71 @@ class _OtherProfileScreenState extends ConsumerState<OtherProfileScreen>
     }
   }
 
+  Widget _notFound(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Kullanıcı bulunamadı')),
+      body: ContentUnavailableView(
+        icon: Icons.person_off_outlined,
+        title: 'Kullanıcı bulunamadı',
+        message: 'Hesap silinmiş veya görünür değil.',
+        buttonLabel: 'Geri dön',
+        onPressed: () {
+          if (context.canPop()) {
+            context.pop();
+          } else {
+            context.go('/');
+          }
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) return const Scaffold(body: LoadingIndicator());
+    if (_isLoading) {
+      return Scaffold(appBar: AppBar(), body: const LoadingIndicator());
+    }
     if (_error != null) {
       if (_errorCode == 'USER_NOT_FOUND' || _errorCode == 'HTTP_404') {
-        return Scaffold(
-          appBar: AppBar(title: const Text('Kullanıcı bulunamadı')),
-          body: ContentUnavailableView(
-            icon: Icons.person_off_outlined,
-            title: 'Kullanıcı bulunamadı',
-            message: 'Hesap silinmiş veya görünür değil.',
-            buttonLabel: 'Geri dön',
-            onPressed: () {
-              if (context.canPop()) {
-                context.pop();
-              } else {
-                context.go('/');
-              }
-            },
-          ),
-        );
+        return _notFound(context);
       }
-      return Scaffold(body: ErrorView(message: _error!, onRetry: _load));
-    }
-    if (_user == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Kullanıcı bulunamadı')),
-        body: ContentUnavailableView(
-          icon: Icons.person_off_outlined,
-          title: 'Kullanıcı bulunamadı',
-          message: 'Hesap silinmiş veya görünür değil.',
-          buttonLabel: 'Geri dön',
-          onPressed: () {
-            if (context.canPop()) {
-              context.pop();
-            } else {
-              context.go('/');
-            }
-          },
-        ),
+        appBar: AppBar(),
+        body: ErrorView(message: _error!, onRetry: _load),
       );
     }
+    if (_user == null) return _notFound(context);
 
     final user = _user!;
+    final kc = context.kc;
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          '@${user.username}',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+      appBar: ColumnAppBar(
+        title: AnimatedOpacity(
+          opacity: _showTitle ? 1 : 0,
+          duration: KararMotion.d(context, KararMotion.fast),
+          child: ExcludeSemantics(
+            excluding: !_showTitle,
+            child: Text(
+              '@${user.username}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ),
         actions: [
+          // Plain 48 px icon buttons: two filled circles competed with the
+          // header. Dark uses the lighter Haksız text tone (6.1:1).
           IconButton(
-            icon: const Icon(Icons.block, color: Colors.red),
+            icon: Icon(
+              Icons.block_rounded,
+              color: kc.isDark ? kc.haksizText : kc.haksizFill,
+            ),
             tooltip: 'Engelle',
             onPressed: () => _confirmBlock(context, ref, user),
           ),
           IconButton(
-            icon: const Icon(Icons.flag_outlined),
+            icon: const Icon(Icons.outlined_flag_rounded),
             tooltip: 'Şikayet Et',
             onPressed: () {
               ReportBottomSheet.show(
@@ -151,33 +174,47 @@ class _OtherProfileScreenState extends ConsumerState<OtherProfileScreen>
           ),
         ],
       ),
-      body: NestedScrollView(
-        headerSliverBuilder: (context, innerBoxIsScrolled) => [
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: _UserHeader(user: user),
-            ),
-          ),
-          SliverPersistentHeader(
-            pinned: true,
-            delegate: _SliverAppBarDelegate(
-              TabBar(
-                controller: _tabController,
-                indicatorSize: TabBarIndicatorSize.label,
-                tabs: [
-                  Tab(text: 'Postlar (${user.postCount})'),
-                  Tab(text: 'Yorumlar (${user.commentCount})'),
+      body: CenteredContent(
+        child: CustomScrollView(
+          controller: _scroll,
+          slivers: [
+            SliverToBoxAdapter(
+              child: ProfileHeader(
+                user: user,
+                metaLine: user.joinedAt != null
+                    ? '${formatJoinedDate(user.joinedAt!)} tarihinden beri üye'
+                    : null,
+                stats: [
+                  ProfileStat(
+                    value: formatCompactCount(user.karma),
+                    label: 'Karma',
+                  ),
+                  ProfileStat(
+                    value: formatCompactCount(user.postCount),
+                    label: 'Post',
+                  ),
                 ],
               ),
             ),
-          ),
-        ],
-        body: TabBarView(
-          controller: _tabController,
-          children: [
-            _PostsTab(posts: _posts),
-            _CommentsTab(comments: _comments),
+            SliverToBoxAdapter(
+              child: KararTextTabs(
+                labels: [
+                  'Postlar (${user.postCount})',
+                  'Yorumlar (${user.commentCount})',
+                ],
+                index: _tab,
+                // Same 16 px inset as the tile grid below.
+                padding: const EdgeInsets.fromLTRB(16, 22, 16, 4),
+                onChanged: (i) => setState(() => _tab = i),
+              ),
+            ),
+            if (_tab == 0)
+              _PostsTab(posts: _posts)
+            else
+              _CommentsTab(comments: _comments),
+            SliverToBoxAdapter(
+              child: SizedBox(height: context.navBottomInset + 24),
+            ),
           ],
         ),
       ),
@@ -195,6 +232,10 @@ class _OtherProfileScreenState extends ConsumerState<OtherProfileScreen>
           TextButton(
               onPressed: () => Navigator.pop(ctx), child: const Text('Vazgeç')),
           FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: ctx.kc.haksizFill,
+              foregroundColor: ctx.kc.onColor,
+            ),
             onPressed: () async {
               Navigator.pop(ctx);
               try {
@@ -229,28 +270,25 @@ class _OtherProfileScreenState extends ConsumerState<OtherProfileScreen>
   }
 }
 
-class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
-  _SliverAppBarDelegate(this._tabBar);
-
-  final TabBar _tabBar;
-
-  @override
-  double get minExtent => _tabBar.preferredSize.height;
-  @override
-  double get maxExtent => _tabBar.preferredSize.height;
+class _EmptyTab extends StatelessWidget {
+  const _EmptyTab(this.message);
+  final String message;
 
   @override
-  Widget build(
-      BuildContext context, double shrinkOffset, bool overlapsContent) {
-    return Container(
-      color: Theme.of(context).scaffoldBackgroundColor,
-      child: _tabBar,
+  Widget build(BuildContext context) {
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Text(
+          message,
+          textAlign: TextAlign.center,
+          style: AppTypography.body.copyWith(
+            fontWeight: FontWeight.w600,
+            color: context.kc.text3,
+          ),
+        ),
+      ),
     );
-  }
-
-  @override
-  bool shouldRebuild(_SliverAppBarDelegate oldDelegate) {
-    return false;
   }
 }
 
@@ -260,22 +298,19 @@ class _PostsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (posts.isEmpty) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(32),
-          child: Text('Henüz paylaşımı yok.',
-              style: TextStyle(fontStyle: FontStyle.italic)),
-        ),
-      );
-    }
-    return ListView.separated(
+    if (posts.isEmpty) return const _EmptyTab('Henüz paylaşımı yok.');
+    return SliverPadding(
       padding: const EdgeInsets.all(16),
-      itemCount: posts.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 12),
-      itemBuilder: (context, index) => PostCard(
-        post: posts[index],
-        onTap: () => context.push('/posts/${posts[index].id}', extra: posts[index]),
+      sliver: SliverGrid(
+        gridDelegate: VerdictTile.gridDelegate(context),
+        delegate: SliverChildBuilderDelegate(
+          (context, index) => VerdictTile(
+            post: posts[index],
+            onTap: () =>
+                context.push('/posts/${posts[index].id}', extra: posts[index]),
+          ),
+          childCount: posts.length,
+        ),
       ),
     );
   }
@@ -287,164 +322,17 @@ class _CommentsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (comments.isEmpty) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(32),
-          child: Text('Henüz yorumu yok.',
-              style: TextStyle(fontStyle: FontStyle.italic)),
-        ),
-      );
-    }
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-
-    return ListView.separated(
-      padding: const EdgeInsets.all(16),
-      itemCount: comments.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 12),
-      itemBuilder: (context, index) {
-        final comment = comments[index];
-        return Card(
-          child: InkWell(
-            onTap: () => context.push('/posts/${comment.postId}'),
-            borderRadius: BorderRadius.circular(12),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    comment.postTitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: textTheme.labelMedium?.copyWith(
-                      color: colorScheme.primary,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(comment.content, style: textTheme.bodyMedium),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Icon(Icons.thumb_up_outlined,
-                          size: 14, color: colorScheme.onSurfaceVariant),
-                      const SizedBox(width: 4),
-                      Text('${comment.upvoteCount}', style: textTheme.labelSmall),
-                      const SizedBox(width: 12),
-                      Icon(Icons.thumb_down_outlined,
-                          size: 14, color: colorScheme.onSurfaceVariant),
-                      const SizedBox(width: 4),
-                      Text('${comment.downvoteCount}', style: textTheme.labelSmall),
-                      const Spacer(),
-                      Text(
-                        comment.createdAgo,
-                        style: textTheme.labelSmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _UserHeader extends StatelessWidget {
-  const _UserHeader({required this.user});
-  final AuthUser user;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            KararAvatar(
-              username: user.username,
-              radius: 40,
-              fontSize: 32,
-            ),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Flexible(
-                  child: Text(
-                    user.username,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context)
-                        .textTheme
-                        .headlineSmall
-                        ?.copyWith(fontWeight: FontWeight.bold),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                KarmaBadge(karma: user.karma, size: 20, showDetail: true),
-              ],
-            ),
-            const SizedBox(height: 8),
-            if ((user.bio ?? '').isNotEmpty) ...[
-              Text(
-                user.bio!,
-                textAlign: TextAlign.center,
-                maxLines: 4,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-              const SizedBox(height: 12),
-            ],
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                _StatItem(label: 'Karma', value: '${user.karma}'),
-                const SizedBox(width: 32),
-                _StatItem(label: 'Post', value: '${user.postCount}'),
-              ],
-            ),
-            const Divider(height: 32),
-            if (user.joinedAt != null)
-              Text(
-                '${DateFormatter.full(user.joinedAt!)} tarihinden beri üye',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-          ],
+    if (comments.isEmpty) return const _EmptyTab('Henüz yorumu yok.');
+    return SliverPadding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      sliver: SliverList.separated(
+        itemCount: comments.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 12),
+        itemBuilder: (context, index) => ProfileCommentCard(
+          comment: comments[index],
+          maxBodyLines: null,
         ),
       ),
-    );
-  }
-}
-
-class _StatItem extends StatelessWidget {
-  const _StatItem({required this.label, required this.value});
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Text(
-          value,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-        ),
-        Text(
-          label,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: Theme.of(context).textTheme.labelSmall,
-        ),
-      ],
     );
   }
 }

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/theme/karar_tokens.dart';
+
 class HighlightText extends StatelessWidget {
   const HighlightText({
     super.key,
@@ -43,7 +45,8 @@ class HighlightText extends StatelessWidget {
         text: text.substring(index, index + highlight.length),
         style: highlightStyle ??
             TextStyle(
-              backgroundColor: Theme.of(context).colorScheme.primary.withValues(alpha: 0.2),
+              backgroundColor: context.kc.searchHighlightBg,
+              color: context.kc.searchHighlightFg,
               fontWeight: FontWeight.bold,
             ),
       ));
@@ -55,13 +58,13 @@ class HighlightText extends StatelessWidget {
       children.add(TextSpan(text: text.substring(start)));
     }
 
-    return RichText(
+    // Text.rich (not RichText) so the app's font-size setting (TextScaler)
+    // and DefaultTextStyle apply.
+    return Text.rich(
+      TextSpan(children: children),
+      style: style,
       maxLines: maxLines,
       overflow: overflow ?? TextOverflow.clip,
-      text: TextSpan(
-        style: style ?? DefaultTextStyle.of(context).style,
-        children: children,
-      ),
     );
   }
 }

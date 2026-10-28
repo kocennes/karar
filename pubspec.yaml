@@ -95,3 +95,19 @@ flutter:
     - assets/legal/community-guidelines.md
     - assets/legal/content-policy.md
     - assets/legal/faq.md
+    - assets/fonts/plus_jakarta_sans/OFL.txt
+
+  # Plus Jakarta Sans (SIL OFL 1.1, see assets/fonts/plus_jakarta_sans/OFL.txt).
+  # Bundled static faces so every fontWeight renders a real weight.
+  fonts:
+    - family: PlusJakartaSans
+      fonts:
+        - asset: assets/fonts/plus_jakarta_sans/PlusJakartaSans-Regular.ttf
+        - asset: assets/fonts/plus_jakarta_sans/PlusJakartaSans-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/plus_jakarta_sans/PlusJakartaSans-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/plus_jakarta_sans/PlusJakartaSans-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/plus_jakarta_sans/PlusJakartaSans-ExtraBold.ttf
+          weight: 800

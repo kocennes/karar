@@ -4,7 +4,11 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/api/api_exception.dart';
 import '../../core/providers.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/karar_tokens.dart';
 import '../../features/feed/post_repository.dart';
+import '../../shared/widgets/karar_button.dart';
+import '../../shared/widgets/karar_sheet.dart';
 import '../../shared/widgets/rate_limit_ui.dart';
 
 const _reasons = [
@@ -36,10 +40,9 @@ class ReportBottomSheet extends ConsumerStatefulWidget {
     required String targetId,
     required PostRepository repository,
   }) =>
-      showModalBottomSheet<void>(
-        context: context,
-        showDragHandle: true,
-        isScrollControlled: true,
+      showKararSheet<void>(
+        context,
+        scrollControlled: true,
         builder: (_) => ReportBottomSheet(
           targetType: targetType,
           targetId: targetId,
@@ -107,83 +110,110 @@ class _ReportBottomSheetState extends ConsumerState<ReportBottomSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
     return Padding(
-      padding: EdgeInsets.fromLTRB(
-        16,
-        0,
-        16,
-        MediaQuery.of(context).viewInsets.bottom + 16,
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            'Şikayet Et',
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Bu içeriği neden şikayet ediyorsun?',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-          ),
-          const SizedBox(height: 16),
-          RadioGroup<String>(
-            groupValue: _selectedReason,
-            onChanged: (v) => setState(() => _selectedReason = v),
-            child: Column(
-              children: [
-                for (final r in _reasons)
-                  RadioListTile<String>(
-                    value: r.$1,
-                    title: Text(r.$2),
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            KararSheetHeader(
+              title: 'Şikayet Et',
+              onClose: () => Navigator.maybePop(context),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Bu içeriği neden şikayet ediyorsun?',
+                    style: AppTypography.bodyS.copyWith(color: kc.text2),
                   ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _descCtrl,
-            decoration: const InputDecoration(
-              labelText: 'Açıklama (isteğe bağlı)',
-              hintText: 'Ek bilgi vermek istersen…',
-              border: OutlineInputBorder(),
-            ),
-            maxLines: 3,
-            maxLength: 300,
-          ),
-          const SizedBox(height: 8),
-          Center(
-            child: TextButton(
-              onPressed: () => context.push('/legal/community'),
-              style: TextButton.styleFrom(
-                visualDensity: VisualDensity.compact,
-              ),
-              child: Text(
-                'Topluluk Kurallarını oku',
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: Theme.of(context).colorScheme.primary,
-                      decoration: TextDecoration.underline,
+                  const SizedBox(height: 12),
+                  RadioGroup<String>(
+                    groupValue: _selectedReason,
+                    onChanged: (v) => setState(() => _selectedReason = v),
+                    child: Column(
+                      children: [
+                        for (final r in _reasons)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: RadioListTile<String>(
+                              value: r.$1,
+                              title: Text(
+                                r.$2,
+                                style: AppTypography.bodyStrong.copyWith(
+                                  fontWeight: _selectedReason == r.$1
+                                      ? FontWeight.w800
+                                      : FontWeight.w600,
+                                  color: kc.text1,
+                                ),
+                              ),
+                              minTileHeight: 52,
+                              contentPadding:
+                                  const EdgeInsets.symmetric(horizontal: 8),
+                              tileColor: kc.muted.withValues(alpha: 0),
+                              selectedTileColor: kc.primaryContainer,
+                              selected: _selectedReason == r.$1,
+                              // Dark: primaryContainer is only 1.1:1 off
+                              // the sheet, so the chosen row also gets a
+                              // brand rim.
+                              shape: RoundedRectangleBorder(
+                                borderRadius:
+                                    KararRadius.all(KararRadius.input),
+                                side: kc.isDark && _selectedReason == r.$1
+                                    ? BorderSide(
+                                        color:
+                                            kc.primary.withValues(alpha: 0.5),
+                                      )
+                                    : BorderSide.none,
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _descCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Açıklama (isteğe bağlı)',
+                      hintText: 'Ek bilgi vermek istersen…',
+                    ),
+                    maxLines: 3,
+                    maxLength: 300,
+                  ),
+                  const SizedBox(height: 4),
+                  Center(
+                    child: TextButton(
+                      onPressed: () => context.push('/legal/community'),
+                      child: Text(
+                        'Topluluk Kurallarını oku',
+                        style: AppTypography.labelS.copyWith(
+                          color: kc.primaryText,
+                          decoration: TextDecoration.underline,
+                          decorationColor: kc.primaryText,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  KararButton(
+                    label: 'Gönder',
+                    size: KararButtonSize.large,
+                    isLoading: _isLoading,
+                    onPressed: _selectedReason == null ? null : _submit,
+                  ),
+                ],
               ),
             ),
-          ),
-          const SizedBox(height: 4),
-          FilledButton(
-            onPressed: (_selectedReason == null || _isLoading) ? null : _submit,
-            child: _isLoading
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Text('Gönder'),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

@@ -1,5 +1,10 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+
+import '../../core/theme/karar_tokens.dart';
+
+/// Full-screen photo viewer: a black media backdrop in both themes with
+/// white controls (`kc.mediaBackdrop` / `kc.onColor`).
 class FullScreenImageViewer extends StatelessWidget {
   const FullScreenImageViewer({
     super.key,
@@ -14,7 +19,7 @@ class FullScreenImageViewer extends StatelessWidget {
     Navigator.of(context).push(
       PageRouteBuilder(
         opaque: false,
-        barrierColor: Colors.black,
+        barrierColor: context.kc.mediaBackdrop,
         pageBuilder: (context, _, __) => FullScreenImageViewer(
           imageUrl: imageUrl,
           heroTag: heroTag,
@@ -25,14 +30,16 @@ class FullScreenImageViewer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: kc.mediaBackdrop,
       extendBodyBehindAppBar: true,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.close, color: Colors.white, size: 30),
+          tooltip: 'Kapat',
+          icon: Icon(Icons.close_rounded, color: kc.onColor, size: 30),
           onPressed: () => Navigator.of(context).pop(),
         ),
       ),
@@ -51,12 +58,14 @@ class FullScreenImageViewer extends StatelessWidget {
               child: CachedNetworkImage(
                 imageUrl: imageUrl,
                 fit: BoxFit.contain,
-                placeholder: (context, url) => const Center(
-                  child: CircularProgressIndicator(color: Colors.white70),
+                placeholder: (context, url) => Center(
+                  child: CircularProgressIndicator(
+                    color: kc.onColor.withValues(alpha: 0.7),
+                  ),
                 ),
-                errorWidget: (context, url, error) => const Icon(
+                errorWidget: (context, url, error) => Icon(
                   Icons.error_outline,
-                  color: Colors.white,
+                  color: kc.onColor,
                   size: 40,
                 ),
               ),

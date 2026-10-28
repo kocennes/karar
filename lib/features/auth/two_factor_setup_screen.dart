@@ -7,12 +7,14 @@ import '../../core/api/api_exception.dart';
 import '../../core/providers.dart';
 import '../../shared/widgets/centered_content.dart';
 import '../../shared/widgets/karar_logo.dart';
+import '../../core/theme/karar_tokens.dart';
 
 class TwoFactorSetupScreen extends ConsumerStatefulWidget {
   const TwoFactorSetupScreen({super.key});
 
   @override
-  ConsumerState<TwoFactorSetupScreen> createState() => _TwoFactorSetupScreenState();
+  ConsumerState<TwoFactorSetupScreen> createState() =>
+      _TwoFactorSetupScreenState();
 }
 
 class _TwoFactorSetupScreenState extends ConsumerState<TwoFactorSetupScreen> {
@@ -108,37 +110,50 @@ class _TwoFactorSetupScreenState extends ConsumerState<TwoFactorSetupScreen> {
                       Center(
                         child: Container(
                           padding: const EdgeInsets.all(16),
+                          // QR codes need a light quiet zone in both themes.
                           decoration: BoxDecoration(
-                            color: Colors.white,
+                            color: context.kc.onColor,
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: Image.network(_qrUrl!, width: 200, height: 200),
+                          child:
+                              Image.network(_qrUrl!, width: 200, height: 200),
                         ),
                       ),
                     const SizedBox(height: 24),
                     if (_secret != null) ...[
-                      const Text('Veya kodu manuel girin:', style: TextStyle(fontSize: 12)),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              _secret!,
-                              style: const TextStyle(
-                                fontFamily: 'monospace',
-                                fontWeight: FontWeight.bold,
+                      const Text('Veya kodu manuel girin:',
+                          style: TextStyle(fontSize: 12)),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.only(left: 16),
+                        decoration: BoxDecoration(
+                          color: context.kc.muted,
+                          borderRadius: KararRadius.all(KararRadius.input),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                _secret!,
+                                style: const TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                             ),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.copy, size: 18),
-                            onPressed: () {
-                              Clipboard.setData(ClipboardData(text: _secret!));
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Kod kopyalandı.')),
-                              );
-                            },
-                          ),
-                        ],
+                            IconButton(
+                              icon: const Icon(Icons.copy_rounded, size: 18),
+                              onPressed: () {
+                                Clipboard.setData(
+                                    ClipboardData(text: _secret!));
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                      content: Text('Kod kopyalandı.')),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                     const SizedBox(height: 32),
@@ -151,7 +166,6 @@ class _TwoFactorSetupScreenState extends ConsumerState<TwoFactorSetupScreen> {
                       decoration: InputDecoration(
                         hintText: '000000',
                         errorText: _error,
-                        border: const OutlineInputBorder(),
                       ),
                     ),
                     const SizedBox(height: 24),
@@ -169,4 +183,3 @@ class _TwoFactorSetupScreenState extends ConsumerState<TwoFactorSetupScreen> {
     );
   }
 }
-

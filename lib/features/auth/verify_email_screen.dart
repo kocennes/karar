@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/auth/auth_service.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/karar_tokens.dart';
 import '../../core/utils/validators.dart';
 import '../../shared/widgets/karar_button.dart';
-import '../../shared/widgets/centered_content.dart';
-import '../../shared/widgets/karar_logo.dart';
+import 'widgets/auth_layout.dart';
 
 class VerifyEmailScreen extends StatefulWidget {
   const VerifyEmailScreen({
@@ -88,102 +89,99 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
+    final kc = context.kc;
 
-    return Scaffold(
-      appBar: AppBar(
-        leadingWidth: 180,
-        leading: InkWell(
-          onTap: () => context.go('/'),
-          child: const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: KararLogo(size: LogoSize.medium),
-          ),
-        ),
-        title: const Text('Doğrulama'),
-        centerTitle: true,
-      ),
-      body: SafeArea(
-        child: CenteredContent(
-          maxWidth: 400,
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Icon(Icons.mark_email_unread_rounded, size: 64, color: Colors.blue),
-                  const SizedBox(height: 24),
-                  Text(
-                    'E-postanı Doğrula',
-                    style: textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '${widget.email} adresine 6 haneli bir kod gönderdik.',
-                    style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 40),
-                  TextFormField(
-                    controller: _otpCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Doğrulama Kodu',
-                      prefixIcon: Icon(Icons.pin_outlined),
-                      border: OutlineInputBorder(),
-                      hintText: '000000',
-                      counterText: '',
+    return AuthScaffold(
+      child: Form(
+        key: _formKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            AuthHeader(
+              leading: const AuthDisc(icon: Icons.mark_email_unread_rounded),
+              title: 'E-postanı Doğrula',
+              subtitle: Text.rich(
+                TextSpan(
+                  children: [
+                    TextSpan(
+                      text: widget.email,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: kc.text1,
+                      ),
                     ),
-                    keyboardType: TextInputType.number,
-                    maxLength: 6,
-                    textAlign: TextAlign.center,
-                    style: textTheme.headlineMedium?.copyWith(
-                      letterSpacing: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    onFieldSubmitted: (_) => _verify(),
-                    validator: Validators.otp,
-                  ),
-                  if (_error != null) ...[
-                    const SizedBox(height: 16),
-                    Text(
-                      _error!,
-                      style: TextStyle(color: colorScheme.error, fontSize: 13),
-                      textAlign: TextAlign.center,
+                    const TextSpan(
+                      text: ' adresine 6 haneli bir kod gönderdik.',
                     ),
                   ],
-                  const SizedBox(height: 32),
-                  KararButton(
-                    label: 'Hesabı Doğrula',
-                    onPressed: _verify,
-                    isLoading: _isVerifying,
-                  ),
-                  const SizedBox(height: 16),
-                  KararButton(
-                    label: _resendCooldown > 0
-                        ? 'Tekrar gönder (${_resendCooldown}s)'
-                        : 'Kodu Tekrar Gönder',
-                    onPressed: (_isResending || _resendCooldown > 0)
-                        ? null
-                        : _resend,
-                    variant: KararButtonVariant.text,
-                    isLoading: _isResending,
-                  ),
-                  const SizedBox(height: 24),
-                  TextButton(
-                    onPressed: () => context.go('/auth/login'),
-                    child: const Text('Giriş Ekranına Dön'),
-                  ),
-                ],
+                ),
               ),
             ),
-          ),
+            // Centred OTP field: label, hint and digits share one axis (a
+            // start-aligned label + prefix icon sat off the centred code).
+            TextFormField(
+              controller: _otpCtrl,
+              decoration: InputDecoration(
+                labelText: 'Doğrulama Kodu',
+                floatingLabelAlignment: FloatingLabelAlignment.center,
+                // Always floated, so the resting label never sits at the
+                // start while the code and hint are centred.
+                floatingLabelBehavior: FloatingLabelBehavior.always,
+                hintText: '000000',
+                hintStyle: AppTypography.headline.copyWith(
+                  fontSize: 24,
+                  height: 30 / 24,
+                  letterSpacing: 10,
+                  color: kc.text3,
+                  fontFeatures: AppTypography.tabular,
+                ),
+                counterText: '',
+                constraints: const BoxConstraints(minHeight: 56),
+              ),
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+              textAlign: TextAlign.center,
+              style: AppTypography.headline.copyWith(
+                fontSize: 24,
+                height: 30 / 24,
+                letterSpacing: 10,
+                color: kc.text1,
+                fontFeatures: AppTypography.tabular,
+              ),
+              onFieldSubmitted: (_) => _verify(),
+              validator: Validators.otp,
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              AuthErrorBox(message: _error!),
+            ],
+            const SizedBox(height: 24),
+            KararButton(
+              label: 'Hesabı Doğrula',
+              size: KararButtonSize.large,
+              onPressed: _verify,
+              isLoading: _isVerifying,
+            ),
+            // Both secondary actions: same widget, same size, same gap.
+            const SizedBox(height: 8),
+            KararButton(
+              label: _resendCooldown > 0
+                  ? 'Tekrar gönder (${_resendCooldown}s)'
+                  : 'Kodu Tekrar Gönder',
+              onPressed:
+                  (_isResending || _resendCooldown > 0) ? null : _resend,
+              variant: KararButtonVariant.text,
+              isLoading: _isResending,
+            ),
+            const SizedBox(height: 8),
+            KararButton(
+              label: 'Giriş Ekranına Dön',
+              onPressed: () => context.go('/auth/login'),
+              variant: KararButtonVariant.text,
+            ),
+          ],
         ),
       ),
     );
   }
 }
-

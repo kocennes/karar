@@ -3,11 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/auth/auth_service.dart';
-import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/karar_tokens.dart';
 import '../../core/utils/validators.dart';
 import '../../shared/widgets/karar_button.dart';
-import '../../shared/widgets/centered_content.dart';
-import '../../shared/widgets/karar_logo.dart';
+import 'widgets/auth_layout.dart';
 
 enum UsernameStatus { idle, checking, available, taken }
 
@@ -119,9 +119,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
         );
       case UsernameStatus.available:
-        return const Icon(Icons.check_circle, color: AppColors.hakli);
+        return Icon(Icons.check_circle_rounded, color: context.kc.hakliText);
       case UsernameStatus.taken:
-        return const Icon(Icons.cancel, color: AppColors.haksiz);
+        return Icon(Icons.cancel_rounded, color: context.kc.haksizText);
       case UsernameStatus.idle:
         return null;
     }
@@ -175,7 +175,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (!_acceptedPolicy) {
       setState(
         () => _error =
-            'Kullanim kosullari ve topluluk kurallarini kabul etmelisin.',
+            'Kullanım koşulları ve topluluk kurallarını kabul etmelisin.',
       );
       return;
     }
@@ -221,308 +221,248 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
+    final kc = context.kc;
 
-    return Scaffold(
-      appBar: AppBar(
-        leadingWidth: 180,
-        leading: InkWell(
-          onTap: () => context.go('/'),
-          child: const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: KararLogo(size: LogoSize.medium),
-          ),
-        ),
-        title: const Text('Hesap Oluştur'),
-        centerTitle: true,
-      ),
-      body: SafeArea(
-        child: CenteredContent(
-          maxWidth: 400,
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+    return AuthScaffold(
+      child: Form(
+        key: _formKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const AuthHeader(
+              title: 'Topluluğa Katıl',
+              subtitle: Text('Kaydol, fikrini söyle ve adaleti sağla.'),
+            ),
+            Container(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              decoration: BoxDecoration(
+                color: kc.primaryContainer,
+                borderRadius: KararRadius.all(KararRadius.input),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Hero(
-                    tag: 'auth_logo',
-                    child: Icon(
-                      Icons.person_add_rounded,
-                      size: 64,
-                      color: colorScheme.primary,
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Topluluğa Katıl',
-                    style: textTheme.headlineMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Kaydol, fikrini söyle ve adaleti sağla.',
-                    style: textTheme.bodyMedium?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 24),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color:
-                          colorScheme.secondaryContainer.withValues(alpha: 0.4),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.info_outline,
-                            size: 20, color: colorScheme.secondary),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            'Lütfen bilgileri doğru girin. Doğum tarihi ve cinsiyetiniz ileride hesap kurtarma işlemlerinde gerekebilir.',
-                            style: textTheme.bodySmall?.copyWith(height: 1.3),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 32),
-                  TextFormField(
-                    controller: _usernameCtrl,
-                    decoration: InputDecoration(
-                      labelText: 'Kullanıcı adı',
-                      prefixIcon: const Icon(Icons.alternate_email),
-                      border: const OutlineInputBorder(),
-                      helperText: _usernameStatus == UsernameStatus.available
-                          ? 'Kullanılabilir'
-                          : _usernameStatus == UsernameStatus.taken
-                              ? 'Bu kullanıcı adı alınmış'
-                              : '3-20 karakter, harf/rakam/alt çizgi',
-                      helperStyle: TextStyle(
-                        color: _usernameStatus == UsernameStatus.available
-                            ? AppColors.hakli
-                            : _usernameStatus == UsernameStatus.taken
-                                ? AppColors.haksiz
-                                : null,
-                      ),
-                      suffixIcon: _buildUsernameSuffix(),
-                    ),
-                    keyboardType: TextInputType.name,
-                    textInputAction: TextInputAction.next,
-                    validator: (v) {
-                      final basic = Validators.username(v);
-                      if (basic != null) return basic;
-                      if (_usernameStatus == UsernameStatus.taken) {
-                        return 'Bu kullanıcı adı zaten alınmış.';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 20),
-                  TextFormField(
-                    controller: _emailCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'E-posta',
-                      prefixIcon: Icon(Icons.email_outlined),
-                      border: OutlineInputBorder(),
-                    ),
-                    keyboardType: TextInputType.emailAddress,
-                    textInputAction: TextInputAction.next,
-                    validator: Validators.email,
-                  ),
-                  const SizedBox(height: 20),
-                  TextFormField(
-                    controller: _dobCtrl,
-                    readOnly: true,
-                    onTap: _selectDob,
-                    decoration: const InputDecoration(
-                      labelText: 'Doğum Tarihi',
-                      prefixIcon: Icon(Icons.calendar_today_outlined),
-                      border: OutlineInputBorder(),
-                      hintText: 'Gün/Ay/Yıl',
-                    ),
-                    validator: (v) =>
-                        v == null || v.isEmpty ? 'Doğum tarihi gerekli.' : null,
-                  ),
-                  const SizedBox(height: 20),
-                  DropdownButtonFormField<String>(
-                    initialValue: _selectedGender,
-                    decoration: const InputDecoration(
-                      labelText: 'Cinsiyet',
-                      prefixIcon: Icon(Icons.people_outline),
-                      border: OutlineInputBorder(),
-                    ),
-                    items: const [
-                      DropdownMenuItem(value: 'female', child: Text('Kadın')),
-                      DropdownMenuItem(value: 'male', child: Text('Erkek')),
-                      DropdownMenuItem(value: 'other', child: Text('Diğer')),
-                      DropdownMenuItem(
-                          value: 'prefer_not_to_say',
-                          child: Text('Belirtmek İstemiyorum')),
-                    ],
-                    onChanged: (v) => setState(() => _selectedGender = v),
-                    validator: (v) =>
-                        v == null ? 'Cinsiyet seçimi gerekli.' : null,
-                  ),
-                  const SizedBox(height: 20),
-                  TextFormField(
-                    controller: _passwordCtrl,
-                    onFieldSubmitted: (_) =>
-                        _confirmPasswordFocus.requestFocus(),
-                    decoration: InputDecoration(
-                      labelText: 'Şifre',
-                      prefixIcon: const Icon(Icons.lock_outline),
-                      border: const OutlineInputBorder(),
-                      helperText: 'En az 8 karakter',
-                      suffixIcon: IconButton(
-                        onPressed: () => setState(() => _obscure = !_obscure),
-                        icon: Icon(
-                          _obscure ? Icons.visibility_off : Icons.visibility,
-                        ),
+                  Icon(Icons.info_outline_rounded,
+                      size: 20, color: kc.onPrimaryContainer),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Lütfen bilgileri doğru girin. Doğum tarihi ve cinsiyetiniz ileride hesap kurtarma işlemlerinde gerekebilir.',
+                      style: AppTypography.bodyS.copyWith(
+                        color: kc.onPrimaryContainer,
                       ),
                     ),
-                    obscureText: _obscure,
-                    textInputAction: TextInputAction.next,
-                    validator: Validators.password,
-                  ),
-                  const SizedBox(height: 20),
-                  TextFormField(
-                    controller: _confirmPasswordCtrl,
-                    focusNode: _confirmPasswordFocus,
-                    decoration: InputDecoration(
-                      labelText: 'Şifre Tekrar',
-                      prefixIcon: const Icon(Icons.lock_reset_outlined),
-                      border: const OutlineInputBorder(),
-                      suffixIcon: IconButton(
-                        onPressed: () =>
-                            setState(() => _obscureConfirm = !_obscureConfirm),
-                        icon: Icon(
-                          _obscureConfirm
-                              ? Icons.visibility_off
-                              : Icons.visibility,
-                        ),
-                      ),
-                    ),
-                    obscureText: _obscureConfirm,
-                    textInputAction: TextInputAction.done,
-                    onFieldSubmitted: (_) => _submit(),
-                    validator: (v) =>
-                        Validators.passwordsMatch(v, _passwordCtrl.text),
-                  ),
-                  const SizedBox(height: 16),
-                  CheckboxListTile(
-                    value: _ageConfirmed,
-                    onChanged: _isLoading
-                        ? null
-                        : (value) => setState(
-                              () => _ageConfirmed = value ?? false,
-                            ),
-                    controlAffinity: ListTileControlAffinity.leading,
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text(
-                      '18 yaşında veya daha büyük olduğumu beyan ediyorum.',
-                    ),
-                  ),
-                  CheckboxListTile(
-                    value: _acceptedPolicy,
-                    onChanged: _isLoading
-                        ? null
-                        : (value) => setState(
-                              () => _acceptedPolicy = value ?? false,
-                            ),
-                    controlAffinity: ListTileControlAffinity.leading,
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text(
-                      'Kullanim Kosullari ve Topluluk Kurallarini kabul ediyorum.',
-                    ),
-                  ),
-                  Wrap(
-                    alignment: WrapAlignment.center,
-                    spacing: 8,
-                    children: [
-                      TextButton(
-                        onPressed: () => context.push('/legal/terms'),
-                        child: const Text('Kullanim Kosullari'),
-                      ),
-                      TextButton(
-                        onPressed: () => context.push('/legal/community'),
-                        child: const Text('Topluluk Kurallari'),
-                      ),
-                    ],
-                  ),
-                  if (_error != null) ...[
-                    const SizedBox(height: 16),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color:
-                            colorScheme.errorContainer.withValues(alpha: 0.3),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        _error!,
-                        style: TextStyle(
-                          color: colorScheme.error,
-                          fontSize: 13,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 32),
-                  KararButton(
-                    label: 'Kaydol',
-                    onPressed:
-                        _usernameStatus == UsernameStatus.taken || _isLoading
-                            ? null
-                            : _submit,
-                    isLoading: _isLoading,
-                  ),
-                  const SizedBox(height: 16),
-                  Row(children: [
-                    const Expanded(child: Divider()),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Text(
-                        'veya',
-                        style: textTheme.bodySmall?.copyWith(
-                          color: colorScheme.outline,
-                        ),
-                      ),
-                    ),
-                    const Expanded(child: Divider()),
-                  ]),
-                  const SizedBox(height: 16),
-                  KararButton(
-                    label: 'Google ile Kaydol',
-                    onPressed: _isLoading ? null : _googleSignIn,
-                    variant: KararButtonVariant.outlined,
-                    icon: Icons.g_mobiledata,
-                  ),
-                  const SizedBox(height: 32),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Text('Zaten hesabın var mı?'),
-                      TextButton(
-                        onPressed: _isLoading
-                            ? null
-                            : () => context.go(_authLocation('/auth/login')),
-                        child: const Text('Giriş Yap'),
-                      ),
-                    ],
                   ),
                 ],
               ),
             ),
-          ),
+            const SizedBox(height: 24),
+            TextFormField(
+              controller: _usernameCtrl,
+              decoration: InputDecoration(
+                labelText: 'Kullanıcı adı',
+                prefixIcon: const Icon(Icons.alternate_email_rounded),
+                helperText: _usernameStatus == UsernameStatus.available
+                    ? 'Kullanılabilir'
+                    : _usernameStatus == UsernameStatus.taken
+                        ? 'Bu kullanıcı adı alınmış'
+                        : '3-20 karakter, harf/rakam/alt çizgi',
+                helperStyle: AppTypography.meta.copyWith(
+                  color: _usernameStatus == UsernameStatus.available
+                      ? kc.hakliText
+                      : _usernameStatus == UsernameStatus.taken
+                          ? kc.haksizText
+                          : kc.text3,
+                ),
+                suffixIcon: _buildUsernameSuffix(),
+              ),
+              keyboardType: TextInputType.name,
+              textInputAction: TextInputAction.next,
+              validator: (v) {
+                final basic = Validators.username(v);
+                if (basic != null) return basic;
+                if (_usernameStatus == UsernameStatus.taken) {
+                  return 'Bu kullanıcı adı zaten alınmış.';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 14),
+            TextFormField(
+              controller: _emailCtrl,
+              decoration: const InputDecoration(
+                labelText: 'E-posta',
+                prefixIcon: Icon(Icons.email_outlined),
+              ),
+              keyboardType: TextInputType.emailAddress,
+              textInputAction: TextInputAction.next,
+              validator: Validators.email,
+            ),
+            const SizedBox(height: 14),
+            TextFormField(
+              controller: _dobCtrl,
+              readOnly: true,
+              onTap: _selectDob,
+              decoration: const InputDecoration(
+                labelText: 'Doğum Tarihi',
+                prefixIcon: Icon(Icons.calendar_today_rounded),
+                hintText: 'Gün/Ay/Yıl',
+              ),
+              validator: (v) =>
+                  v == null || v.isEmpty ? 'Doğum tarihi gerekli.' : null,
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<String>(
+              initialValue: _selectedGender,
+              borderRadius: KararRadius.all(KararRadius.input),
+              decoration: const InputDecoration(
+                labelText: 'Cinsiyet',
+                prefixIcon: Icon(Icons.people_outline_rounded),
+              ),
+              items: const [
+                DropdownMenuItem(value: 'female', child: Text('Kadın')),
+                DropdownMenuItem(value: 'male', child: Text('Erkek')),
+                DropdownMenuItem(value: 'other', child: Text('Diğer')),
+                DropdownMenuItem(
+                    value: 'prefer_not_to_say',
+                    child: Text('Belirtmek İstemiyorum')),
+              ],
+              onChanged: (v) => setState(() => _selectedGender = v),
+              validator: (v) => v == null ? 'Cinsiyet seçimi gerekli.' : null,
+            ),
+            const SizedBox(height: 14),
+            TextFormField(
+              controller: _passwordCtrl,
+              onFieldSubmitted: (_) => _confirmPasswordFocus.requestFocus(),
+              decoration: InputDecoration(
+                labelText: 'Şifre',
+                prefixIcon: const Icon(Icons.lock_outline_rounded),
+                helperText: 'En az 8 karakter',
+                suffixIcon: IconButton(
+                  onPressed: () => setState(() => _obscure = !_obscure),
+                  icon: Icon(
+                    _obscure
+                        ? Icons.visibility_off_rounded
+                        : Icons.visibility_rounded,
+                  ),
+                ),
+              ),
+              obscureText: _obscure,
+              textInputAction: TextInputAction.next,
+              validator: Validators.password,
+            ),
+            const SizedBox(height: 14),
+            TextFormField(
+              controller: _confirmPasswordCtrl,
+              focusNode: _confirmPasswordFocus,
+              decoration: InputDecoration(
+                labelText: 'Şifre Tekrar',
+                prefixIcon: const Icon(Icons.lock_reset_rounded),
+                suffixIcon: IconButton(
+                  onPressed: () =>
+                      setState(() => _obscureConfirm = !_obscureConfirm),
+                  icon: Icon(
+                    _obscureConfirm
+                        ? Icons.visibility_off_rounded
+                        : Icons.visibility_rounded,
+                  ),
+                ),
+              ),
+              obscureText: _obscureConfirm,
+              textInputAction: TextInputAction.done,
+              onFieldSubmitted: (_) => _submit(),
+              validator: (v) => Validators.passwordsMatch(v, _passwordCtrl.text),
+            ),
+            const SizedBox(height: 16),
+            CheckboxListTile(
+              value: _ageConfirmed,
+              onChanged: _isLoading
+                  ? null
+                  : (value) => setState(
+                        () => _ageConfirmed = value ?? false,
+                      ),
+              controlAffinity: ListTileControlAffinity.leading,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+              shape: RoundedRectangleBorder(
+                borderRadius: KararRadius.all(KararRadius.input),
+              ),
+              title: Text(
+                '18 yaşında veya daha büyük olduğumu beyan ediyorum.',
+                style: AppTypography.bodyS.copyWith(color: kc.text1),
+              ),
+            ),
+            CheckboxListTile(
+              value: _acceptedPolicy,
+              onChanged: _isLoading
+                  ? null
+                  : (value) => setState(
+                        () => _acceptedPolicy = value ?? false,
+                      ),
+              controlAffinity: ListTileControlAffinity.leading,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+              shape: RoundedRectangleBorder(
+                borderRadius: KararRadius.all(KararRadius.input),
+              ),
+              title: Text(
+                'Kullanım Koşulları ve Topluluk Kurallarını kabul ediyorum.',
+                style: AppTypography.bodyS.copyWith(color: kc.text1),
+              ),
+            ),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 8,
+              children: [
+                TextButton(
+                  onPressed: () => context.push('/legal/terms'),
+                  child: const Text('Kullanım Koşulları'),
+                ),
+                TextButton(
+                  onPressed: () => context.push('/legal/community'),
+                  child: const Text('Topluluk Kuralları'),
+                ),
+              ],
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              AuthErrorBox(message: _error!),
+            ],
+            const SizedBox(height: 24),
+            KararButton(
+              label: 'Kaydol',
+              size: KararButtonSize.large,
+              onPressed: _usernameStatus == UsernameStatus.taken || _isLoading
+                  ? null
+                  : _submit,
+              isLoading: _isLoading,
+            ),
+            const SizedBox(height: 16),
+            const AuthOrDivider(),
+            const SizedBox(height: 16),
+            KararButton(
+              label: 'Google ile Kaydol',
+              onPressed: _isLoading ? null : _googleSignIn,
+              variant: KararButtonVariant.outlined,
+              size: KararButtonSize.large,
+              icon: Icons.g_mobiledata,
+            ),
+            const SizedBox(height: 20),
+            Wrap(
+              alignment: WrapAlignment.center,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  'Zaten hesabın var mı?',
+                  style: AppTypography.bodyS.copyWith(color: kc.text2),
+                ),
+                TextButton(
+                  onPressed: _isLoading
+                      ? null
+                      : () => context.go(_authLocation('/auth/login')),
+                  child: const Text('Giriş Yap'),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+
+import '../../core/theme/karar_tokens.dart';
 import 'karar_button.dart';
 
 class LoginNudge extends StatelessWidget {
@@ -47,8 +49,8 @@ class LoginNudge extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.account_circle_outlined,
-              size: 64, color: Colors.grey),
+          Icon(Icons.account_circle_outlined,
+              size: 64, color: context.kc.text3),
           const SizedBox(height: 16),
           Text(
             title,

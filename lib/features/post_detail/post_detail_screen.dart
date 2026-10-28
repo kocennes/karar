@@ -3,24 +3,36 @@ import 'dart:async';
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/layout/breakpoints.dart';
 import '../../core/notifications/notification_permission_dialog.dart';
 import '../../core/providers.dart';
-import '../../core/theme/app_colors.dart';
 import '../../core/history/history_provider.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/category_style.dart';
+import '../../core/theme/karar_tokens.dart';
+import '../../core/theme/motion.dart';
 import '../../core/wellbeing/session_vote_tracker.dart';
 import '../../shared/models/post.dart';
 import '../../shared/widgets/centered_content.dart';
 import '../../shared/widgets/content_unavailable_view.dart';
 import '../../shared/widgets/error_view.dart';
+import '../../shared/widgets/karar_avatar.dart';
+import '../../shared/widgets/karar_circle_button.dart';
+import '../../shared/widgets/karar_logo.dart';
+import '../../shared/widgets/karar_pressable.dart';
+import '../../shared/widgets/karar_sheet.dart';
+import '../../shared/widgets/karar_surface.dart';
+import '../../shared/widgets/karar_top_bar.dart';
 import '../../shared/widgets/login_nudge.dart';
 import '../../shared/widgets/mention_text.dart';
 import '../../shared/widgets/loading_indicator.dart';
+import '../../shared/widgets/on_color_chip.dart';
 import '../../shared/widgets/post_carousel.dart';
+import '../../shared/widgets/post_image.dart';
+import '../../shared/widgets/post_surface.dart';
 import '../../shared/widgets/skeleton.dart';
 import '../ads/banner_ad_widget.dart';
 import '../feed/feed_provider.dart';
@@ -28,13 +40,21 @@ import '../report/report_bottom_sheet.dart';
 import 'ai_summary_card.dart';
 import 'comment_input.dart';
 import 'comment_list.dart';
+import 'detail_menu.dart';
+import 'mention_color.dart';
 import 'post_detail_provider.dart';
 import 'post_owner_stats_section.dart';
 import 'post_poll_widget.dart';
 import 'share_picker_sheet.dart';
 import 'similar_posts_section.dart';
+import 'verdict_panel.dart';
 import 'wellbeing_banner.dart';
-import 'vote_bar.dart';
+
+/// Desktop content frame (spec §6.1 "Desktop"): the two columns live in a
+/// centred 1120 px frame with a 24 px gutter; the top bar aligns its
+/// controls with that frame.
+const double _desktopFrame = 1120;
+const double _desktopGutter = 24;
 
 class PostDetailScreen extends ConsumerStatefulWidget {
   const PostDetailScreen({
@@ -194,7 +214,8 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
               }
             },
             style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.error,
+              backgroundColor: ctx.kc.haksizFill,
+              foregroundColor: ctx.kc.onColor,
             ),
             child: const Text('Evet, Sil'),
           ),
@@ -247,6 +268,10 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
                 );
               }
             },
+            style: FilledButton.styleFrom(
+              backgroundColor: ctx.kc.haksizFill,
+              foregroundColor: ctx.kc.onColor,
+            ),
             child: const Text('Engelle'),
           ),
         ],
@@ -259,10 +284,9 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
     final titleCtrl = TextEditingController(text: post.title);
     final contentCtrl = TextEditingController(text: post.content);
 
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
+    showKararSheet<void>(
+      context,
+      scrollControlled: true,
       isDismissible: false,
       enableDrag: false,
       builder: (ctx) => PopScope(
@@ -300,54 +324,56 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
           }
         },
         child: Padding(
-          padding: EdgeInsets.fromLTRB(
-              20, 0, 20, MediaQuery.of(ctx).viewInsets.bottom + 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text('Düzenle',
-                      style: Theme.of(ctx)
-                          .textTheme
-                          .titleLarge
-                          ?.copyWith(fontWeight: FontWeight.bold)),
-                  IconButton(
-                    tooltip: 'Kapat',
-                    onPressed: () => Navigator.maybePop(ctx),
-                    icon: const Icon(Icons.close),
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                KararSheetHeader(
+                  title: 'Düzenle',
+                  onClose: () => Navigator.maybePop(ctx),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextField(
+                        controller: titleCtrl,
+                        decoration:
+                            const InputDecoration(labelText: 'Başlık'),
+                        maxLength: 120,
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: contentCtrl,
+                        decoration:
+                            const InputDecoration(labelText: 'İçerik'),
+                        maxLines: 6,
+                        maxLength: 1500,
+                      ),
+                      const SizedBox(height: 20),
+                      FilledButton(
+                        onPressed: () {
+                          final t = titleCtrl.text.trim();
+                          final c = contentCtrl.text.trim();
+                          if (t.length >= 10 && c.length >= 50) {
+                            setState(() => _interacted = true);
+                            notifier.editPost(t, c);
+                            Navigator.pop(ctx);
+                          }
+                        },
+                        child: const Text('Güncelle'),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: titleCtrl,
-                decoration: const InputDecoration(labelText: 'Başlık'),
-                maxLength: 120,
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: contentCtrl,
-                decoration: const InputDecoration(labelText: 'İçerik'),
-                maxLines: 6,
-                maxLength: 1500,
-              ),
-              const SizedBox(height: 20),
-              FilledButton(
-                onPressed: () {
-                  final t = titleCtrl.text.trim();
-                  final c = contentCtrl.text.trim();
-                  if (t.length >= 10 && c.length >= 50) {
-                    setState(() => _interacted = true);
-                    notifier.editPost(t, c);
-                    Navigator.pop(ctx);
-                  }
-                },
-                child: const Text('Güncelle'),
-              ),
-            ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -364,8 +390,14 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
       if (next.error != null && previous?.error != next.error) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(next.error!),
-            backgroundColor: Theme.of(context).colorScheme.error,
+            content: Text(
+              next.error!,
+              style: AppTypography.bodyS.copyWith(
+                fontWeight: FontWeight.w600,
+                color: context.kc.onColor,
+              ),
+            ),
+            backgroundColor: context.kc.haksizFill,
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -376,7 +408,8 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
       if (previous?.post?.myVote != next.post?.myVote &&
           next.post?.myVote != null) {
         setState(() => _interacted = true);
-        _confettiController.play();
+        // Confetti is decorative motion: skipped under reduce-motion.
+        if (!KararMotion.reduce(context)) _confettiController.play();
 
         final loopTracker = ref.read(judgmentLoopTrackerProvider);
         loopTracker.onVoted(widget.postId);
@@ -536,12 +569,56 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
     }
 
     final isDesktop = context.isDesktop;
+    final kc = context.kc;
+    final canPop = ModalRoute.of(context)?.impliesAppBarDismissal ?? false;
+    // Mobile: 12 px from the screen edges. Desktop: the back circle lines up
+    // with the hero's left edge and the actions with the comments panel's
+    // right edge, instead of floating in the window corners.
+    final barInset = isDesktop
+        ? (context.screenWidth - _desktopFrame).clamp(0.0, double.infinity) /
+                2 +
+            _desktopGutter
+        : 12.0;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('karar'),
+        automaticallyImplyLeading: false,
+        // Frosted bar + hairline only (spec §2.8), like Keşfet, Oluştur and
+        // the feed: no extra light-theme drop shadow under the hairline.
+        scrolledUnderElevation: 0,
+        flexibleSpace: const KararTopBarBackground(),
+        leadingWidth: isDesktop ? barInset + 44 : 68,
+        // Desktop has no shell nav on this route: the logo anchors the page.
+        title: isDesktop ? const KararLogo(size: LogoSize.small) : null,
+        centerTitle: isDesktop ? false : null,
+        titleSpacing: isDesktop ? 16 : null,
+        actionsPadding: isDesktop
+            ? EdgeInsetsDirectional.only(end: barInset)
+            : null,
+        leading: Padding(
+          padding: EdgeInsetsDirectional.only(start: barInset),
+          child: Center(
+            child: canPop
+                ? KararCircleButton(
+                    icon: Icons.arrow_back_ios_new_rounded,
+                    iconSize: 20,
+                    tooltip: 'Geri',
+                    onPressed: () => Navigator.maybePop(context),
+                  )
+                : KararCircleButton(
+                    icon: Icons.home_rounded,
+                    tooltip: 'Ana sayfaya dön',
+                    onPressed: () => context.go('/'),
+                  ),
+          ),
+        ),
         actions: [
-          IconButton(
+          KararCircleButton(
+            icon: post.isSaved
+                ? Icons.bookmark_rounded
+                : Icons.bookmark_border_rounded,
+            iconColor: post.isSaved ? kc.primary : null,
+            selected: post.isSaved,
             tooltip: 'Kaydet',
             onPressed: () {
               if (ref.read(currentUserProvider) == null) {
@@ -555,98 +632,23 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
                 notifier.toggleSave();
               }
             },
-            icon: Icon(post.isSaved ? Icons.bookmark : Icons.bookmark_border),
           ),
-          IconButton(
+          const SizedBox(width: 8),
+          KararCircleButton(
+            icon: Icons.send_rounded,
+            iconSize: 21,
             tooltip: 'Paylaş',
             onPressed: () => _sharePost(context, post),
-            icon: const Icon(Icons.share_outlined),
           ),
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert),
-            onSelected: (value) {
-              setState(() => _interacted = true);
-              switch (value) {
-                case 'edit':
-                  _showEditPost(context, ref, post, notifier);
-                  break;
-                case 'delete':
-                  _confirmDelete(context, ref, notifier);
-                  break;
-                case 'block':
-                  if (post.authorId != null) {
-                    _confirmBlock(context, ref, post.authorId!);
-                  }
-                  break;
-                case 'copy':
-                  _copyPostLink(context, post);
-                  break;
-                case 'report':
-                  ReportBottomSheet.show(
-                    context,
-                    targetType: 'post',
-                    targetId: post.id,
-                    repository: ref.read(postRepositoryProvider),
-                  );
-                  break;
-              }
-            },
-            itemBuilder: (context) => [
-              if (post.isOwner) ...[
-                const PopupMenuItem(
-                  value: 'edit',
-                  child: Row(
-                    children: [
-                      Icon(Icons.edit_outlined, size: 20),
-                      SizedBox(width: 12),
-                      Text('Düzenle'),
-                    ],
-                  ),
-                ),
-                const PopupMenuItem(
-                  value: 'delete',
-                  child: Row(
-                    children: [
-                      Icon(Icons.delete_outline, size: 20, color: Colors.red),
-                      SizedBox(width: 12),
-                      Text('Sil', style: TextStyle(color: Colors.red)),
-                    ],
-                  ),
-                ),
-              ],
-              if (!post.isOwner && post.authorId != null)
-                const PopupMenuItem(
-                  value: 'block',
-                  child: Row(
-                    children: [
-                      Icon(Icons.block_outlined, size: 20, color: Colors.red),
-                      SizedBox(width: 12),
-                      Text('Engelle', style: TextStyle(color: Colors.red)),
-                    ],
-                  ),
-                ),
-              const PopupMenuItem(
-                value: 'copy',
-                child: Row(
-                  children: [
-                    Icon(Icons.link_outlined, size: 20),
-                    SizedBox(width: 12),
-                    Text('Linki kopyala'),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'report',
-                child: Row(
-                  children: [
-                    Icon(Icons.flag_outlined, size: 20),
-                    SizedBox(width: 12),
-                    Text('Şikayet Et'),
-                  ],
-                ),
-              ),
-            ],
+          const SizedBox(width: 8),
+          Builder(
+            builder: (anchorContext) => KararCircleButton(
+              icon: Icons.more_horiz_rounded,
+              tooltip: 'Gönderi seçenekleri',
+              onPressed: () => _openMoreMenu(anchorContext, post, notifier),
+            ),
           ),
+          if (!isDesktop) const SizedBox(width: 4),
         ],
       ),
       body: Stack(
@@ -672,171 +674,274 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
                         referrerCode: widget.referrerCode,
                       ),
               ),
+              // Composer pinned under the scrolling content (mobile). Kept
+              // in the body rather than `Scaffold.bottomSheet` so the theme's
+              // rounded sheet shape and the keyboard inset don't apply twice.
+              if (!isDesktop)
+                CommentInput(
+                  postId: widget.postId,
+                  onSubmit: notifier.submitComment,
+                  isLoading: detailState.isSubmittingComment,
+                ),
             ],
           ),
           ConfettiWidget(
             confettiController: _confettiController,
             blastDirectionality: BlastDirectionality.explosive,
             shouldLoop: false,
-            colors: const [
-              AppColors.hakli,
-              AppColors.haksiz,
-              AppColors.accent,
-            ],
+            colors: KararGradients.confetti,
           ),
-        ],
-      ),
-      bottomSheet: isDesktop
-          ? null
-          : CommentInput(
-              postId: widget.postId,
-              onSubmit: notifier.submitComment,
-              isLoading: detailState.isSubmittingComment,
-            ),
-    );
-  }
-}
-
-class _TopRationaleCard extends StatelessWidget {
-  const _TopRationaleCard({required this.comment});
-  final Comment comment;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-            color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.auto_awesome, size: 14, color: colorScheme.primary),
-              const SizedBox(width: 8),
-              Text(
-                'Öne Çıkan Gerekçe',
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: colorScheme.primary,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 0.5,
-                ),
-              ),
-              const Spacer(),
-              Icon(Icons.thumb_up, size: 12, color: colorScheme.primary),
-              const SizedBox(width: 4),
-              Text(
-                '${comment.upvoteCount}',
-                style: theme.textTheme.labelSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: colorScheme.primary,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Text(
-            comment.content,
-            maxLines: 4,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              fontStyle: FontStyle.italic,
-              height: 1.5,
-            ),
-          ),
-          ...[
-            const SizedBox(height: 8),
-            Text(
-              comment.authorName != null ? '@${comment.authorName}' : '@anonim',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: comment.authorName != null
-                    ? AppColors.textSecondary
-                    : AppColors.textTertiary,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
         ],
       ),
     );
   }
+
+  Future<void> _openMoreMenu(
+    BuildContext anchorContext,
+    Post post,
+    PostDetailNotifier notifier,
+  ) async {
+    final value = await showAnchoredMenu<String>(
+      anchorContext,
+      items: [
+        if (post.isOwner) ...[
+          detailMenuItem(
+            anchorContext,
+            value: 'edit',
+            icon: Icons.edit_outlined,
+            label: 'Düzenle',
+          ),
+          detailMenuItem(
+            anchorContext,
+            value: 'delete',
+            icon: Icons.delete_outline_rounded,
+            label: 'Sil',
+            destructive: true,
+          ),
+        ],
+        if (!post.isOwner && post.authorId != null)
+          detailMenuItem(
+            anchorContext,
+            value: 'block',
+            icon: Icons.block_rounded,
+            label: 'Engelle',
+            destructive: true,
+          ),
+        detailMenuItem(
+          anchorContext,
+          value: 'copy',
+          icon: Icons.link_rounded,
+          label: 'Linki kopyala',
+        ),
+        detailMenuItem(
+          anchorContext,
+          value: 'report',
+          icon: Icons.flag_outlined,
+          label: 'Şikayet Et',
+        ),
+      ],
+    );
+    if (value == null || !mounted) return;
+    setState(() => _interacted = true);
+    switch (value) {
+      case 'edit':
+        _showEditPost(context, ref, post, notifier);
+        break;
+      case 'delete':
+        _confirmDelete(context, ref, notifier);
+        break;
+      case 'block':
+        if (post.authorId != null) {
+          _confirmBlock(context, ref, post.authorId!);
+        }
+        break;
+      case 'copy':
+        _copyPostLink(context, post);
+        break;
+      case 'report':
+        ReportBottomSheet.show(
+          context,
+          targetType: 'post',
+          targetId: post.id,
+          repository: ref.read(postRepositoryProvider),
+        );
+        break;
+    }
+  }
 }
 
-class _BalancedRationaleCard extends StatelessWidget {
-  const _BalancedRationaleCard({required this.comment});
-  final Comment comment;
+// ── Hero card ────────────────────────────────────────────────────────────────
+
+/// Gradient hero (spec §6.1.2): category + source chips, big white title,
+/// author row, tags. Photo posts use the gradient too — their photos are
+/// shown uncropped in the carousel below.
+class _DetailHero extends StatelessWidget {
+  const _DetailHero({required this.post});
+
+  final Post post;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
+    final kc = context.kc;
+    final style = CategoryStyle.of(post.category);
+    final white = kc.onColor;
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.hakli.withValues(alpha: 0.05),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.hakli.withValues(alpha: 0.2)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    // No “ watermark: the title sits at the top of this card, so the quote
+    // would land right behind its first letters.
+    return PostSurface(
+      post: post,
+      showPhoto: false,
+      showQuote: false,
+      showRailSheen: false,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 220),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Icon(Icons.balance, size: 14, color: AppColors.hakli),
-              const SizedBox(width: 8),
-              Text(
-                'En Dengeli Gerekçe',
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: AppColors.hakli,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 0.5,
-                ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OnColorChip(
+                        icon: style.icon,
+                        label: post.category.name,
+                      ),
+                      if (post.contentSource != 'user')
+                        OnColorChip(
+                          label: post.contentSource == 'ai'
+                              ? 'AI destekli'
+                              : 'Sistem',
+                          dotColor: kc.gold,
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Semantics(
+                    header: true,
+                    child: MentionColor(
+                      color: white,
+                      child: MentionText(
+                        text: post.title,
+                        style: AppTypography.titleXL.copyWith(color: white),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              const Spacer(),
-              Tooltip(
-                message: 'Hem Haklı hem Haksız oyu verenlerden beğeni aldı.',
-                child: Icon(Icons.info_outline,
-                    size: 12, color: colorScheme.outline),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 14),
+                  _HeroAuthorRow(post: post),
+                  if (post.tags.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        for (final tag in post.tags)
+                          OnColorChip(
+                            label: '#$tag',
+                            onTap: () => context.push(
+                              '/search?q=${Uri.encodeComponent('#$tag')}',
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                ],
               ),
             ],
           ),
-          const SizedBox(height: 10),
-          Text(
-            comment.content,
-            maxLines: 4,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              height: 1.5,
-            ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HeroAuthorRow extends StatelessWidget {
+  const _HeroAuthorRow({required this.post});
+
+  final Post post;
+
+  @override
+  Widget build(BuildContext context) {
+    final white = context.kc.onColor;
+    final meta = '${post.createdAgo} · ${post.readingTimeMinutes} dk okuma';
+    final metaStyle = AppTypography.labelS.copyWith(
+      fontWeight: FontWeight.w500,
+      color: white,
+    );
+    final nameStyle = AppTypography.bodyStrong.copyWith(color: white);
+
+    Widget? identity;
+    if (post.isAnonymous) {
+      identity = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const KararAvatar(
+            username: '',
+            radius: 16,
+            anonymous: true,
+            onColor: true,
           ),
-          ...[
-            const SizedBox(height: 8),
-            Text(
-              comment.authorName != null ? '@${comment.authorName}' : '@anonim',
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              '@anonim',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: comment.authorName != null
-                    ? AppColors.textSecondary
-                    : AppColors.textTertiary,
-                fontWeight: FontWeight.w600,
+              style: nameStyle,
+            ),
+          ),
+        ],
+      );
+    } else if (post.authorName != null) {
+      final name = post.authorName!;
+      identity = KararPressable(
+        onTap: () => context.push('/users/$name'),
+        semanticLabel: '@$name',
+        focusRadius: 16,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            KararAvatar(username: name, radius: 16),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                '@$name',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: nameStyle,
               ),
             ),
           ],
-        ],
-      ),
+        ),
+      );
+    }
+
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      runSpacing: 2,
+      children: [
+        if (identity != null) identity,
+        ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 32),
+          child: Align(
+            widthFactor: 1,
+            heightFactor: 1,
+            child: Text(
+              identity == null ? meta : ' · $meta',
+              style: metaStyle,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -860,16 +965,22 @@ class _DesktopLayout extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
     return CenteredContent(
-      maxWidth: 1100,
+      maxWidth: _desktopFrame,
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Sol: post içeriği + oy butonları
+          // Sol: post içeriği + oy paneli
           Expanded(
-            flex: 5,
+            flex: 10,
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+              padding: const EdgeInsets.fromLTRB(
+                _desktopGutter,
+                12,
+                _desktopGutter,
+                32,
+              ),
               children: [
                 _PostContent(
                   post: post,
@@ -877,50 +988,66 @@ class _DesktopLayout extends StatelessWidget {
                   topRationale: detailState.topRationale,
                   balancedRationale: detailState.balancedRationale,
                   referrerCode: referrerCode,
+                  gutter: 0,
                 ),
-                const SizedBox(height: 28),
+                const SizedBox(height: 32),
                 SimilarPostsSection(postId: post.id),
               ],
             ),
           ),
-          const VerticalDivider(width: 1),
+          const SizedBox(width: 8),
           // Sağ: yorum paneli (sabit kaydırma)
           Expanded(
-            flex: 4,
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                  child: _CommentHeader(
-                    count: post.commentCount,
-                    selectedSort: detailState.commentSort,
-                    onSortChanged: notifier.setCommentSort,
-                  ),
+            flex: 7,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(0, 16, _desktopGutter, 16),
+              child: KararSurface(
+                radius: KararRadius.card,
+                padding: EdgeInsets.zero,
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 14, 12, 10),
+                      child: _CommentHeader(
+                        count: post.commentCount,
+                        selectedSort: detailState.commentSort,
+                        onSortChanged: notifier.setCommentSort,
+                      ),
+                    ),
+                    Divider(height: 1, thickness: 1, color: kc.outlineVariant),
+                    Expanded(
+                      // The panel scrolls inside its own card: keep its
+                      // scroll notifications from flipping the page's top
+                      // bar into the "scrolled under" state.
+                      child: NotificationListener<ScrollNotification>(
+                        onNotification: (_) => true,
+                        child: detailState.isLoadingComments
+                            ? const Center(child: LoadingIndicator())
+                            : CommentList(
+                                postId: post.id,
+                                comments: detailState.comments,
+                                onUpvote: notifier.upvoteComment,
+                                onDownvote: notifier.downvoteComment,
+                                onDelete: notifier.deleteComment,
+                                onReply: notifier.setReplyingTo,
+                                onPin: notifier.pinComment,
+                                onUnpin: notifier.unpinComment,
+                                isPostOwner: post.isOwner,
+                                shrinkWrap: false,
+                                padding:
+                                    const EdgeInsets.fromLTRB(0, 8, 0, 8),
+                                highlightedCommentId: initialCommentId,
+                              ),
+                      ),
+                    ),
+                    CommentInput(
+                      postId: post.id,
+                      onSubmit: notifier.submitComment,
+                      isLoading: detailState.isSubmittingComment,
+                    ),
+                  ],
                 ),
-                Expanded(
-                  child: detailState.isLoadingComments
-                      ? const Center(child: LoadingIndicator())
-                      : CommentList(
-                          postId: post.id,
-                          comments: detailState.comments,
-                          onUpvote: notifier.upvoteComment,
-                          onDownvote: notifier.downvoteComment,
-                          onDelete: notifier.deleteComment,
-                          onReply: notifier.setReplyingTo,
-                          onPin: notifier.pinComment,
-                          onUnpin: notifier.unpinComment,
-                          isPostOwner: post.isOwner,
-                          shrinkWrap: false,
-                          padding: const EdgeInsets.fromLTRB(0, 8, 0, 8),
-                          highlightedCommentId: initialCommentId,
-                        ),
-                ),
-                CommentInput(
-                  postId: post.id,
-                  onSubmit: notifier.submitComment,
-                  isLoading: detailState.isSubmittingComment,
-                ),
-              ],
+              ),
             ),
           ),
         ],
@@ -949,7 +1076,7 @@ class _MobileLayout extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      padding: const EdgeInsets.fromLTRB(0, 4, 0, 32),
       children: [
         _PostContent(
           post: post,
@@ -958,15 +1085,21 @@ class _MobileLayout extends StatelessWidget {
           balancedRationale: detailState.balancedRationale,
           referrerCode: referrerCode,
         ),
-        const SizedBox(height: 28),
-        _CommentHeader(
-          count: post.commentCount,
-          selectedSort: detailState.commentSort,
-          onSortChanged: notifier.setCommentSort,
+        const SizedBox(height: 32),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: _CommentHeader(
+            count: post.commentCount,
+            selectedSort: detailState.commentSort,
+            onSortChanged: notifier.setCommentSort,
+          ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 4),
         if (detailState.isLoadingComments)
-          const LoadingIndicator()
+          const Padding(
+            padding: EdgeInsets.all(24),
+            child: LoadingIndicator(),
+          )
         else
           CommentList(
             postId: post.id,
@@ -978,11 +1111,14 @@ class _MobileLayout extends StatelessWidget {
             onPin: notifier.pinComment,
             onUnpin: notifier.unpinComment,
             isPostOwner: post.isOwner,
+            padding: EdgeInsets.zero,
             highlightedCommentId: initialCommentId,
           ),
-        const SizedBox(height: 24),
-        SimilarPostsSection(postId: post.id),
-        const SizedBox(height: 80),
+        const SizedBox(height: 28),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: SimilarPostsSection(postId: post.id),
+        ),
       ],
     );
   }
@@ -1003,30 +1139,64 @@ class _CommentHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
+    final label = _sortLabel(selectedSort);
     return Row(
       children: [
         Expanded(
-          child: Text(
-            'Yorumlar ($count)',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w800,
-                ),
+          child: Semantics(
+            header: true,
+            child: Text(
+              'Yorumlar ($count)',
+              style: AppTypography.headline.copyWith(
+                color: kc.text1,
+                fontFeatures: AppTypography.tabular,
+              ),
+            ),
           ),
         ),
-        PopupMenuButton<String>(
-          tooltip: 'Yorum sırala',
-          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-          initialValue: selectedSort,
-          onSelected: onSortChanged,
-          itemBuilder: (context) => const [
-            PopupMenuItem(value: 'top', child: Text('En iyi')),
-            PopupMenuItem(value: 'new', child: Text('En yeni')),
-            PopupMenuItem(value: 'old', child: Text('En eski')),
-            PopupMenuItem(value: 'controversial', child: Text('Tartışmalı')),
-          ],
-          child: InputChip(
-            avatar: const Icon(Icons.sort, size: 18),
-            label: Text(_sortLabel(selectedSort)),
+        const SizedBox(width: 8),
+        Builder(
+          builder: (anchorContext) => KararPressable(
+            tooltip: 'Yorum sırala',
+            semanticLabel: 'Yorum sırala',
+            semanticValue: label,
+            focusRadius: 20,
+            onTap: () async {
+              final value = await showAnchoredMenu<String>(
+                anchorContext,
+                initialValue: selectedSort,
+                items: const [
+                  PopupMenuItem(value: 'top', child: Text('En iyi')),
+                  PopupMenuItem(value: 'new', child: Text('En yeni')),
+                  PopupMenuItem(value: 'old', child: Text('En eski')),
+                  PopupMenuItem(
+                    value: 'controversial',
+                    child: Text('Tartışmalı'),
+                  ),
+                ],
+              );
+              if (value != null) onSortChanged(value);
+            },
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 40),
+              padding: const EdgeInsets.fromLTRB(12, 8, 14, 8),
+              decoration: BoxDecoration(
+                color: kc.muted,
+                borderRadius: KararRadius.all(20),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.sort_rounded, size: 18, color: kc.text2),
+                  const SizedBox(width: 6),
+                  Text(
+                    label,
+                    style: AppTypography.labelS.copyWith(color: kc.text1),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ],
@@ -1048,6 +1218,7 @@ class _PostContent extends ConsumerWidget {
     this.topRationale,
     this.balancedRationale,
     this.referrerCode,
+    this.gutter = 16,
   });
 
   final Post post;
@@ -1056,268 +1227,107 @@ class _PostContent extends ConsumerWidget {
   final Comment? balancedRationale;
   final String? referrerCode;
 
+  /// Horizontal page gutter (16 on mobile; 0 when the parent pads).
+  final double gutter;
+
+  /// Haklı / Haksız tap from the verdict panel (unchanged vote flow:
+  /// share-landing analytics, guest nudge with returnTo, vote / remove).
+  void _onVoteTap(BuildContext context, WidgetRef ref, VoteType type) {
+    if (referrerCode != null) {
+      ref.read(analyticsServiceProvider).logShareLandingVoteAttempt(
+            postId: post.id,
+            referrerCode: referrerCode,
+            isGuest: ref.read(currentUserProvider) == null,
+          );
+    }
+    if (ref.read(currentUserProvider) == null) {
+      final returnTo = referrerCode == null
+          ? '/posts/${post.id}'
+          : '/posts/${post.id}?ref=${Uri.encodeComponent(referrerCode!)}';
+      LoginNudge.show(
+        context,
+        title: 'Oy Ver',
+        message:
+            'Topluluk kararına katılmak ve oylarını kaydetmek için giriş yapmalısın.',
+        returnTo: returnTo,
+      );
+      return;
+    }
+    if (post.myVote == type) {
+      notifier.removeVote();
+    } else {
+      notifier.vote(type.name);
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final detailState = ref.watch(postDetailProvider(post.id));
+    final kc = context.kc;
+    final g = gutter;
+    EdgeInsets section(double top) => EdgeInsets.fromLTRB(g, top, g, 0);
+
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (post.status != 'active') ...[
-          _ModerationBanner(post: post),
-          const SizedBox(height: 16),
-        ],
-        Row(
-          children: [
-            if (post.isAnonymous) ...[
-              Flexible(
-                child: Text(
-                  '@anonim',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        color: AppColors.textTertiary,
-                        fontWeight: FontWeight.bold,
-                      ),
-                ),
-              ),
-              const Text(' · '),
-            ] else if (post.authorName != null) ...[
-              Flexible(
-                child: GestureDetector(
-                  onTap: () => context.push('/users/${post.authorName}'),
-                  child: Text(
-                    '@${post.authorName}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                          color: Theme.of(context).colorScheme.primary,
-                          fontWeight: FontWeight.bold,
-                        ),
-                  ),
-                ),
-              ),
-              const Text(' · '),
-            ],
-            Flexible(
-              child: Text(
-                '${post.category.icon} ${post.category.name} · ${post.createdAgo} · ${post.readingTimeMinutes} dk okuma',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: AppColors.textSecondary,
-                      fontWeight: FontWeight.w700,
-                    ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        if (post.contentSource != 'user') ...[
-          _ContentSourceBadge(source: post.contentSource),
-          const SizedBox(height: 8),
-        ],
-        MentionText(
-          text: post.title,
-          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w900,
-                height: 1.25,
-              ),
-        ),
-        const SizedBox(height: 16),
-        MentionText(
-          text: post.content,
-          style: Theme.of(context).textTheme.bodyLarge?.copyWith(height: 1.6),
-        ),
-        if (post.isEdited)
+        if (post.status != 'active')
           Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Text(
-              'Düzenlendi',
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .onSurfaceVariant
-                        .withValues(alpha: 0.7),
-                    fontStyle: FontStyle.italic,
+            padding: EdgeInsets.fromLTRB(g, 4, g, 12),
+            child: _ModerationBanner(post: post),
+          ),
+        Padding(
+          padding: section(4),
+          child: _DetailHero(post: post),
+        ),
+        Padding(
+          padding: EdgeInsets.fromLTRB(g + 4, 18, g + 4, 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              MentionColor(
+                color: kc.primaryText,
+                child: MentionText(
+                  text: post.content,
+                  style: AppTypography.bodyL.copyWith(color: kc.text1),
+                ),
+              ),
+              if (post.isEdited)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    'Düzenlendi',
+                    style: AppTypography.meta.copyWith(
+                      fontStyle: FontStyle.italic,
+                      fontWeight: FontWeight.w500,
+                      color: kc.text3,
+                    ),
                   ),
-            ),
-          ),
-        if (post.hasImage) ...[
-          const SizedBox(height: 16),
-          PostCarousel(
-            imageUrls:
-                post.imageUrls.isNotEmpty ? post.imageUrls : [post.imageUrl!],
-            postId: post.id,
-          ),
-        ],
-        const SizedBox(height: 24),
-        WellbeingBanner(content: post.content),
-        VoteBar(post: post),
-        if (post.totalVotes >= 100) ...[
-          const SizedBox(height: 12),
-          _VerdictBanner(post: post),
-        ],
-        if (post.aiSummary != null) ...[
-          const SizedBox(height: 16),
-          AiSummaryCard(
-            summary: post.aiSummary!,
-            isRefreshing: detailState.isRefreshingAiSummary,
-            onRefresh: notifier.refreshAiSummary,
-          ),
-        ] else if (post.canHaveAiSummary) ...[
-          const SizedBox(height: 16),
-          _GenerateAiSummaryPlaceholder(
-            isLoading: detailState.isRefreshingAiSummary,
-            onGenerate: notifier.refreshAiSummary,
-          ),
-        ],
-        if (topRationale != null) ...[
-          const SizedBox(height: 16),
-          _TopRationaleCard(comment: topRationale!),
-        ],
-        if (balancedRationale != null &&
-            balancedRationale?.id != topRationale?.id &&
-            post.totalVotes >= 40) ...[
-          const SizedBox(height: 16),
-          _BalancedRationaleCard(comment: balancedRationale!),
-        ],
-        if (post.poll != null) ...[
-          const SizedBox(height: 24),
-          PostPollWidget(
-            poll: post.poll!,
-            onVote: (optionId) {
-              if (ref.read(currentUserProvider) == null) {
-                LoginNudge.show(
-                  context,
-                  title: 'Ankete Oy Ver',
-                  message: 'Ankete oy vermek için hesap oluşturman gerekiyor.',
-                );
-                return;
-              }
-              notifier.votePoll(optionId);
-            },
-          ),
-        ],
-        const SizedBox(height: 16),
-        if (post.isClosed)
-          Container(
-            margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: Theme.of(context)
-                  .colorScheme
-                  .surfaceContainerHighest
-                  .withValues(alpha: 0.6),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.lock_outline_rounded,
-                  size: 16,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
-                const SizedBox(width: 8),
-                Text(
-                  'Oylama kapandı — 7 gün geçti',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        fontWeight: FontWeight.w500,
-                      ),
-                ),
-              ],
-            ),
+            ],
           ),
-        Row(
-          children: [
-            Expanded(
-              child: _VoteButton(
-                label: 'Haklı',
-                icon: Icons.check_circle_outline,
-                selected: post.myVote == VoteType.hakli,
-                color: AppColors.hakli,
-                backgroundColor: AppColors.hakli.withValues(alpha: 0.12),
-                onTap: post.isClosed
-                    ? null
-                    : () {
-                        if (referrerCode != null) {
-                          ref
-                              .read(analyticsServiceProvider)
-                              .logShareLandingVoteAttempt(
-                                postId: post.id,
-                                referrerCode: referrerCode,
-                                isGuest: ref.read(currentUserProvider) == null,
-                              );
-                        }
-                        if (ref.read(currentUserProvider) == null) {
-                          final returnTo = referrerCode == null
-                              ? '/posts/${post.id}'
-                              : '/posts/${post.id}?ref=${Uri.encodeComponent(referrerCode!)}';
-                          LoginNudge.show(
-                            context,
-                            title: 'Oy Ver',
-                            message:
-                                'Topluluk kararına katılmak ve oylarını kaydetmek için giriş yapmalısın.',
-                            returnTo: returnTo,
-                          );
-                          return;
-                        }
-                        if (post.myVote == VoteType.hakli) {
-                          notifier.removeVote();
-                        } else {
-                          notifier.vote(VoteType.hakli.name);
-                        }
-                      },
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _VoteButton(
-                label: 'Haksız',
-                icon: Icons.cancel_outlined,
-                selected: post.myVote == VoteType.haksiz,
-                color: AppColors.haksiz,
-                backgroundColor: AppColors.haksiz.withValues(alpha: 0.12),
-                onTap: post.isClosed
-                    ? null
-                    : () {
-                        if (referrerCode != null) {
-                          ref
-                              .read(analyticsServiceProvider)
-                              .logShareLandingVoteAttempt(
-                                postId: post.id,
-                                referrerCode: referrerCode,
-                                isGuest: ref.read(currentUserProvider) == null,
-                              );
-                        }
-                        if (ref.read(currentUserProvider) == null) {
-                          final returnTo = referrerCode == null
-                              ? '/posts/${post.id}'
-                              : '/posts/${post.id}?ref=${Uri.encodeComponent(referrerCode!)}';
-                          LoginNudge.show(
-                            context,
-                            title: 'Oy Ver',
-                            message:
-                                'Topluluk kararına katılmak ve oylarını kaydetmek için giriş yapmalısın.',
-                            returnTo: returnTo,
-                          );
-                          return;
-                        }
-                        if (post.myVote == VoteType.haksiz) {
-                          notifier.removeVote();
-                        } else {
-                          notifier.vote(VoteType.haksiz.name);
-                        }
-                      },
-              ),
-            ),
-          ],
+        ),
+        if (post.hasImage)
+          Padding(
+            padding: section(16),
+            child: _DetailMedia(post: post),
+          ),
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: g),
+          child: WellbeingBanner(content: post.content),
+        ),
+        Padding(
+          padding: section(20),
+          child: VerdictPanel(
+            post: post,
+            onVote: post.isClosed
+                ? null
+                : (type) => _onVoteTap(context, ref, type),
+          ),
         ),
         if (!post.isOwner)
           Padding(
-            padding: const EdgeInsets.only(top: 12),
-            child: Align(
-              alignment: Alignment.centerRight,
+            padding: const EdgeInsets.only(top: 6),
+            child: Center(
               child: TextButton.icon(
                 onPressed: () {
                   ReportBottomSheet.show(
@@ -1328,20 +1338,287 @@ class _PostContent extends ConsumerWidget {
                   );
                 },
                 icon: const Icon(Icons.flag_outlined, size: 16),
-                label: const Text('Bu gönderiyi bildir',
-                    style: TextStyle(fontSize: 12)),
+                label: const Text('Bu gönderiyi bildir'),
                 style: TextButton.styleFrom(
-                  foregroundColor: Theme.of(context).colorScheme.outline,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  foregroundColor: kc.text3,
+                  iconColor: kc.text3,
+                  textStyle: AppTypography.labelS.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ),
           ),
-        if (post.isOwner) ...[
-          const SizedBox(height: 20),
-          PostOwnerStatsSection(postId: post.id),
-        ],
+        if (post.aiSummary != null)
+          Padding(
+            padding: section(16),
+            child: AiSummaryCard(
+              summary: post.aiSummary!,
+              isRefreshing: detailState.isRefreshingAiSummary,
+              onRefresh: notifier.refreshAiSummary,
+            ),
+          )
+        else if (post.canHaveAiSummary)
+          Padding(
+            padding: section(16),
+            child: _GenerateAiSummaryPlaceholder(
+              isLoading: detailState.isRefreshingAiSummary,
+              onGenerate: notifier.refreshAiSummary,
+            ),
+          ),
+        if (topRationale != null)
+          Padding(
+            padding: section(12),
+            child: _TopRationaleCard(comment: topRationale!),
+          ),
+        if (balancedRationale != null &&
+            balancedRationale?.id != topRationale?.id &&
+            post.totalVotes >= 40)
+          Padding(
+            padding: section(12),
+            child: _BalancedRationaleCard(comment: balancedRationale!),
+          ),
+        if (post.poll != null)
+          Padding(
+            padding: section(24),
+            child: PostPollWidget(
+              poll: post.poll!,
+              onVote: (optionId) {
+                if (ref.read(currentUserProvider) == null) {
+                  LoginNudge.show(
+                    context,
+                    title: 'Ankete Oy Ver',
+                    message: 'Ankete oy vermek için hesap oluşturman gerekiyor.',
+                  );
+                  return;
+                }
+                notifier.votePoll(optionId);
+              },
+            ),
+          ),
+        if (post.isOwner)
+          Padding(
+            padding: section(20),
+            child: PostOwnerStatsSection(postId: post.id),
+          ),
       ],
+    );
+  }
+}
+
+// ── Fotoğraflar ──────────────────────────────────────────────────────────────
+
+/// The post's photos on a muted rounded well.
+///
+/// * Mobile / tablet: the full-width 16:9 carousel (unchanged).
+/// * Desktop (≥ 1024): the well is capped at 22 % of the viewport height
+///   (200–300 px, never taller than 16:9). The uncropped 16:9 photo (≈340 px
+///   in the 606 px column) pushed the whole verdict panel under the fold of
+///   a 1440×900 window; at 200 px the verdict word, split bar, labels and
+///   the Haklı / Haksız labels of a 4-line post sit above it. Nothing is
+///   cropped further: a single photo is shown whole (`BoxFit.contain`) on
+///   the well, a gallery keeps its 16:9 crop, centred. Tapping still opens
+///   the full-screen viewer (same hero tags as [PostCarousel]).
+class _DetailMedia extends StatelessWidget {
+  const _DetailMedia({required this.post});
+
+  final Post post;
+
+  static const _desktopViewportShare = 0.22;
+  static const _desktopMinHeight = 200.0;
+  static const _desktopMaxHeight = 300.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final kc = context.kc;
+    final urls = post.imageUrls.isNotEmpty ? post.imageUrls : [post.imageUrl!];
+    final well = BoxDecoration(
+      color: kc.muted,
+      borderRadius: KararRadius.all(KararRadius.surface),
+    );
+
+    if (!context.isDesktop) {
+      return DecoratedBox(
+        decoration: well,
+        child: PostCarousel(
+          imageUrls: urls,
+          postId: post.id,
+          borderRadius: KararRadius.surface,
+        ),
+      );
+    }
+
+    final cap = (MediaQuery.sizeOf(context).height * _desktopViewportShare)
+        .clamp(_desktopMinHeight, _desktopMaxHeight);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final natural = width * 9 / 16;
+        final height = natural < cap ? natural : cap;
+        final galleryWidth = height * 16 / 9;
+        // A max height, not a fixed one: a wide panorama shrinks the well
+        // to its own height and a photo the viewer hid collapses it.
+        return Container(
+          constraints: BoxConstraints(maxHeight: height),
+          clipBehavior: Clip.antiAlias,
+          decoration: well,
+          child: urls.length == 1
+              ? PostImage(
+                  imageUrl: urls.first,
+                  fit: BoxFit.contain,
+                  borderRadius: KararRadius.surface,
+                  enableFullScreen: true,
+                  heroTag: 'post_image_${post.id}_0',
+                )
+              : Center(
+                  child: SizedBox(
+                    width: galleryWidth < width ? galleryWidth : width,
+                    child: PostCarousel(
+                      imageUrls: urls,
+                      postId: post.id,
+                      borderRadius: KararRadius.surface,
+                    ),
+                  ),
+                ),
+        );
+      },
+    );
+  }
+}
+
+// ── Gerekçe kartları ─────────────────────────────────────────────────────────
+
+class _RationaleCard extends StatelessWidget {
+  const _RationaleCard({
+    required this.comment,
+    required this.icon,
+    required this.title,
+    required this.accent,
+    this.trailing,
+    this.italic = false,
+  });
+
+  final Comment comment;
+  final IconData icon;
+  final String title;
+  final Color accent;
+  final Widget? trailing;
+  final bool italic;
+
+  @override
+  Widget build(BuildContext context) {
+    final kc = context.kc;
+    return KararSurface(
+      padding: const EdgeInsets.fromLTRB(18, 14, 14, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 32),
+            child: Row(
+              children: [
+                Icon(icon, size: 16, color: accent),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: AppTypography.meta.copyWith(
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.2,
+                      color: accent,
+                    ),
+                  ),
+                ),
+                if (trailing != null) trailing!,
+              ],
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            comment.content,
+            maxLines: 4,
+            overflow: TextOverflow.ellipsis,
+            style: AppTypography.body.copyWith(
+              fontStyle: italic ? FontStyle.italic : null,
+              color: kc.text1,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            comment.authorName != null ? '@${comment.authorName}' : '@anonim',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTypography.labelS.copyWith(color: kc.text2),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TopRationaleCard extends StatelessWidget {
+  const _TopRationaleCard({required this.comment});
+  final Comment comment;
+
+  @override
+  Widget build(BuildContext context) {
+    final kc = context.kc;
+    return _RationaleCard(
+      comment: comment,
+      icon: Icons.auto_awesome_rounded,
+      title: 'Öne Çıkan Gerekçe',
+      accent: kc.primaryText,
+      italic: true,
+      trailing: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        decoration: BoxDecoration(
+          color: kc.primaryContainer,
+          borderRadius: KararRadius.all(KararRadius.pill),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.thumb_up_alt_rounded,
+              size: 13,
+              color: kc.onPrimaryContainer,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              '${comment.upvoteCount}',
+              style: AppTypography.meta.copyWith(
+                fontWeight: FontWeight.w800,
+                color: kc.onPrimaryContainer,
+                fontFeatures: AppTypography.tabular,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BalancedRationaleCard extends StatelessWidget {
+  const _BalancedRationaleCard({required this.comment});
+  final Comment comment;
+
+  @override
+  Widget build(BuildContext context) {
+    final kc = context.kc;
+    return _RationaleCard(
+      comment: comment,
+      icon: Icons.balance_rounded,
+      title: 'En Dengeli Gerekçe',
+      accent: kc.hakliText,
+      trailing: Tooltip(
+        message: 'Hem Haklı hem Haksız oyu verenlerden beğeni aldı.',
+        child: SizedBox(
+          width: 32,
+          height: 32,
+          child: Icon(Icons.info_outline_rounded, size: 16, color: kc.text3),
+        ),
+      ),
     );
   }
 }
@@ -1357,197 +1634,48 @@ class _GenerateAiSummaryPlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: isLoading ? null : onGenerate,
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: Theme.of(context).colorScheme.outlineVariant,
-            style: BorderStyle.solid,
-          ),
-        ),
-        child: Row(
-          children: [
-            Icon(
-              Icons.auto_awesome,
-              size: 20,
-              color:
-                  Theme.of(context).colorScheme.primary.withValues(alpha: 0.5),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                'Topluluk ne diyor? Yapay zeka ile özetle.',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+    final kc = context.kc;
+    final shape = RoundedRectangleBorder(
+      borderRadius: KararRadius.all(KararRadius.surface),
+      side: BorderSide(color: kc.outlineVariant, width: 1.5),
+    );
+    return Material(
+      type: MaterialType.transparency,
+      shape: shape,
+      child: InkWell(
+        onTap: isLoading ? null : onGenerate,
+        customBorder: shape,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 64),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 14, 14, 14),
+            child: Row(
+              children: [
+                Icon(Icons.auto_awesome_rounded, size: 20, color: kc.primary),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Topluluk ne diyor? Yapay zeka ile özetle.',
+                    style: AppTypography.bodyS.copyWith(color: kc.text2),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                if (isLoading)
+                  SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: kc.primary,
                     ),
-              ),
+                  )
+                else
+                  Icon(Icons.chevron_right_rounded, size: 22, color: kc.text3),
+              ],
             ),
-            if (isLoading)
-              const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            else
-              const Icon(Icons.chevron_right, size: 20),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _VerdictBanner extends StatelessWidget {
-  const _VerdictBanner({required this.post});
-  final Post post;
-
-  void _showVoteDetails(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Oy Dağılımı'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _VoteDetailRow(
-              label: 'Haklı',
-              count: post.voteCountHakli,
-              percent: post.hakliPercent,
-              color: AppColors.hakli,
-            ),
-            const SizedBox(height: 16),
-            _VoteDetailRow(
-              label: 'Haksız',
-              count: post.voteCountHaksiz,
-              percent: 100 - post.hakliPercent,
-              color: AppColors.haksiz,
-            ),
-            const SizedBox(height: 24),
-            Text(
-              'Toplam ${post.totalVotes} oy kullanıldı.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Kapat'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isHakli = post.hakliPercent >= 50;
-    final winnerLabel = isHakli ? 'Haklı' : 'Haksız';
-    final winnerPercent = isHakli ? post.hakliPercent : 100 - post.hakliPercent;
-    final winnerColor = isHakli ? AppColors.hakli : AppColors.haksiz;
-    final winnerBg = winnerColor.withValues(alpha: 0.12);
-    final winnerIcon = isHakli ? '⚖️✅' : '⚖️❌';
-
-    return InkWell(
-      onTap: () => _showVoteDetails(context),
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        decoration: BoxDecoration(
-          color: winnerBg,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: winnerColor.withValues(alpha: 0.4)),
-        ),
-        child: Row(
-          children: [
-            Text(winnerIcon, style: const TextStyle(fontSize: 22)),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Topluluk kararı',
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: winnerColor,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 0.5,
-                        ),
-                  ),
-                  Text(
-                    '$winnerLabel — %$winnerPercent',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          color: winnerColor,
-                          fontWeight: FontWeight.w900,
-                        ),
-                  ),
-                ],
-              ),
-            ),
-            const Icon(Icons.info_outline, size: 16, color: Colors.grey),
-            const SizedBox(width: 8),
-            Text(
-              '${post.totalVotes} oy',
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: winnerColor.withValues(alpha: 0.8),
-                    fontWeight: FontWeight.w600,
-                  ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _VoteDetailRow extends StatelessWidget {
-  const _VoteDetailRow({
-    required this.label,
-    required this.count,
-    required this.percent,
-    required this.color,
-  });
-
-  final String label;
-  final int count;
-  final int percent;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              label,
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            Text(
-              '$count oy (%$percent)',
-              style: TextStyle(color: color, fontWeight: FontWeight.bold),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: LinearProgressIndicator(
-            value: percent / 100,
-            color: color,
-            backgroundColor: color.withValues(alpha: 0.1),
-            minHeight: 12,
           ),
         ),
-      ],
+      ),
     );
   }
 }
@@ -1558,20 +1686,23 @@ class _ModerationBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final scheme = Theme.of(context).colorScheme;
     final isDeleted = post.status == 'deleted';
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: theme.colorScheme.errorContainer,
-        borderRadius: BorderRadius.circular(8),
+        color: scheme.errorContainer,
+        borderRadius: KararRadius.all(KararRadius.tile),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(
-            isDeleted ? Icons.delete_forever : Icons.visibility_off,
-            color: theme.colorScheme.onErrorContainer,
+            isDeleted
+                ? Icons.delete_forever_rounded
+                : Icons.visibility_off_rounded,
+            color: scheme.onErrorContainer,
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -1580,97 +1711,24 @@ class _ModerationBanner extends StatelessWidget {
               children: [
                 Text(
                   isDeleted ? 'Bu gönderi silinmiş.' : 'Bu gönderi gizlendi.',
-                  style: TextStyle(
-                    color: theme.colorScheme.onErrorContainer,
-                    fontWeight: FontWeight.bold,
+                  style: AppTypography.bodyStrong.copyWith(
+                    color: scheme.onErrorContainer,
                   ),
                 ),
                 if (post.moderationReason != null)
-                  Text(
-                    post.moderationReason!,
-                    style: TextStyle(
-                      color: theme.colorScheme.onErrorContainer,
-                      fontSize: 12,
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      post.moderationReason!,
+                      style: AppTypography.bodyS.copyWith(
+                        color: scheme.onErrorContainer,
+                      ),
                     ),
                   ),
               ],
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _VoteButton extends StatelessWidget {
-  const _VoteButton({
-    required this.label,
-    required this.icon,
-    required this.selected,
-    required this.color,
-    required this.backgroundColor,
-    this.onTap,
-  });
-
-  final String label;
-  final IconData icon;
-  final bool selected;
-  final Color color;
-  final Color backgroundColor;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      selected: selected,
-      label: selected ? '$label oyunu kaldır' : '$label oyu ver',
-      child: FilledButton.icon(
-        onPressed: onTap,
-        style: FilledButton.styleFrom(
-          backgroundColor: selected ? color : backgroundColor,
-          foregroundColor: selected ? Colors.white : color,
-        ),
-        icon: Icon(icon),
-        label: Text(label),
-      )
-          .animate(target: selected ? 1 : 0)
-          .scale(
-            begin: const Offset(1, 1),
-            end: const Offset(1.05, 1.05),
-            duration: 150.ms,
-            curve: Curves.easeOutBack,
-          )
-          .shimmer(
-            delay: 150.ms,
-            duration: 500.ms,
-            color: Colors.white.withValues(alpha: 0.2),
-          ),
-    );
-  }
-}
-
-class _ContentSourceBadge extends StatelessWidget {
-  const _ContentSourceBadge({required this.source});
-
-  final String source;
-
-  @override
-  Widget build(BuildContext context) {
-    final label = source == 'ai' ? 'AI destekli' : 'Sistem';
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: Colors.orange.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-          color: Colors.orange,
-        ),
       ),
     );
   }

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:shimmer/shimmer.dart';
 
+import '../../core/theme/karar_tokens.dart';
+
 class Skeleton extends StatelessWidget {
   const Skeleton({
     super.key,
@@ -15,16 +17,19 @@ class Skeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final kc = context.kc;
 
+    // Shimmer paints through the child's opaque pixels, so the child colour
+    // only needs to be opaque; the visible tones are the theme's shimmer
+    // tokens (lavender greys, never Material greys).
     return Shimmer.fromColors(
-      baseColor: isDark ? Colors.grey[800]! : Colors.grey[300]!,
-      highlightColor: isDark ? Colors.grey[700]! : Colors.grey[100]!,
+      baseColor: kc.shimmerBase,
+      highlightColor: kc.shimmerHighlight,
       child: Container(
         height: height,
         width: width,
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: kc.shimmerBase,
           borderRadius: BorderRadius.circular(borderRadius),
         ),
       ),

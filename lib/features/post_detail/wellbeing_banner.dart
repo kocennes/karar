@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
+
 import '../../core/config/remote_config_service.dart';
 import '../../core/providers.dart';
-import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/theme/karar_tokens.dart';
+import '../../shared/widgets/karar_button.dart';
 
+/// Crisis support banner (spec §6.1.6): warm warnSoft card, radius 20.
 class WellbeingBanner extends ConsumerWidget {
   const WellbeingBanner({super.key, required this.content});
 
@@ -22,49 +26,48 @@ class WellbeingBanner extends ConsumerWidget {
 
     if (!isCrisis) return const SizedBox.shrink();
 
+    final kc = context.kc;
     return Container(
       width: double.infinity,
-      margin: const EdgeInsets.symmetric(vertical: 16),
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(top: 16),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: AppColors.primary.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+        color: kc.warnSoft,
+        borderRadius: KararRadius.all(KararRadius.tile),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Row(
+          Row(
             children: [
-              Icon(Icons.info_outline, color: AppColors.primary),
-              SizedBox(width: 12),
+              Icon(Icons.favorite_rounded, color: kc.voteIcon(false), size: 22),
+              const SizedBox(width: 10),
               Expanded(
-                child: Text(
-                  'Yalnız Değilsin',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.primary,
+                child: Semantics(
+                  header: true,
+                  child: Text(
+                    'Yalnız Değilsin',
+                    style: AppTypography.bodyStrong.copyWith(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      color: kc.text1,
+                    ),
                   ),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             'Zor bir dönemden geçiyor olabilirsin. Kendini güvende hissetmiyorsan hemen 112 Acil Çağrı Merkezini ara ya da en yakın acil servise başvur.',
-            style: TextStyle(fontSize: 13, height: 1.4),
+            style: AppTypography.bodyS.copyWith(color: kc.text2),
           ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: () => _callEmergency(context),
-              icon: const Icon(Icons.phone),
-              label: const Text('112 Acil Çağrı'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.primary,
-                side: const BorderSide(color: AppColors.primary),
-              ),
-            ),
+          const SizedBox(height: 14),
+          KararButton(
+            label: '112 Acil Çağrı',
+            icon: Icons.phone_rounded,
+            variant: KararButtonVariant.tonal,
+            onPressed: () => _callEmergency(context),
           ),
         ],
       ),

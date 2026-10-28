@@ -1,51 +1,152 @@
 import 'package:flutter/material.dart';
 
-import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_typography.dart';
+import '../../core/theme/karar_tokens.dart';
+import '../../core/theme/motion.dart';
 import '../../shared/models/post.dart';
 
-class VoteBar extends StatelessWidget {
+/// Result split bar (spec §5.7).
+///
+/// * ≥ 40 votes: two rounded `Flexible` segments (Haklı | 3 px | Haksız,
+///   no text inside, colours from [VoteBar.segmentColor]), with the labels
+///   in a row below ("✓ Haklı  %75" … "Haksız  %25 ✕") so the minority side
+///   never truncates.
+/// * < 40 votes: a muted track + "{n} oy · Karar için 40 oy bekleniyor".
+/// * The split tweens from the previous fraction when the counts change
+///   (compact 420 ms, detail 480 ms); the first appearance animates from
+///   50/50 over 600 ms. Reduce motion: no animation.
+class VoteBar extends StatefulWidget {
   const VoteBar({
     super.key,
     required this.post,
     this.isCompact = false,
+    this.showLabels = true,
   });
 
   final Post post;
   final bool isCompact;
 
+  /// Shows the label row below the bar (or the waiting text below 40 votes).
+  final bool showLabels;
+
+  /// Bar colour for a vote side (segments and tracks; never under text):
+  /// the theme's [KararColors.voteBar] tone.
+  ///
+  /// Light: the vote fill. Dark: halfway between the fill and the text
+  /// tone — #30AF5F (6.4:1 on `surface`) and #EB585B (5.2:1), near-equal
+  /// lightness. The light fills on dark were a dull 3.6:1 forest green that
+  /// did not match the neon "Haklı" labels next to a more vivid 3.8:1 red,
+  /// so even an 81/19 split read red-heavy.
+  static Color segmentColor(KararColors kc, bool hakli) => kc.voteBar(hakli);
+
+  @override
+  State<VoteBar> createState() => _VoteBarState();
+}
+
+class _VoteBarState extends State<VoteBar> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: KararMotion.reveal,
+  );
+  late final CurvedAnimation _curve = CurvedAnimation(
+    parent: _controller,
+    curve: KararMotion.standard,
+  );
+
+  double _from = 0.5;
+  double _to = 0.5;
+  bool _started = false;
+
+  double get _target => widget.post.hakliPercent / 100;
+
+  double get _current => _from + (_to - _from) * _curve.value;
+
+  @override
+  void initState() {
+    super.initState();
+    _to = _target;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_started) return;
+    _started = true;
+    if (!widget.post.showPercentage || KararMotion.reduce(context)) {
+      _from = _to;
+      _controller.value = 1;
+    } else {
+      _from = 0.5;
+      _controller.forward(from: 0);
+    }
+  }
+
+  @override
+  void didUpdateWidget(VoteBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final appeared =
+        widget.post.showPercentage && !oldWidget.post.showPercentage;
+    final target = _target;
+    if (!appeared && target == _to) return;
+
+    _from = appeared ? 0.5 : _current;
+    _to = target;
+    if (KararMotion.reduce(context) || !widget.post.showPercentage) {
+      _from = _to;
+      _controller.value = 1;
+      return;
+    }
+    _controller.duration = appeared
+        ? KararMotion.reveal
+        : widget.isCompact
+            ? KararMotion.split
+            : const Duration(milliseconds: 480);
+    _controller.forward(from: 0);
+  }
+
+  @override
+  void dispose() {
+    _curve.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final height = isCompact ? 40.0 : 52.0;
+    final post = widget.post;
+    final kc = context.kc;
+    final barHeight = widget.isCompact ? 10.0 : 14.0;
 
     if (!post.showPercentage) {
       return Semantics(
-        label: '${post.totalVotes} oy kullanıldı. Karar için 40 oy bekleniyor.',
-        child: Container(
-          height: height,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: Theme.of(context)
-                .colorScheme
-                .surfaceContainerHighest
-                .withValues(alpha: 0.5),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: Theme.of(context).dividerColor.withValues(alpha: 0.08),
-            ),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Text(
-              '${post.totalVotes} oy · Karar için 40 oy bekleniyor',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: AppTypography.metaText.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                fontWeight: FontWeight.w600,
+        container: true,
+        label:
+            '${post.totalVotes} oy kullanıldı. Karar için 40 oy bekleniyor.',
+        child: ExcludeSemantics(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                height: barHeight,
+                decoration: BoxDecoration(
+                  color: kc.muted,
+                  borderRadius: KararRadius.all(barHeight / 2),
+                ),
               ),
-            ),
+              if (widget.showLabels) ...[
+                const SizedBox(height: 8),
+                Text(
+                  '${post.totalVotes} oy · Karar için 40 oy bekleniyor',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTypography.labelS.copyWith(
+                    color: kc.text2,
+                    fontFeatures: AppTypography.tabular,
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
       );
@@ -53,144 +154,167 @@ class VoteBar extends StatelessWidget {
 
     final hakliPercent = post.hakliPercent;
     final haksizPercent = 100 - hakliPercent;
-    final barFontSize = isCompact ? 12.0 : 14.0;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final hakliColor = isDark ? AppColors.darkHakli : AppColors.hakli;
-    final haksizColor = isDark ? AppColors.darkHaksiz : AppColors.haksiz;
+    final labelStyle = AppTypography.label.copyWith(
+      fontSize: widget.isCompact ? 13 : 14,
+    );
 
     return Semantics(
+      container: true,
       label:
           'Oy dağılımı: yüzde $hakliPercent haklı, yüzde $haksizPercent haksız. Toplam ${post.totalVotes} oy.',
-      child: TweenAnimationBuilder<double>(
-        tween: Tween(begin: 0, end: hakliPercent / 100),
-        duration: const Duration(milliseconds: 1200),
-        curve: Curves.easeOut,
-        builder: (context, animValue, _) {
-          return ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: SizedBox(
-              height: height,
-              child: Row(
-                children: [
-                  if (hakliPercent > 0)
-                    Flexible(
-                      flex: (animValue * 1000).round().clamp(1, 999),
-                      child: _VoteSegment(
-                        color: hakliColor,
-                        label: 'Haklı  %$hakliPercent',
-                        icon: Icons.check,
-                        alignEnd: false,
-                        fontSize: barFontSize,
-                      ),
-                    ),
-                  if (haksizPercent > 0)
-                    Flexible(
-                      flex: ((1 - animValue) * 1000).round().clamp(1, 999),
-                      child: _VoteSegment(
-                        color: haksizColor,
-                        label: 'Haksız  %$haksizPercent',
-                        icon: Icons.close,
-                        alignEnd: true,
-                        fontSize: barFontSize,
-                      ),
-                    ),
-                ],
+      child: ExcludeSemantics(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(
+              height: barHeight,
+              child: AnimatedBuilder(
+                animation: _controller,
+                builder: (context, _) {
+                  final f = _current.clamp(0.0, 1.0);
+                  // Stretch: the segments are childless boxes, so with the
+                  // Row's default loose cross-axis they would collapse to 0.
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (hakliPercent > 0)
+                        Flexible(
+                          fit: FlexFit.tight,
+                          flex: (f * 1000).round().clamp(1, 999),
+                          child: _Segment(
+                            color: VoteBar.segmentColor(kc, true),
+                            height: barHeight,
+                          ),
+                        ),
+                      if (hakliPercent > 0 && haksizPercent > 0)
+                        const SizedBox(width: 3),
+                      if (haksizPercent > 0)
+                        Flexible(
+                          fit: FlexFit.tight,
+                          flex: ((1 - f) * 1000).round().clamp(1, 999),
+                          child: _Segment(
+                            color: VoteBar.segmentColor(kc, false),
+                            height: barHeight,
+                          ),
+                        ),
+                    ],
+                  );
+                },
               ),
             ),
-          );
-        },
+            if (widget.showLabels) ...[
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Flexible(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.check_rounded,
+                            size: 16,
+                            color: kc.hakliText,
+                          ),
+                          const SizedBox(width: 4),
+                          _SideLabel(
+                            label: 'Haklı',
+                            percent: hakliPercent,
+                            style: labelStyle.copyWith(color: kc.hakliText),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Flexible(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerRight,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _SideLabel(
+                            label: 'Haksız',
+                            percent: haksizPercent,
+                            style: labelStyle.copyWith(color: kc.haksizText),
+                          ),
+                          const SizedBox(width: 4),
+                          Icon(
+                            Icons.close_rounded,
+                            size: 16,
+                            color: kc.haksizText,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
 }
 
-class _VoteSegment extends StatelessWidget {
-  const _VoteSegment({
-    required this.color,
-    required this.label,
-    required this.icon,
-    required this.alignEnd,
-    required this.fontSize,
-  });
+class _Segment extends StatelessWidget {
+  const _Segment({required this.color, required this.height});
 
   final Color color;
-  final String label;
-  final IconData icon;
-  final bool alignEnd;
-  final double fontSize;
+  final double height;
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final hasRoomForIcon = constraints.maxWidth >= 56;
-        final hasRoomForText = constraints.maxWidth >= 88;
-
-        return Container(
+    // Explicit size: a childless DecoratedBox takes the smallest size its
+    // constraints allow, which is 0 × 0 under loose constraints.
+    return SizedBox(
+      height: height,
+      width: double.infinity,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
           color: color,
-          padding: EdgeInsets.symmetric(horizontal: hasRoomForText ? 10 : 0),
-          alignment: alignEnd ? Alignment.centerRight : Alignment.centerLeft,
-          child: hasRoomForIcon
-              ? Row(
-                  mainAxisAlignment: alignEnd
-                      ? MainAxisAlignment.end
-                      : MainAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: alignEnd
-                      ? [
-                          if (hasRoomForText) _buildLabel(TextAlign.right),
-                          if (hasRoomForText) const SizedBox(width: 6),
-                          _buildIcon(),
-                        ]
-                      : [
-                          _buildIcon(),
-                          if (hasRoomForText) const SizedBox(width: 6),
-                          if (hasRoomForText) _buildLabel(TextAlign.left),
-                        ],
-                )
-              : SizedBox.shrink(child: _buildHiddenLabel()),
-        );
-      },
-    );
-  }
-
-  Widget _buildIcon() {
-    return Container(
-      width: fontSize + 4,
-      height: fontSize + 4,
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.25),
-        shape: BoxShape.circle,
-      ),
-      child: Icon(icon, color: Colors.white, size: fontSize - 2),
-    );
-  }
-
-  Widget _buildLabel(TextAlign textAlign) {
-    return Flexible(
-      child: Text(
-        label,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        textAlign: textAlign,
-        style: AppTypography.votePercent.copyWith(
-          color: Colors.white,
-          fontSize: fontSize,
-          fontWeight: FontWeight.w700,
+          borderRadius: KararRadius.all(height / 2),
         ),
       ),
     );
   }
+}
 
-  Widget _buildHiddenLabel() {
-    return Text(
-      label,
-      maxLines: 1,
-      overflow: TextOverflow.clip,
-      style: AppTypography.votePercent.copyWith(
-        color: Colors.transparent,
-        fontSize: 1,
+/// "Haklı  %75" as one `Text.rich` (plain text stays `Haklı  %75`), with
+/// tabular figures for the number.
+class _SideLabel extends StatelessWidget {
+  const _SideLabel({
+    required this.label,
+    required this.percent,
+    required this.style,
+  });
+
+  final String label;
+  final int percent;
+  final TextStyle style;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text.rich(
+      TextSpan(
+        children: [
+          TextSpan(text: label),
+          const TextSpan(text: '  '),
+          TextSpan(
+            text: '%$percent',
+            style: const TextStyle(fontFeatures: AppTypography.tabular),
+          ),
+        ],
       ),
+      maxLines: 1,
+      softWrap: false,
+      style: style,
     );
   }
 }

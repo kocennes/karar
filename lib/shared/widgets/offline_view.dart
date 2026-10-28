@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../../core/theme/app_colors.dart';
+import '../../core/theme/karar_tokens.dart';
 import 'karar_button.dart';
 
 class OfflineView extends StatelessWidget {
@@ -9,6 +9,7 @@ class OfflineView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
     return Scaffold(
       body: Center(
         child: Padding(
@@ -16,10 +17,10 @@ class OfflineView extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(
+              Icon(
                 Icons.wifi_off_rounded,
                 size: 80,
-                color: AppColors.textSecondary,
+                color: kc.text2,
               ),
               const SizedBox(height: 24),
               Text(
@@ -29,11 +30,11 @@ class OfflineView extends StatelessWidget {
                     ),
               ),
               const SizedBox(height: 12),
-              const Text(
+              Text(
                 'Karar vermek için internete bağlı olmalısın. Lütfen bağlantını kontrol et.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: AppColors.textSecondary,
+                  color: kc.text2,
                   height: 1.5,
                 ),
               ),
