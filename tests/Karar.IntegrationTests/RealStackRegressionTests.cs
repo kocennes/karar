@@ -88,6 +88,26 @@ public class RealStackRegressionTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    [Fact]
+    public async Task UserPosts_ListsAnAnonymousPostOnlyForItsOwner()
+    {
+        // Repairing the listing query above made the endpoint reachable; without the visibility filter it
+        // listed an anonymous post under its author's username, which attributes it outright.
+        var deviceToken = await RegisterDeviceAsync();
+        var username = $"it_{Guid.NewGuid():N}"[..20];
+        var accessToken = await RegisterAndVerifyUserAsync(deviceToken, username);
+        var publicId = await CreatePostAsync(deviceToken, accessToken, "Herkese acik entegrasyon gonderisi", isAnonymous: false);
+        var anonymousId = await CreatePostAsync(deviceToken, accessToken, "Anonim entegrasyon testi gonderisi", isAnonymous: true);
+
+        var guestIds = await ListUserPostIdsAsync(username, accessToken: null);
+        Assert.Contains(publicId, guestIds);
+        Assert.DoesNotContain(anonymousId, guestIds);
+
+        var ownerIds = await ListUserPostIdsAsync(username, accessToken);
+        Assert.Contains(publicId, ownerIds);
+        Assert.Contains(anonymousId, ownerIds);
+    }
+
     [Theory]
     [InlineData("/api/v1/admin/categories/health")]
     [InlineData("/api/v1/admin/analytics/feed-quality/posts")]
@@ -187,6 +207,42 @@ public class RealStackRegressionTests
         Assert.Equal(HttpStatusCode.OK, verified.StatusCode);
         using var json = JsonDocument.Parse(await verified.Content.ReadAsStringAsync());
         return json.RootElement.GetProperty("accessToken").GetString()!;
+    }
+
+    private async Task<Guid> CreatePostAsync(string deviceToken, string accessToken, string title, bool isAnonymous)
+    {
+        using var create = new HttpRequestMessage(HttpMethod.Post, "/api/v1/posts");
+        create.Headers.Add("X-Device-Token", deviceToken);
+        create.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        create.Content = JsonContent.Create(new
+        {
+            title,
+            content = $"{title}: entegrasyon testi icin yazilmis, elli karakterden uzun bir icerik.",
+            categoryId = 1,
+            isAnonymous,
+            acceptedTerms = true,
+            acceptedCommunityGuidelines = true,
+        });
+        var created = await _client.SendAsync(create);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        using var json = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+        Assert.Equal("active", json.RootElement.GetProperty("status").GetString());
+        return json.RootElement.GetProperty("id").GetGuid();
+    }
+
+    private async Task<List<Guid>> ListUserPostIdsAsync(string username, string? accessToken)
+    {
+        using var list = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/users/{username}/posts");
+        if (accessToken is not null)
+        {
+            list.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        }
+        var response = await _client.SendAsync(list);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return json.RootElement.GetProperty("posts").EnumerateArray()
+            .Select(p => p.GetProperty("id").GetGuid())
+            .ToList();
     }
 
     private async Task<string> AdminLoginAsync()

@@ -10325,11 +10325,14 @@ app.MapGet("/api/v1/users/{username}/posts", async (
     var ownerId = await ownerCmd.ExecuteScalarAsync();
     if (ownerId is null) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
 
+    // Anonim postlar kullanıcı adı altında listelenirse (isim gizlense bile) yazarı açığa çıkar;
+    // yalnızca sahibi kendi profilinde görür.
     await using var countCmd = new NpgsqlCommand(
-        "SELECT COUNT(*) FROM posts WHERE user_id = @ownerId AND status = 'active'",
+        "SELECT COUNT(*) FROM posts WHERE user_id = @ownerId AND status = 'active' AND (is_anonymous = FALSE OR user_id = @viewerId) AND is_unlisted = FALSE",
         connection
     );
     countCmd.Parameters.AddWithValue("ownerId", ownerId);
+    countCmd.Parameters.AddWithValue("viewerId", userParam);
     var total = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
 
     await using var cmd = new NpgsqlCommand(
@@ -10346,6 +10349,7 @@ app.MapGet("/api/v1/users/{username}/posts", async (
         JOIN users u ON u.id = p.user_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceParam
         WHERE p.user_id = @ownerId AND p.status = 'active'
+          AND (p.is_anonymous = FALSE OR p.user_id = @userParam) AND p.is_unlisted = FALSE
         ORDER BY {orderBy}
         LIMIT @limit OFFSET @offset
         """,
