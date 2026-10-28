@@ -13,22 +13,52 @@ import '../../shared/widgets/centered_content.dart';
 import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/karar_pressable.dart';
-import '../../shared/widgets/karar_surface.dart';
 import '../../shared/widgets/karar_text_tabs.dart';
 import '../../shared/widgets/login_nudge.dart';
+import '../../shared/widgets/post_surface.dart';
 import 'categories_provider.dart';
 import 'category_feed_provider.dart';
 import 'post_card.dart';
 import 'widgets/feed_skeletons.dart';
 import 'widgets/horizontal_bleed_clip.dart';
 
-class CategoryScreen extends ConsumerWidget {
+class CategoryScreen extends ConsumerStatefulWidget {
   const CategoryScreen({super.key, required this.categoryId});
 
   final int categoryId;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<CategoryScreen> createState() => _CategoryScreenState();
+}
+
+class _CategoryScreenState extends ConsumerState<CategoryScreen> {
+  /// The banner carries the category name, so the app-bar title only fades
+  /// in once the banner's title has scrolled under the bar (the page no
+  /// longer opens with the name twice).
+  final _showBarTitle = ValueNotifier<bool>(false);
+
+  /// Scroll offset at which the banner's title has left the viewport.
+  static const _barTitleOffset = 112.0;
+
+  @override
+  void dispose() {
+    _showBarTitle.dispose();
+    super.dispose();
+  }
+
+  bool _onScroll(ScrollNotification notification) {
+    if (notification.depth != 0 ||
+        notification.metrics.axis != Axis.vertical) {
+      return false;
+    }
+    final show = notification.metrics.pixels > _barTitleOffset;
+    if (show != _showBarTitle.value) _showBarTitle.value = show;
+    return false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final categoryId = widget.categoryId;
     final categoriesAsync = ref.watch(categoriesProvider);
 
     final category = categoriesAsync.maybeWhen(
@@ -39,26 +69,36 @@ class CategoryScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(
         // Category.icon holds a short word ("Aşk", "İş") — never shown.
-        title: Text(
-          category?.name ?? 'Kategori',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+        title: ValueListenableBuilder<bool>(
+          valueListenable: _showBarTitle,
+          builder: (context, show, child) => AnimatedOpacity(
+            opacity: show ? 1 : 0,
+            duration: KararMotion.fade(context, KararMotion.fast),
+            curve: KararMotion.standard,
+            child: child,
+          ),
+          child: Text(
+            category?.name ?? 'Kategori',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
         centerTitle: true,
       ),
-      body: CenteredContent(
-        child: _CategoryFeedList(
-          categoryId: categoryId,
-          header: _CategoryHeader(categoryId: categoryId, category: category),
+      body: NotificationListener<ScrollNotification>(
+        onNotification: _onScroll,
+        child: CenteredContent(
+          child: _CategoryFeedList(
+            categoryId: categoryId,
+            header: _CategoryHeader(categoryId: categoryId, category: category),
+          ),
         ),
       ),
     );
   }
 }
 
-/// Category header + sort tabs. The header is a surface card (56 px
-/// gradient tile, name, follow / mute pills) rather than a second gradient
-/// slab, so it reads as the page's header and not as another post card.
+/// Category banner + sort tabs (spec §5.10).
 class _CategoryHeader extends StatelessWidget {
   const _CategoryHeader({required this.categoryId, required this.category});
 
@@ -67,8 +107,6 @@ class _CategoryHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final kc = context.kc;
-    final brightness = Theme.of(context).brightness;
     final style = category != null
         ? CategoryStyle.of(category!)
         : CategoryStyle.resolve(id: categoryId);
@@ -78,54 +116,10 @@ class _CategoryHeader extends StatelessWidget {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-          child: KararSurface(
-            radius: KararRadius.surface,
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                ExcludeSemantics(
-                  child: Container(
-                    width: 56,
-                    height: 56,
-                    decoration: BoxDecoration(
-                      gradient: style.gradientFor(brightness: brightness),
-                      borderRadius: KararRadius.all(KararRadius.navItem),
-                    ),
-                    alignment: Alignment.center,
-                    child: Icon(style.icon, size: 28, color: kc.onColor),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Semantics(
-                        header: true,
-                        child: Text(
-                          category?.name ?? 'Kategori',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: AppTypography.screenTitle.copyWith(
-                            color: kc.text1,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 0,
-                        children: [
-                          _FollowButton(categoryId: categoryId),
-                          _MuteButton(categoryId: categoryId),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+          child: _CategoryBanner(
+            categoryId: categoryId,
+            name: category?.name ?? 'Kategori',
+            style: style,
           ),
         ),
         _SortBar(categoryId: categoryId),
@@ -134,24 +128,147 @@ class _CategoryHeader extends StatelessWidget {
   }
 }
 
-enum _HeaderPillTone {
-  /// Brand CTA: primaryFill + white.
-  primary,
+/// The category's gradient banner (spec §5.10): the palette's gradient and
+/// sheen (light: coloured glow; dark: the dark stops + hairline), radius
+/// 30, min height 150, padding 20; a 48 px white-20 % disc with the
+/// category icon, the name in `titleXL` white and the follow / mute pills.
+/// A large white-10 % category glyph bleeds off the bottom-right corner so
+/// the wide (desktop) banner never reads as an empty slab. ≥ 560 px: the
+/// pills sit right-aligned on the name's row.
+///
+/// It differs from a post card on purpose: 150 px instead of 440, no vote
+/// rail, no quote watermark, the icon disc and the pills.
+class _CategoryBanner extends StatelessWidget {
+  const _CategoryBanner({
+    required this.categoryId,
+    required this.name,
+    required this.style,
+  });
 
-  /// Selected / on state: primaryContainer + onPrimaryContainer.
-  tonal,
+  final int categoryId;
+  final String name;
+  final CategoryStyle style;
 
-  /// Secondary action: muted + text2.
-  muted,
+  @override
+  Widget build(BuildContext context) {
+    final kc = context.kc;
+    final disc = ExcludeSemantics(
+      child: Container(
+        width: 48,
+        height: 48,
+        decoration: BoxDecoration(
+          color: kc.onColor.withValues(alpha: 0.20),
+          shape: BoxShape.circle,
+        ),
+        alignment: Alignment.center,
+        child: Icon(style.icon, size: 26, color: kc.onColor),
+      ),
+    );
+    final title = Semantics(
+      header: true,
+      child: Text(
+        name,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: AppTypography.titleXL.copyWith(color: kc.onColor),
+      ),
+    );
+    final pills = Wrap(
+      spacing: 8,
+      runSpacing: 4,
+      children: [
+        _FollowButton(categoryId: categoryId),
+        _MuteButton(categoryId: categoryId),
+      ],
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 560;
+        // The pills' 44 px hit boxes add 2 px above/below their 40 px
+        // visual, hence the 10 / 18 gaps around them.
+        final body = wide
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Align(alignment: Alignment.centerLeft, child: disc),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(child: title),
+                      const SizedBox(width: 16),
+                      pills,
+                    ],
+                  ),
+                ],
+              )
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  disc,
+                  const SizedBox(height: 12),
+                  title,
+                  const SizedBox(height: 10),
+                  pills,
+                ],
+              );
+
+        return PostSurface.tinted(
+          style: style,
+          radius: KararRadius.card,
+          showQuote: false,
+          showRailSheen: false,
+          child: Stack(
+            children: [
+              Positioned(
+                right: -24,
+                bottom: -40,
+                child: ExcludeSemantics(
+                  child: Icon(
+                    style.icon,
+                    size: 176,
+                    color: kc.quoteWatermark,
+                  ),
+                ),
+              ),
+              ConstrainedBox(
+                constraints: const BoxConstraints(
+                  minHeight: 150,
+                  minWidth: double.infinity,
+                ),
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(20, 20, 20, wide ? 18 : 16),
+                  child: body,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
 }
 
-/// 40 px pill on the header card (44 px hit box).
+enum _HeaderPillTone {
+  /// Primary action on the banner: light capsule (white / #F4F3F8) with
+  /// #15131F text in both themes (16:1+).
+  light,
+
+  /// Secondary / "on" state: `OnColorChip` glass (black 22 %, high
+  /// contrast: solid ink) with white text (≥ 7:1 on every palette).
+  glass,
+}
+
+/// 40 px pill on the gradient banner (44 px hit box).
 class _HeaderPill extends StatelessWidget {
   const _HeaderPill({
     required this.icon,
     required this.label,
     required this.onTap,
     required this.tone,
+    this.iconColor,
     this.selected,
   });
 
@@ -159,19 +276,21 @@ class _HeaderPill extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
   final _HeaderPillTone tone;
+
+  /// Overrides the tone's icon colour (the followed star is gold).
+  final Color? iconColor;
   final bool? selected;
 
   @override
   Widget build(BuildContext context) {
     final kc = context.kc;
-    final (bg, fg, iconColor) = switch (tone) {
-      _HeaderPillTone.primary => (kc.primaryFill, kc.onColor, kc.onColor),
-      _HeaderPillTone.tonal => (
-          kc.primaryContainer,
-          kc.onPrimaryContainer,
-          kc.primary,
+    final highContrast = MediaQuery.maybeHighContrastOf(context) ?? false;
+    final (bg, fg) = switch (tone) {
+      _HeaderPillTone.light => (kc.capsule, kc.onCapsuleText),
+      _HeaderPillTone.glass => (
+          highContrast ? KararGlass.chipHighContrast : KararGlass.chipOnColor,
+          kc.onColor,
         ),
-      _HeaderPillTone.muted => (kc.muted, kc.text2, kc.text2),
     };
     return KararPressable(
       onTap: onTap,
@@ -186,11 +305,13 @@ class _HeaderPill extends StatelessWidget {
         decoration: BoxDecoration(
           color: bg,
           borderRadius: KararRadius.all(20),
+          boxShadow:
+              tone == _HeaderPillTone.light ? KararShadow.capsule : null,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 18, color: iconColor),
+            Icon(icon, size: 18, color: iconColor ?? fg),
             const SizedBox(width: 6),
             Flexible(
               child: Text(
@@ -217,8 +338,10 @@ class _FollowButton extends ConsumerWidget {
     final followedCategories = ref.watch(followedCategoriesProvider);
     final isFollowed = followedCategories.contains(categoryId);
 
+    // Not followed: the light capsule CTA. Followed: glass with a gold star.
     return _HeaderPill(
-      tone: isFollowed ? _HeaderPillTone.tonal : _HeaderPillTone.primary,
+      tone: isFollowed ? _HeaderPillTone.glass : _HeaderPillTone.light,
+      iconColor: isFollowed ? context.kc.gold : null,
       onTap: () {
         final user = ref.read(currentUserProvider);
         if (user == null) {
@@ -258,7 +381,7 @@ class _MuteButton extends ConsumerWidget {
     final isMuted = mutedCategories.contains(categoryId);
 
     return _HeaderPill(
-      tone: _HeaderPillTone.muted,
+      tone: _HeaderPillTone.glass,
       onTap: () {
         final user = ref.read(currentUserProvider);
         if (user == null) {

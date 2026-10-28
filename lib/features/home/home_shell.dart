@@ -211,14 +211,14 @@ class _HomeShellState extends ConsumerState<HomeShell>
               Expanded(child: _buildLayout(context, unreadCount)),
             ],
           ),
-          // Canvas fade behind the floating nav, exactly as tall as the nav
-          // (Keşfet pages are full-bleed, so none there).
+          // Canvas fade behind the floating nav, starting a little above the
+          // notch (Keşfet pages are full-bleed, so none there).
           if (!isDesktop && currentIndex != 5 && !navHidden)
             Positioned(
               left: 0,
               right: 0,
               bottom: 0,
-              height: navHeight,
+              height: navHeight + _NavFade.lead,
               child: const _NavFade(),
             ),
           // PWA install + KVKK notices float as cards above the nav.
@@ -462,13 +462,20 @@ class _HomeShellState extends ConsumerState<HomeShell>
   }
 }
 
-/// Canvas scrim behind the floating nav, exactly as tall as the nav:
-/// clear at the notch top, a faint 12 % veil at the pill's top edge, 80 %
-/// at its middle and solid canvas from its bottom edge to the screen edge.
-/// Content beside the notch stays readable (no muddy tiles above the nav),
-/// and nothing peeks out in the gap below the pill.
+/// Canvas scrim behind the floating nav, [lead] px taller than the nav: it
+/// starts clear [lead] px above the notch, veils 30 % at the notch top,
+/// 68 % at the pill's top edge, 95 % at its middle and is solid canvas from
+/// its bottom edge to the screen edge.
+///
+/// Content scrolling under the nav (a violet card, the create form's tag
+/// row and its "+" button) recedes into the canvas instead of peeking out
+/// beside the notch as a second, ghost pill; nothing shows in the gap below
+/// the pill.
 class _NavFade extends StatelessWidget {
   const _NavFade();
+
+  /// How far above the notch top the fade begins.
+  static const double lead = 20;
 
   @override
   Widget build(BuildContext context) {
@@ -479,7 +486,8 @@ class _NavFade extends StatelessWidget {
           builder: (context, constraints) {
             final h = constraints.maxHeight;
             if (!h.isFinite || h <= 0) return const SizedBox.shrink();
-            const rise = KararBottomNav.notchRise;
+            const notchTop = lead;
+            const pillTop = notchTop + KararBottomNav.notchRise;
             const pill = KararBottomNav.pillHeight;
             double at(double y) => (y / h).clamp(0.0, 1.0);
             return DecoratedBox(
@@ -489,16 +497,18 @@ class _NavFade extends StatelessWidget {
                   end: Alignment.bottomCenter,
                   colors: [
                     canvas.withValues(alpha: 0),
-                    canvas.withValues(alpha: 0.12),
-                    canvas.withValues(alpha: 0.80),
+                    canvas.withValues(alpha: 0.30),
+                    canvas.withValues(alpha: 0.68),
                     canvas.withValues(alpha: 0.95),
+                    canvas,
                     canvas,
                   ],
                   stops: [
                     0,
-                    at(rise),
-                    at(rise + pill / 2),
-                    at(rise + pill),
+                    at(notchTop),
+                    at(pillTop),
+                    at(pillTop + pill / 2),
+                    at(pillTop + pill),
                     1,
                   ],
                 ),

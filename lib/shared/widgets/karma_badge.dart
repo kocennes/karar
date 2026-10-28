@@ -261,11 +261,15 @@ class KarmaBadgeSheet extends StatelessWidget {
                   Icon(Icons.trending_up_rounded,
                       size: 16, color: kc.text2),
                   const SizedBox(width: 8),
-                  Text(
-                    'Sonraki rozet: ${next.emoji} ${next.label} — $remaining karma daha',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: kc.text2,
-                        ),
+                  // Flexible: the line wraps instead of overflowing at
+                  // large font scales.
+                  Flexible(
+                    child: Text(
+                      'Sonraki rozet: ${next.emoji} ${next.label} — $remaining karma daha',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: kc.text2,
+                          ),
+                    ),
                   ),
                 ],
               ),

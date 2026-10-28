@@ -4,15 +4,29 @@ import 'package:flutter/material.dart';
 
 import '../../../core/layout/breakpoints.dart';
 import '../../../core/theme/app_typography.dart';
+import '../../../core/theme/category_style.dart';
 import '../../../core/theme/karar_tokens.dart';
 import '../../../core/utils/count_format.dart';
 import '../../../shared/models/post.dart';
+import '../../../shared/widgets/on_color_chip.dart';
 import '../../../shared/widgets/post_surface.dart';
 import 'count_pill.dart';
 
 /// Profile grid tile (spec §6.5 `VerdictTile`): a small post surface
-/// (category gradient or photo, radius 20, no quote watermark) with the
-/// title at the top-left and a [CountPill] with the verdict at the bottom.
+/// (category gradient or photo, radius 20) laid out like the reference's
+/// caption cards:
+///
+/// * top-left: the category on a glass chip (icon disc below 600 px, icon +
+///   name from 600 px); the owner "…" menu sits opposite it on the same row;
+/// * text tiles: a small “ watermark under the chip, so the open gradient
+///   reads as a designed card rather than an empty placeholder;
+/// * bottom-left: the title (14/800 white) anchored right above the
+///   [CountPill] / status [footer].
+///
+/// Photo tiles keep the upper photo vivid (only the §2.4 scrims): the title
+/// gets its own caption veil anchored to the laid-out title block (black
+/// 50 % at the first line, easing into the bottom scrim) plus a soft text
+/// shadow: worst case (pure-white photo, 5 lines on a 175 px tile) ≥ 5.5:1.
 ///
 /// Lives in the profile feature (used by the profile tabs, my posts, saved
 /// posts and other profiles).
@@ -31,18 +45,26 @@ class VerdictTile extends StatelessWidget {
   final VoidCallback onTap;
 
   /// Optional 48 × 48 control in the top-right corner (owner "…" menu)
-  /// whose visual is a [menuDiameter] circle. Only the first title line
-  /// makes room for it.
+  /// whose visual is a [menuDiameter] circle. It is centred on the
+  /// category row, so it never meets the (bottom-anchored) title.
   final Widget? trailingAction;
 
   /// Replaces the bottom [CountPill] (e.g. a moderation status panel).
   final Widget? footer;
 
-  /// Visual diameter of the [trailingAction] circle.
+  /// Visual diameter of the [trailingAction] circle (and of the category
+  /// disc on narrow tiles).
   static const double menuDiameter = 30;
 
-  /// Space the first title line leaves for the [trailingAction] circle.
-  static const double _menuInset = 28;
+  /// Content inset from the tile edge.
+  static const double _inset = 12;
+
+  /// Offset of the 48 × 48 [trailingAction] box so its circle shares the
+  /// category row's inset and centre line.
+  static const double _menuOffset = _inset - (48 - menuDiameter) / 2;
+
+  /// Max title lines on photo tiles, so the upper photo stays visible.
+  static const int _photoMaxLines = 5;
 
   /// Grid delegate for verdict tiles: 2 columns below 600 px (aspect 0.8),
   /// 3 columns from 600 px (aspect 0.72), 8 px gaps.
@@ -86,34 +108,62 @@ class VerdictTile extends StatelessWidget {
     final kc = context.kc;
     final verdict = verdictOf(post);
     final isPhoto = PostSurface.isPhotoPost(post);
+    final category = CategoryStyle.of(post.category);
+    final categoryName = post.category.name.trim();
+    final showCategoryName =
+        context.screenWidth >= Breakpoints.mobile && categoryName.isNotEmpty;
     final radius = KararRadius.all(KararRadius.tile);
-    final titleStyle = AppTypography.labelS.copyWith(
+    var titleStyle = AppTypography.labelS.copyWith(
       fontSize: 14,
       height: 1.3,
       fontWeight: FontWeight.w800,
       color: kc.onColor,
     );
+    if (isPhoto) {
+      titleStyle = titleStyle.copyWith(
+        shadows: [
+          Shadow(
+            color: kc.photoVeil.withValues(alpha: 0.4),
+            offset: const Offset(0, 1),
+            blurRadius: 3,
+          ),
+        ],
+      );
+    }
 
     final content = Padding(
-      padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+      padding: const EdgeInsets.all(_inset),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(
-            child: ClipRect(
-              child: Align(
-                alignment: AlignmentDirectional.topStart,
-                child: _TileTitle(
-                  text: post.title,
-                  style: titleStyle,
-                  firstLineInset: trailingAction != null ? _menuInset : 0,
+          // Category row; the owner menu (if any) is overlaid at its end.
+          ExcludeSemantics(
+            child: Row(
+              children: [
+                Flexible(
+                  child: showCategoryName
+                      ? OnColorChip(icon: category.icon, label: categoryName)
+                      : _CategoryDisc(icon: category.icon, onPhoto: isPhoto),
                 ),
-              ),
+                if (trailingAction != null)
+                  const SizedBox(width: menuDiameter + 6),
+              ],
             ),
           ),
           const SizedBox(height: 8),
+          Expanded(
+            child: _TileTitle(
+              text: post.title,
+              style: titleStyle,
+              maxLines: isPhoto ? _photoMaxLines : null,
+              veil: isPhoto ? kc.photoVeil.withValues(alpha: 0.5) : null,
+              veilBleed: _inset,
+            ),
+          ),
+          const SizedBox(height: 10),
           footer ??
-              Center(
+              Align(
+                alignment: AlignmentDirectional.centerStart,
                 child: CountPill(
                   label: verdict.label,
                   icon: verdict.icon,
@@ -139,22 +189,23 @@ class VerdictTile extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // Photo tiles: a light veil behind the title only. The card
-            // already carries the §2.4 top/bottom scrims; the old 45 % extra
-            // scrim turned most photos into a grey slab.
-            if (isPhoto)
-              IgnorePointer(
-                child: ExcludeSemantics(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          kc.photoVeil,
-                          kc.photoVeil.withValues(alpha: 0),
-                        ],
-                        stops: const [0, 0.45],
+            // Text tiles: a smaller “ watermark than the feed card's 150 px
+            // one, tucked under the category chip.
+            if (!isPhoto)
+              PositionedDirectional(
+                start: _inset - 2,
+                top: _inset + menuDiameter,
+                child: IgnorePointer(
+                  child: ExcludeSemantics(
+                    child: Text(
+                      '“',
+                      textScaler: TextScaler.noScaling,
+                      style: TextStyle(
+                        fontFamily: AppTypography.fontFamily,
+                        fontSize: 96,
+                        height: 1,
+                        fontWeight: FontWeight.w800,
+                        color: kc.quoteWatermark,
                       ),
                     ),
                   ),
@@ -177,7 +228,11 @@ class VerdictTile extends StatelessWidget {
               ),
             ),
             if (trailingAction != null)
-              Positioned(top: -2, right: -2, child: trailingAction!),
+              PositionedDirectional(
+                top: _menuOffset,
+                end: _menuOffset,
+                child: trailingAction!,
+              ),
           ],
         ),
       ),
@@ -185,25 +240,61 @@ class VerdictTile extends StatelessWidget {
   }
 }
 
-/// Tile title that fills the available height (max lines are computed from
-/// the space above the pill) and leaves [firstLineInset] free only beside
-/// the first line, so a corner button does not narrow the whole title.
+/// Icon-only category marker for narrow tiles: a [VerdictTile.menuDiameter]
+/// glass disc (same fill as `OnColorChip`, darker on photos, solid ink in
+/// high contrast) with the white category icon.
+class _CategoryDisc extends StatelessWidget {
+  const _CategoryDisc({required this.icon, required this.onPhoto});
+
+  final IconData icon;
+  final bool onPhoto;
+
+  @override
+  Widget build(BuildContext context) {
+    final highContrast = MediaQuery.maybeHighContrastOf(context) ?? false;
+    final fill = highContrast
+        ? KararGlass.chipHighContrast
+        : onPhoto
+            ? KararGlass.chipOnPhoto
+            : KararGlass.chipOnColor;
+    return Container(
+      width: VerdictTile.menuDiameter,
+      height: VerdictTile.menuDiameter,
+      decoration: BoxDecoration(color: fill, shape: BoxShape.circle),
+      child: Icon(icon, size: 16, color: context.kc.onColor),
+    );
+  }
+}
+
+/// Bottom-anchored tile title. Max lines are computed from the height left
+/// above the pill (capped by [maxLines] when set).
+///
+/// With a [veil] colour (photo tiles) a caption veil is painted behind the
+/// laid-out title block: transparent 28 px above the first line → [veil] at
+/// the first line → transparent 56 px lower, where the §2.4 bottom scrim
+/// takes over. It bleeds [veilBleed] px to each side so it spans the full
+/// tile width (the tile's rounded clip trims it), and it never rises above
+/// this widget, so the category row stays clear.
 class _TileTitle extends StatelessWidget {
   const _TileTitle({
     required this.text,
     required this.style,
-    this.firstLineInset = 0,
+    this.maxLines,
+    this.veil,
+    this.veilBleed = 0,
   });
 
   final String text;
   final TextStyle style;
-  final double firstLineInset;
+  final int? maxLines;
+  final Color? veil;
+  final double veilBleed;
 
   @override
   Widget build(BuildContext context) {
     final scaler = MediaQuery.textScalerOf(context);
     final direction = Directionality.of(context);
-    // Measure with the same effective style the Text widgets render with.
+    // Measure with the same effective style the Text widget renders with.
     final effective = DefaultTextStyle.of(context).style.merge(style);
 
     return LayoutBuilder(
@@ -217,62 +308,96 @@ class _TileTitle extends StatelessWidget {
         final lineHeight = math.max(1.0, probe.height);
         probe.dispose();
 
-        final maxLines = constraints.maxHeight.isFinite
+        var lines = constraints.maxHeight.isFinite
             ? math.max(1, (constraints.maxHeight / lineHeight).floor())
             : 5;
+        if (maxLines != null) lines = math.min(lines, maxLines!);
 
-        Text plain(String value, int lines) => Text(
-              value,
-              maxLines: lines,
-              overflow: TextOverflow.ellipsis,
-              style: style,
-            );
+        final title = Align(
+          alignment: AlignmentDirectional.bottomStart,
+          child: Text(
+            text,
+            maxLines: lines,
+            overflow: TextOverflow.ellipsis,
+            style: style,
+          ),
+        );
 
-        final width = constraints.maxWidth;
-        if (firstLineInset <= 0 || !width.isFinite || maxLines < 2) {
-          return plain(text, maxLines);
-        }
+        final veilColor = veil;
+        if (veilColor == null || !constraints.maxWidth.isFinite) return title;
 
-        // Break the first line at the narrower width, then let the rest
-        // run at the full width.
-        final first = TextPainter(
+        final measure = TextPainter(
           text: TextSpan(text: text, style: effective),
           textDirection: direction,
           textScaler: scaler,
-        )..layout(maxWidth: math.max(1.0, width - firstLineInset));
-        final boundary = first.getLineBoundary(const TextPosition(offset: 0));
-        final lineCount = first.computeLineMetrics().length;
-        first.dispose();
+          maxLines: lines,
+          ellipsis: '…',
+        )..layout(maxWidth: constraints.maxWidth);
+        final textHeight = measure.height;
+        measure.dispose();
 
-        final head = text.substring(0, boundary.end).trimRight();
-        final tail = text.substring(boundary.end).trimLeft();
-        if (lineCount <= 1 || head.isEmpty || tail.isEmpty) {
-          return Padding(
-            padding: EdgeInsetsDirectional.only(end: firstLineInset),
-            child: plain(text, maxLines),
-          );
-        }
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: EdgeInsetsDirectional.only(end: firstLineInset),
-              child: Text(
-                head,
-                maxLines: 1,
-                softWrap: false,
-                overflow: TextOverflow.ellipsis,
-                style: style,
-              ),
-            ),
-            plain(tail, maxLines - 1),
-          ],
+        return CustomPaint(
+          painter: _CaptionVeilPainter(
+            color: veilColor,
+            textHeight: textHeight,
+            bleed: veilBleed,
+          ),
+          child: title,
         );
       },
     );
   }
+}
+
+class _CaptionVeilPainter extends CustomPainter {
+  _CaptionVeilPainter({
+    required this.color,
+    required this.textHeight,
+    required this.bleed,
+  });
+
+  final Color color;
+  final double textHeight;
+  final double bleed;
+
+  /// Fade-in above the first line.
+  static const double _fade = 28;
+
+  /// Fade-out below the first line (about three lines). Further down the
+  /// §2.4 bottom scrim (52 % → 80 %) already carries the contrast, so the
+  /// veil stops there instead of turning the tile bottom black.
+  static const double _decay = 56;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final textTop = math.max(0.0, size.height - textHeight);
+    final fade = math.min(_fade, textTop);
+    final rect = Rect.fromLTRB(
+      -bleed,
+      textTop - fade,
+      size.width + bleed,
+      textTop + _decay,
+    );
+    final total = rect.height;
+    if (total <= 0) return;
+    final shader = LinearGradient(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      colors: [
+        color.withValues(alpha: 0),
+        color,
+        color.withValues(alpha: 0),
+      ],
+      stops: [0, fade / total, 1],
+    ).createShader(rect);
+    canvas.drawRect(rect, Paint()..shader = shader);
+  }
+
+  @override
+  bool shouldRepaint(_CaptionVeilPainter old) =>
+      old.color != color ||
+      old.textHeight != textHeight ||
+      old.bleed != bleed;
 }
 
 /// Bottom panel replacing the count pill when a post is not active

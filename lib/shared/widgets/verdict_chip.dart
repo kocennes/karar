@@ -108,10 +108,12 @@ class VerdictChip extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Expanded(
+                // On the light capsule the fills read; on dark surfaces the
+                // dark-tuned bar tones match the bright labels beside them.
                 child: _SplitBar(
                   fraction: p / 100,
-                  hakli: kc.hakliFill,
-                  haksiz: kc.haksizFill,
+                  hakli: onColor ? kc.hakliFill : kc.hakliBar,
+                  haksiz: onColor ? kc.haksizFill : kc.haksizBar,
                 ),
               ),
               const SizedBox(width: 8),

@@ -73,7 +73,7 @@ class VoteRailMetrics {
 ///
 /// Items top→bottom: Haklı capsule, Haksız capsule, divider, Yorum capsule,
 /// Kaydet circle (if [onSave]), Paylaş circle (if [onShare]). Capsules are
-/// light in both themes (white / dimmed #E4E1EC in dark; text on them is
+/// light in both themes (white / off-white #F4F3F8 in dark; text on them is
 /// theme-independent, ≥ 5:1). Kaydet / Paylaş are glass circles (black
 /// 22 % on gradients, 28 % on photos, white 28 % stroke, white icon) as in
 /// the reference, so only the vote and comment capsules are solid; a saved
@@ -392,7 +392,7 @@ class _VoteCapsule extends StatelessWidget {
       decoration: BoxDecoration(
         color: selected ? fill : capsuleColor,
         borderRadius: BorderRadius.circular(radius),
-        // Selected ring in the capsule colour (white / dimmed in dark).
+        // Selected ring in the capsule colour (white / off-white in dark).
         border: selected
             ? Border.all(
                 color: capsuleColor,

@@ -343,33 +343,41 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
                     context.navBottomInset + 24,
                   ),
                   children: [
-                    // Category picker
+                    // Category picker. Clipped at the sides only, so the
+                    // light chip shadows are not cut off in a line above and
+                    // below the row.
                     if (postCategories.isNotEmpty) ...[
                       SizedBox(
                         height: 48,
-                        child: ListView.separated(
-                          scrollDirection: Axis.horizontal,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: KararSpace.gutter,
+                        child: KararChipRowClip(
+                          child: ListView.separated(
+                            scrollDirection: Axis.horizontal,
+                            clipBehavior: Clip.none,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: KararSpace.gutter,
+                            ),
+                            itemCount: postCategories.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(width: KararSpace.s8),
+                            itemBuilder: (context, index) {
+                              final category = postCategories[index];
+                              final style = CategoryStyle.of(category);
+                              final selected =
+                                  state.selectedCategoryId == category.id;
+                              return Center(
+                                child: KararChip(
+                                  label: category.name,
+                                  icon: selected
+                                      ? style.icon
+                                      : style.iconOutlined,
+                                  selected: selected,
+                                  tone: KararChipTone.category(style),
+                                  onCanvas: true,
+                                  onTap: () => _selectCategory(category),
+                                ),
+                              );
+                            },
                           ),
-                          itemCount: postCategories.length,
-                          separatorBuilder: (_, __) =>
-                              const SizedBox(width: KararSpace.s8),
-                          itemBuilder: (context, index) {
-                            final category = postCategories[index];
-                            final style = CategoryStyle.of(category);
-                            final selected =
-                                state.selectedCategoryId == category.id;
-                            return Center(
-                              child: KararChip(
-                                label: category.name,
-                                icon: selected ? style.icon : style.iconOutlined,
-                                selected: selected,
-                                tone: KararChipTone.category(style),
-                                onTap: () => _selectCategory(category),
-                              ),
-                            );
-                          },
                         ),
                       ),
                       const SizedBox(height: KararSpace.s12),
@@ -508,10 +516,9 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
                             ? Icons.hourglass_top_rounded
                             : Icons.send_rounded,
                         label: state.isLoading ? 'Paylaşılıyor...' : 'Karar Al',
-                        onPressed:
-                            state.isLoading || state.toxicityScore >= 0.8
-                                ? null
-                                : _submit,
+                        onPressed: state.isLoading || state.toxicityScore >= 0.8
+                            ? null
+                            : _submit,
                       ),
                     ),
                   ],
@@ -570,8 +577,10 @@ class _ComposeCard extends StatelessWidget {
       style: style,
       showQuote: false,
       showRailSheen: false,
+      // Grows with the title; on phones it starts compact so the content
+      // field, tags and CTA are not pushed 1.5 screens down by an empty card.
       child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 230),
+        constraints: BoxConstraints(minHeight: context.isMobile ? 176 : 230),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(
             KararSpace.cardPadding,
@@ -713,7 +722,8 @@ class _ContentField extends StatelessWidget {
     return TextField(
       controller: controller,
       maxLength: 1500,
-      minLines: 8,
+      // Starts at 5 lines and grows with the text (up to 14, then scrolls).
+      minLines: 5,
       maxLines: 14,
       onChanged: onChanged,
       textCapitalization: TextCapitalization.sentences,
@@ -721,7 +731,11 @@ class _ContentField extends StatelessWidget {
         hintText: 'Durumu anlat... Diğer taraf ne yaptı?',
         alignLabelWithHint: true,
         contentPadding: const EdgeInsets.all(KararSpace.s16),
-        // Theme field border: visible on the light canvas, hairline in dark.
+        // A calm surface card, not the raised field fill: in dark the
+        // #262233 fill made a big grey slab under the violet compose card.
+        // White in light either way. The field border (≥ 3:1 on canvas and
+        // on surface) still marks the input in both themes.
+        fillColor: kc.surface,
         border: border(kc.fieldBorder, 1),
         enabledBorder: border(kc.fieldBorder, 1),
         focusedBorder: border(kc.primary, 2),
@@ -1180,10 +1194,14 @@ class _TagInputState extends State<_TagInput> {
                     horizontal: KararSpace.s16,
                     vertical: 14,
                   ),
+                  // Same surface fill as the content field above.
+                  fillColor: kc.surface,
                   border: pill(kc.fieldBorder, 1),
                   enabledBorder: pill(kc.fieldBorder, 1),
+                  // Theme disabled border (outlineVariant @ 50 % was
+                  // invisible on the canvas).
                   disabledBorder:
-                      pill(kc.outlineVariant.withValues(alpha: 0.5), 1),
+                      pill(kc.fieldBorder.withValues(alpha: 0.4), 1),
                   focusedBorder: pill(kc.primary, 2),
                 ),
                 maxLength: 20,
@@ -1217,6 +1235,7 @@ class _TagInputState extends State<_TagInput> {
                     label: '#$tag',
                     semanticLabel: '#$tag, Kaldır',
                     trailing: const Icon(Icons.close_rounded, size: 16),
+                    onCanvas: true,
                     onTap: () => widget.onRemove(tag),
                   ),
                 )

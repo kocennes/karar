@@ -332,6 +332,13 @@ class _PostCardState extends ConsumerState<PostCard> {
     final imageUrl = PostSurface.imageUrlOf(post);
     final query = widget.searchQuery ?? '';
 
+    // Search-match highlight (theme tokens; dark #4F3592 + text1, 8.4:1).
+    TextStyle highlight(FontWeight weight) => TextStyle(
+          backgroundColor: kc.searchHighlightBg,
+          color: kc.searchHighlightFg,
+          fontWeight: weight,
+        );
+
     final titleBlock = isSensitive
         ? _CompactSensitive(
             onReveal: () => setState(() => _revealSensitive = true),
@@ -351,11 +358,7 @@ class _PostCardState extends ConsumerState<PostCard> {
                   fontWeight: FontWeight.w800,
                   color: kc.text1,
                 ),
-                highlightStyle: TextStyle(
-                  backgroundColor: kc.primaryContainer,
-                  color: kc.onPrimaryContainer,
-                  fontWeight: FontWeight.w800,
-                ),
+                highlightStyle: highlight(FontWeight.w800),
               ),
               const SizedBox(height: 4),
               Text(
@@ -369,11 +372,7 @@ class _PostCardState extends ConsumerState<PostCard> {
                   content: post.content,
                   query: query,
                   style: AppTypography.bodyS.copyWith(color: kc.text2),
-                  highlightStyle: TextStyle(
-                    backgroundColor: kc.primaryContainer,
-                    color: kc.onPrimaryContainer,
-                    fontWeight: FontWeight.w700,
-                  ),
+                  highlightStyle: highlight(FontWeight.w700),
                 ),
             ],
           );

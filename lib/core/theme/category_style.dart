@@ -16,7 +16,9 @@ import '../utils/tr_case.dart';
 /// stops are pulled ~12 % towards the canvas (#0D0C12) so large violet /
 /// magenta / blue slabs do not vibrate on the near-black page, the Amber
 /// bottom stop is lifted (it read brown and muddy) and the Ink ("Diğer")
-/// palette is lifted so the card does not dissolve into the canvas.
+/// palette becomes a deep midnight indigo (a defined hue instead of a
+/// washed-out grey); it is told apart from the canvas by its hairline and
+/// sheen ([lowKey]).
 @immutable
 class CategoryStyle {
   const CategoryStyle._({
@@ -46,7 +48,8 @@ class CategoryStyle {
   final Color? _darkEnd;
 
   /// A low-key palette (Ink / "Diğer") whose bottom stop sits close to the
-  /// dark canvas: dark cards get a stronger hairline.
+  /// dark canvas: dark cards get a stronger hairline and keep the full
+  /// 18 % top-left sheen (other palettes use the softer dark sheen).
   final bool lowKey;
 
   /// Light stop for [brightness].
@@ -101,8 +104,8 @@ class CategoryStyle {
   // -- Palettes -------------------------------------------------------------
   //
   // Dark stops: start = lerp(start, #0D0C12, .12), end = lerp(end, #0D0C12,
-  // .06). White on the dark light stop: violet 5.88, magenta 6.26, ocean
-  // 5.99, amber 5.02, ink 6.67 (seen: 7.92 / 8.50 / 8.09 / 7.18 / 8.61).
+  // .06) (ink: its own midnight-indigo stops, see below). White on the dark
+  // light stop: violet 5.88, magenta 6.26, ocean 5.99, amber 5.02, ink 9.82.
 
   static const violet = CategoryStyle._(
     start: Color(0xFF7D50F0),
@@ -136,11 +139,18 @@ class CategoryStyle {
     icon: Icons.groups_rounded,
     iconOutlined: Icons.groups_outlined,
   );
+  // Dark Ink is a deep "midnight" indigo with a defined hue, not a lifted,
+  // desaturated lavender (#5B5785 → #2E2A47 read as a dusty grey slab next
+  // to the vivid palettes). It stays apart from Ocean (bright saturated
+  // blue) and Violet (bright purple) by lightness and chroma; its bottom
+  // stop sits near the canvas on purpose — the card is separated by the
+  // strong 13 % hairline and the full 18 % sheen ([lowKey]), not by
+  // greyness. White on the light stop 9.82:1.
   static const ink = CategoryStyle._(
     start: Color(0xFF4A4766),
     end: Color(0xFF15131F),
-    darkStart: Color(0xFF5B5785),
-    darkEnd: Color(0xFF2E2A47),
+    darkStart: Color(0xFF3A3D7C),
+    darkEnd: Color(0xFF171834),
     icon: Icons.more_horiz_rounded,
     iconOutlined: Icons.more_horiz_rounded,
     lowKey: true,

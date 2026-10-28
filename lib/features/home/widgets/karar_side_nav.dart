@@ -8,6 +8,8 @@ import '../../../core/theme/karar_tokens.dart';
 import '../../../core/theme/motion.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/widgets/karar_avatar.dart';
+import '../../../shared/widgets/karar_button.dart';
+import '../../../shared/widgets/karar_circle_button.dart';
 import '../../../shared/widgets/karar_logo.dart';
 import '../../../shared/widgets/karar_pressable.dart';
 import '../../../shared/widgets/karma_badge.dart';
@@ -119,21 +121,21 @@ class KararSideNav extends ConsumerWidget {
                       ),
                       const Spacer(),
                       const SizedBox(height: 16),
-                      _SideNavItem(
-                        icon: Icons.person_outline_rounded,
-                        selectedIcon: Icons.person_rounded,
-                        label: user?.username ?? 'Profil',
-                        isSelected: currentIndex == 3,
-                        compact: compact,
-                        onTap: () => onSelectIndex(3),
-                        customIcon: user != null
-                            ? KararAvatar(username: user.username, radius: 15)
-                            : null,
-                        trailing: user != null
-                            ? KarmaBadge(karma: user.karma, size: 14)
-                            : null,
-                        strongLabel: user != null,
-                      ),
+                      if (user != null)
+                        _SideNavItem(
+                          icon: Icons.person_outline_rounded,
+                          selectedIcon: Icons.person_rounded,
+                          label: user.username,
+                          isSelected: currentIndex == 3,
+                          compact: compact,
+                          onTap: () => onSelectIndex(3),
+                          customIcon:
+                              KararAvatar(username: user.username, radius: 15),
+                          trailing: KarmaBadge(karma: user.karma, size: 14),
+                          strongLabel: true,
+                        )
+                      else
+                        _GuestAuthActions(compact: compact),
                       const SizedBox(height: 4),
                       _MoreTile(compact: compact),
                     ],
@@ -446,6 +448,57 @@ class _CreateButton extends StatelessWidget {
         focusRadius: 26,
         child: child,
       ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Logged-out footer (replaces the profile row): a "Giriş Yap" `ink` pill
+/// (near-black in light, brand violet in dark) and a "Kayıt Ol" text
+/// button, the same routes as the "Daha fazla" menu. Collapsed: a 48 px
+/// ink circle with a person glyph and the "Giriş Yap" tooltip ("Kayıt Ol"
+/// stays in the menu).
+class _GuestAuthActions extends StatelessWidget {
+  const _GuestAuthActions({required this.compact});
+
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    void login() => context.push('/auth/login');
+    void register() => context.push('/auth/register');
+
+    if (compact) {
+      return Center(
+        child: KararCircleButton(
+          icon: Icons.person_outline_rounded,
+          tooltip: 'Giriş Yap',
+          onPressed: login,
+          size: 48,
+          iconSize: 24,
+          style: KararCircleStyle.ink,
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        KararButton(
+          label: 'Giriş Yap',
+          icon: Icons.login_rounded,
+          variant: KararButtonVariant.ink,
+          onPressed: login,
+        ),
+        const SizedBox(height: 4),
+        KararButton(
+          label: 'Kayıt Ol',
+          variant: KararButtonVariant.text,
+          onPressed: register,
+        ),
+      ],
     );
   }
 }

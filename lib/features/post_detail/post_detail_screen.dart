@@ -31,6 +31,7 @@ import '../../shared/widgets/mention_text.dart';
 import '../../shared/widgets/loading_indicator.dart';
 import '../../shared/widgets/on_color_chip.dart';
 import '../../shared/widgets/post_carousel.dart';
+import '../../shared/widgets/post_image.dart';
 import '../../shared/widgets/post_surface.dart';
 import '../../shared/widgets/skeleton.dart';
 import '../ads/banner_ad_widget.dart';
@@ -1308,19 +1309,7 @@ class _PostContent extends ConsumerWidget {
         if (post.hasImage)
           Padding(
             padding: section(16),
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: kc.muted,
-                borderRadius: KararRadius.all(KararRadius.surface),
-              ),
-              child: PostCarousel(
-                imageUrls: post.imageUrls.isNotEmpty
-                    ? post.imageUrls
-                    : [post.imageUrl!],
-                postId: post.id,
-                borderRadius: KararRadius.surface,
-              ),
-            ),
+            child: _DetailMedia(post: post),
           ),
         Padding(
           padding: EdgeInsets.symmetric(horizontal: g),
@@ -1413,6 +1402,86 @@ class _PostContent extends ConsumerWidget {
             child: PostOwnerStatsSection(postId: post.id),
           ),
       ],
+    );
+  }
+}
+
+// ── Fotoğraflar ──────────────────────────────────────────────────────────────
+
+/// The post's photos on a muted rounded well.
+///
+/// * Mobile / tablet: the full-width 16:9 carousel (unchanged).
+/// * Desktop (≥ 1024): the well is capped at 22 % of the viewport height
+///   (200–300 px, never taller than 16:9). The uncropped 16:9 photo (≈340 px
+///   in the 606 px column) pushed the whole verdict panel under the fold of
+///   a 1440×900 window; at 200 px the verdict word, split bar, labels and
+///   the Haklı / Haksız labels of a 4-line post sit above it. Nothing is
+///   cropped further: a single photo is shown whole (`BoxFit.contain`) on
+///   the well, a gallery keeps its 16:9 crop, centred. Tapping still opens
+///   the full-screen viewer (same hero tags as [PostCarousel]).
+class _DetailMedia extends StatelessWidget {
+  const _DetailMedia({required this.post});
+
+  final Post post;
+
+  static const _desktopViewportShare = 0.22;
+  static const _desktopMinHeight = 200.0;
+  static const _desktopMaxHeight = 300.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final kc = context.kc;
+    final urls = post.imageUrls.isNotEmpty ? post.imageUrls : [post.imageUrl!];
+    final well = BoxDecoration(
+      color: kc.muted,
+      borderRadius: KararRadius.all(KararRadius.surface),
+    );
+
+    if (!context.isDesktop) {
+      return DecoratedBox(
+        decoration: well,
+        child: PostCarousel(
+          imageUrls: urls,
+          postId: post.id,
+          borderRadius: KararRadius.surface,
+        ),
+      );
+    }
+
+    final cap = (MediaQuery.sizeOf(context).height * _desktopViewportShare)
+        .clamp(_desktopMinHeight, _desktopMaxHeight);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final natural = width * 9 / 16;
+        final height = natural < cap ? natural : cap;
+        final galleryWidth = height * 16 / 9;
+        // A max height, not a fixed one: a wide panorama shrinks the well
+        // to its own height and a photo the viewer hid collapses it.
+        return Container(
+          constraints: BoxConstraints(maxHeight: height),
+          clipBehavior: Clip.antiAlias,
+          decoration: well,
+          child: urls.length == 1
+              ? PostImage(
+                  imageUrl: urls.first,
+                  fit: BoxFit.contain,
+                  borderRadius: KararRadius.surface,
+                  enableFullScreen: true,
+                  heroTag: 'post_image_${post.id}_0',
+                )
+              : Center(
+                  child: SizedBox(
+                    width: galleryWidth < width ? galleryWidth : width,
+                    child: PostCarousel(
+                      imageUrls: urls,
+                      postId: post.id,
+                      borderRadius: KararRadius.surface,
+                    ),
+                  ),
+                ),
+        );
+      },
     );
   }
 }

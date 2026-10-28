@@ -444,8 +444,9 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
       horizontalPadding: isDesktop ? 8 : KararSpace.gutter,
     );
 
-    // Phones up to ~400 pt wide get the dense hero (one-line title) so the
-    // first card's verdict clears the floating nav above the fold.
+    // Phones up to ~400 pt wide get the dense hero (two-line title beside
+    // an arrow disc, no separate button row) so the first card's verdict
+    // clears the floating nav above the fold.
     final denseHeader = MediaQuery.sizeOf(context).width < 400;
 
     return Scaffold(
@@ -566,35 +567,41 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
     required EdgeInsets padding,
   }) {
     if (categories.isEmpty) return const SizedBox.shrink();
+    // On-canvas chips (white + soft shadow in light): clipped at the sides
+    // only, so the shadow tail is not cut off in a line below the row.
     return SizedBox(
       height: 48 + padding.vertical,
-      child: ListView.separated(
-        padding: padding,
-        scrollDirection: Axis.horizontal,
-        itemCount: categories.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (context, index) {
-          final category = categories[index];
-          final isFollowed =
-              category.id != 0 && followedIds.contains(category.id);
-          return Center(
-            child: KararChip(
-              label: category.name,
-              icon: CategoryStyle.of(category).icon,
-              selected: _selectedCategoryId == category.id,
-              trailing: isFollowed
-                  ? const Icon(Icons.star_rounded, size: 12)
-                  : null,
-              onTap: () => _onCategoryChanged(category.id),
-              onLongPress: category.id == 0
-                  ? null
-                  : () {
-                      KararHaptics.longPress();
-                      _showCategoryOptions(category);
-                    },
-            ),
-          );
-        },
+      child: KararChipRowClip(
+        child: ListView.separated(
+          padding: padding,
+          scrollDirection: Axis.horizontal,
+          clipBehavior: Clip.none,
+          itemCount: categories.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 8),
+          itemBuilder: (context, index) {
+            final category = categories[index];
+            final isFollowed =
+                category.id != 0 && followedIds.contains(category.id);
+            return Center(
+              child: KararChip(
+                label: category.name,
+                icon: CategoryStyle.of(category).icon,
+                selected: _selectedCategoryId == category.id,
+                onCanvas: true,
+                trailing: isFollowed
+                    ? const Icon(Icons.star_rounded, size: 12)
+                    : null,
+                onTap: () => _onCategoryChanged(category.id),
+                onLongPress: category.id == 0
+                    ? null
+                    : () {
+                        KararHaptics.longPress();
+                        _showCategoryOptions(category);
+                      },
+              ),
+            );
+          },
+        ),
       ),
     );
   }
@@ -656,18 +663,15 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
 
         final totalWidth = showRail ? feedWidth + gap + railWidth : feedWidth;
 
-        // Back-to-top sits in the gutter just right of the feed column
-        // (20 px from the cards' edge), bottom-aligned, instead of the far
-        // window corner; clamped inside the window when there is no room.
+        // Back-to-top belongs to the feed: centred on the feed column, 24 px
+        // above the window bottom — not in the gap or under the right
+        // rail's footer, where it read as part of the sidebar (and a
+        // longer rail would have put it on top of rail content). Centred
+        // rather than at the column's right edge so it never sits on the
+        // cards' own vote-rail circles.
         const fabSize = 48.0;
         final columnLeft = (constraints.maxWidth - totalWidth) / 2;
-        final fabLeft = math.max(
-          0.0,
-          math.min(
-            columnLeft + feedWidth + 12,
-            constraints.maxWidth - fabSize - 16,
-          ),
-        );
+        final fabLeft = math.max(0.0, columnLeft + (feedWidth - fabSize) / 2);
 
         return Stack(
           fit: StackFit.expand,
@@ -1086,7 +1090,10 @@ class _IdentityPill extends StatelessWidget {
   }
 }
 
-/// Back-to-top button: 48 px surface circle with the float shadow.
+/// Back-to-top button: 48 px circle with the float shadow — light: surface;
+/// dark: `muted` (#262233, a step above the cards) with a white 13 %
+/// hairline in front of the fill, so the disc reads on the canvas (the
+/// elevated fill was 1.17:1 there and its hairline was hidden behind it).
 class _BackToTopButton extends StatelessWidget {
   const _BackToTopButton({required this.visible, required this.onPressed});
 
@@ -1097,7 +1104,7 @@ class _BackToTopButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final kc = context.kc;
     final brightness = Theme.of(context).brightness;
-    final hairline = KararShadow.hairlineFor(KararShadowKind.float, brightness);
+    final hairline = kc.isDark ? KararShadow.cardHairlineDarkStrong : null;
     return IgnorePointer(
       ignoring: !visible,
       child: ExcludeSemantics(
@@ -1111,22 +1118,30 @@ class _BackToTopButton extends StatelessWidget {
             opacity: visible ? 1 : 0,
             child: DecoratedBox(
               decoration: ShapeDecoration(
-                shape: CircleBorder(
-                  side: hairline == null
-                      ? BorderSide.none
-                      : BorderSide(color: hairline),
-                ),
+                shape: const CircleBorder(),
                 shadows: KararShadow.float(brightness),
               ),
-              child: KararCircleButton(
-                icon: Icons.keyboard_arrow_up_rounded,
-                tooltip: 'Başa dön',
-                onPressed: onPressed,
-                size: 48,
-                iconSize: 26,
-                style: KararCircleStyle.muted,
-                backgroundColor: kc.isDark ? kc.elevated : kc.surface,
-                iconColor: kc.text1,
+              // The hairline is painted in front of the fill (an inside
+              // stroke behind an opaque disc never shows).
+              child: DecoratedBox(
+                position: DecorationPosition.foreground,
+                decoration: ShapeDecoration(
+                  shape: CircleBorder(
+                    side: hairline == null
+                        ? BorderSide.none
+                        : BorderSide(color: hairline),
+                  ),
+                ),
+                child: KararCircleButton(
+                  icon: Icons.keyboard_arrow_up_rounded,
+                  tooltip: 'Başa dön',
+                  onPressed: onPressed,
+                  size: 48,
+                  iconSize: 26,
+                  style: KararCircleStyle.muted,
+                  backgroundColor: kc.isDark ? kc.muted : kc.surface,
+                  iconColor: kc.text1,
+                ),
               ),
             ),
           ),

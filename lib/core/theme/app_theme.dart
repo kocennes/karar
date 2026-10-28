@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'app_typography.dart';
+import 'karar_field_border.dart';
 import 'karar_tokens.dart';
 
 /// Karar ThemeData (spec §3). Light and dark share one builder; every colour
@@ -124,8 +125,10 @@ abstract final class AppTheme {
       });
     }
 
-    OutlineInputBorder inputBorder(Color color, double width) =>
-        OutlineInputBorder(
+    // Rounded box with a stroke, laid out as a *filled* field (labels float
+    // inside the fill, never on a notch in the top edge).
+    KararFieldBorder inputBorder(Color color, double width) =>
+        KararFieldBorder(
           borderRadius: KararRadius.all(KararRadius.input),
           borderSide: BorderSide(color: color, width: width),
         );
@@ -584,23 +587,30 @@ abstract final class AppTheme {
       ),
 
       // -- Inputs -----------------------------------------------------------
-      // Light: white field + 1 px outline (>= 3:1 on the lavender canvas and
-      // on white sheets). Dark: muted field + hairline on the near-black page.
+      // Filled fields with a 1 px boundary that reaches 3:1 in both themes
+      // (light: white field, #8E8AA3; dark: #262233 field, #706B8A — 3.86:1
+      // on the canvas, 3.06:1 against the fill). [KararFieldBorder] is not
+      // an "outline" border, so the floating label sits inside the fill,
+      // 12 px from the top, with the typed text below it (M3 filled
+      // layout): ~63 px with a label, 48 px (min tap height) without.
       inputDecorationTheme: InputDecorationThemeData(
         filled: true,
         fillColor: k.fieldFill,
         isDense: false,
-        contentPadding: const EdgeInsets.all(16),
+        contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
         border: inputBorder(k.fieldBorder, 1),
         enabledBorder: inputBorder(k.fieldBorder, 1),
         focusedBorder: inputBorder(k.primary, 2),
         errorBorder: inputBorder(cs.error, 1.5),
         focusedErrorBorder: inputBorder(cs.error, 2),
-        disabledBorder: inputBorder(k.outlineVariant.withValues(alpha: 0.5), 1),
+        disabledBorder: inputBorder(k.fieldBorder.withValues(alpha: 0.4), 1),
         hintStyle: AppTypography.body.copyWith(color: k.text3),
         labelStyle: AppTypography.body.copyWith(color: k.text2),
+        // The floated label is drawn at 75 % of this size: 16 → 12 px w700
+        // (labelS at 13 px floated to an illegible 9.75 px).
         floatingLabelStyle: WidgetStateTextStyle.resolveWith(
           (states) => AppTypography.labelS.copyWith(
+            fontSize: 16,
             color: states.contains(WidgetState.error)
                 ? k.haksizText
                 : states.contains(WidgetState.focused)

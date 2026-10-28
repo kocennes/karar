@@ -63,7 +63,7 @@ class WeeklyStatsScreen extends ConsumerWidget {
                         shape: BoxShape.circle,
                       ),
                       child: Icon(Icons.error_outline_rounded,
-                          size: 36, color: kc.haksizFill),
+                          size: 36, color: kc.voteIcon(false)),
                     ),
                   ),
                   const SizedBox(height: 16),

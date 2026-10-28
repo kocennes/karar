@@ -122,7 +122,7 @@ class SettingsRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final kc = context.kc;
     final tileBg = destructive ? kc.haksizSoft : kc.primaryContainer;
-    final tileFg = destructive ? kc.haksizFill : kc.primary;
+    final tileFg = destructive ? kc.voteIcon(false) : kc.primary;
     final effectiveTitleColor =
         titleColor ?? (destructive ? kc.haksizText : kc.text1);
 

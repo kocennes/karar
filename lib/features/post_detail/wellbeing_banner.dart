@@ -40,7 +40,7 @@ class WellbeingBanner extends ConsumerWidget {
         children: [
           Row(
             children: [
-              Icon(Icons.favorite_rounded, color: kc.haksizFill, size: 22),
+              Icon(Icons.favorite_rounded, color: kc.voteIcon(false), size: 22),
               const SizedBox(width: 10),
               Expanded(
                 child: Semantics(

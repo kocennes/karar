@@ -25,6 +25,16 @@ class KararChipTone {
 /// icon 16 + gap 6, `labelS`. Unselected muted/text2; selected ink/onInk
 /// (or the category gradient for [KararChipTone.category]).
 /// Press scale 0.96 + selection haptic.
+///
+/// [onCanvas]: the chip sits straight on the page canvas (feed category
+/// row, notification controls, create-post rows, onboarding grid). In light
+/// the unselected `muted` fill (#EFEDF5) is 1.06:1 against the canvas
+/// (#F5F4F9) and the pills vanish, so they take the white `surface` fill on
+/// [KararShadow.soft], like the reference's white chips on a tinted canvas.
+/// Dark keeps `muted` (#262233 on #0D0C12 reads; dark uses no soft
+/// shadows). A horizontal row of such chips needs `clipBehavior: Clip.none`
+/// inside a [KararChipRowClip], or the shadow tail is cut off in a hard line
+/// above and below the row.
 class KararChip extends StatelessWidget {
   const KararChip({
     super.key,
@@ -36,6 +46,7 @@ class KararChip extends StatelessWidget {
     this.trailing,
     this.tone = KararChipTone.neutral,
     this.semanticLabel,
+    this.onCanvas = false,
   });
 
   final String label;
@@ -50,6 +61,9 @@ class KararChip extends StatelessWidget {
   final KararChipTone tone;
   final String? semanticLabel;
 
+  /// White pill + soft shadow in light, for chips placed on the canvas.
+  final bool onCanvas;
+
   @override
   Widget build(BuildContext context) {
     final kc = context.kc;
@@ -60,11 +74,12 @@ class KararChip extends StatelessWidget {
     final decoration = BoxDecoration(
       color: selected
           ? (category != null ? null : kc.ink)
-          : kc.muted,
+          : (onCanvas && !kc.isDark ? kc.surface : kc.muted),
       gradient: selected && category != null
           ? category.gradientFor(brightness: brightness)
           : null,
       borderRadius: KararRadius.all(KararRadius.pill),
+      boxShadow: onCanvas ? KararShadow.soft(brightness) : null,
     );
 
     final content = AnimatedContainer(
@@ -117,4 +132,38 @@ class KararChip extends StatelessWidget {
       child: content,
     );
   }
+}
+
+/// Clips a horizontally scrolling row of `KararChip(onCanvas: true)` at its
+/// sides only.
+///
+/// Give the row's `ListView` / `SingleChildScrollView`
+/// `clipBehavior: Clip.none`: chips scrolled past the ends are still cut at
+/// the row's width (and at the centred column on wide screens), while the
+/// chip shadows may spill above and below the row, where the neighbouring
+/// sections paint over the faint tail.
+class KararChipRowClip extends StatelessWidget {
+  const KararChipRowClip({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRect(clipper: const _SidesOnlyClipper(), child: child);
+  }
+}
+
+class _SidesOnlyClipper extends CustomClipper<Rect> {
+  const _SidesOnlyClipper();
+
+  /// How far the soft shadow may reach above / below the row (its tail is
+  /// under 0.1 % alpha beyond this).
+  static const double _bleed = 48;
+
+  @override
+  Rect getClip(Size size) =>
+      Rect.fromLTRB(0, -_bleed, size.width, size.height + _bleed);
+
+  @override
+  bool shouldReclip(_SidesOnlyClipper oldClipper) => false;
 }

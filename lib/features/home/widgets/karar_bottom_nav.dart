@@ -112,9 +112,10 @@ class KararBottomNav extends StatefulWidget {
   /// nav would otherwise sit on top of it).
   final bool hidden;
 
-  /// The page behind the nav is a full-bleed photo/scrim (Keşfet): the
-  /// notch gets a light hairline so its silhouette never melts into a dark
-  /// backdrop (the light ink notch on a near-black scrim is 1.05:1).
+  /// The page behind the nav is a full-bleed photo/scrim (Keşfet): in light
+  /// the notch gets a light hairline so its silhouette never melts into a
+  /// dark backdrop (the ink notch on a near-black scrim is 1.05:1). Dark
+  /// always draws its own edge (see [_CreateNotch]).
   final bool overMedia;
 
   static const double pillHeight = 70;
@@ -512,6 +513,10 @@ class _NavBadge extends StatelessWidget {
 /// branch is open ([active]) a soft brand glow rises around the notch
 /// instead of an outline ring (an outline read as a sticker edge and, on
 /// the violet dark notch, was only 1.8:1 against the fill).
+///
+/// Dark adds a tight canvas halo hugging the outline, so the violet notch
+/// keeps its silhouette over a violet card scrolling behind the nav (the
+/// bare fillets were 1.5–1.9:1 against an İş Hayatı card).
 class _NotchShadow extends StatelessWidget {
   const _NotchShadow({required this.active});
 
@@ -522,6 +527,12 @@ class _NotchShadow extends StatelessWidget {
     final kc = context.kc;
     final shadows = [
       ...KararShadow.float(kc.brightness),
+      if (kc.isDark)
+        BoxShadow(
+          color: kc.canvas.withValues(alpha: 0.85),
+          offset: const Offset(0, -2),
+          blurRadius: 14,
+        ),
       if (active)
         BoxShadow(
           color: kc.primaryFill.withValues(alpha: kc.isDark ? 0.60 : 0.50),
@@ -612,12 +623,19 @@ class _CreateNotchState extends State<_CreateNotch> {
       // Light: ink notch with a white "+" (reference). Dark: `ink` is the
       // brand violet, never an off-white block. Active = the glow painted
       // by _NotchShadow behind the pill, no outline.
+      //
+      // Dark always gets its own silhouette whatever scrolls behind it: a
+      // 2 px canvas ring outside the outline plus a white 22 % hairline on
+      // the edge (violet card | dark ring | light edge | violet notch).
       child: CustomPaint(
         size: size,
         painter: _NotchPainter(
           fill: kc.ink,
           focus: _focused ? kc.primary : null,
-          hairline: widget.overMedia ? kc.onColorSoft : null,
+          hairline: kc.isDark
+              ? kc.onColor.withValues(alpha: 0.22)
+              : (widget.overMedia ? kc.onColorSoft : null),
+          ring: kc.isDark ? kc.canvas : null,
         ),
         child: SizedBox.fromSize(
           size: size,
@@ -721,30 +739,46 @@ class _CreateGapTarget extends StatelessWidget {
 }
 
 class _NotchPainter extends CustomPainter {
-  const _NotchPainter({required this.fill, this.focus, this.hairline});
+  const _NotchPainter({
+    required this.fill,
+    this.focus,
+    this.hairline,
+    this.ring,
+  });
 
   final Color fill;
 
   /// Keyboard focus ring (2 px outside the outline).
   final Color? focus;
 
-  /// 1 px edge over a dark full-bleed backdrop (Keşfet).
+  /// 1 px edge on the outline (dark: always; light: over a full-bleed
+  /// backdrop such as Keşfet).
   final Color? hairline;
+
+  /// 2 px separation ring outside the outline (dark: canvas colour), so the
+  /// notch never fuses with a same-hued card behind it. Replaced by the
+  /// focus ring while focused.
+  final Color? ring;
 
   @override
   void paint(Canvas canvas, Size size) {
     final open = NavNotchClipper.openPathFor(size);
     final focus = this.focus;
-    if (focus != null) {
-      // Centred 4 px stroke under the fill = 2 px visible outside.
+    final outer = focus ?? ring;
+    if (outer != null) {
+      // Centred 4 px stroke under the fill = 2 px visible outside. Clipped
+      // at the pill's top edge so the fillet ends never cut into the pill.
+      canvas.save();
+      canvas.clipRect(Rect.fromLTRB(-4, -4, size.width + 4, size.height));
       canvas.drawPath(
         open,
         Paint()
-          ..color = focus
+          ..color = outer
           ..style = PaintingStyle.stroke
           ..strokeWidth = 4
           ..strokeJoin = StrokeJoin.round,
       );
+      canvas.restore();
     }
     canvas.drawPath(NavNotchClipper.pathFor(size), Paint()..color = fill);
     final hairline = this.hairline;
@@ -764,5 +798,6 @@ class _NotchPainter extends CustomPainter {
   bool shouldRepaint(_NotchPainter oldDelegate) =>
       oldDelegate.fill != fill ||
       oldDelegate.focus != focus ||
-      oldDelegate.hairline != hairline;
+      oldDelegate.hairline != hairline ||
+      oldDelegate.ring != ring;
 }

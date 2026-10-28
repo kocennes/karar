@@ -215,10 +215,12 @@ class VerdictPanel extends StatelessWidget {
 /// One 56 px vote pill.
 ///
 /// * nothing chosen: tonal (soft vote tint, vote text colour, outlined icon).
-///   Dark: the vote fill at 30 % over the panel surface plus a 1 px
-///   vote-colour rim, so the pills read as the screen's call to action
-///   instead of muddy near-black blobs (green 1.36:1 / red 1.35:1 against
-///   the panel; label 7.6:1 / 5.3:1).
+///   Dark: the vote fill over the panel surface plus a 1 px rim at 35 % of
+///   the side's text tone. The tint alpha is set per side so both pills
+///   carry the same visual weight — red reads heavier than green at equal
+///   alpha (one shared 30 % gave a saturated maroon Haksız that looked
+///   pre-selected next to a quiet green Haklı). Haklı 26 % → #163127
+///   (label 8.0:1), Haksız 17 % → #371B24 (label 6.2:1).
 /// * chosen: solid vote fill, white label, filled icon, coloured glow
 ///   (softer in dark)
 /// * the other side chosen: transparent with a 1.5 px vote-colour outline
@@ -237,11 +239,12 @@ class _VotePill extends StatelessWidget {
   final bool otherSelected;
   final VoidCallback? onTap;
 
-  /// Dark tonal tint: vote fill alpha over the panel surface.
-  static const _darkTintAlpha = 0.30;
+  /// Dark tonal tint: vote fill alpha over the panel surface, per side
+  /// (matched perceived weight, see the class doc).
+  static double _darkTintAlpha(bool hakli) => hakli ? 0.26 : 0.17;
 
   /// Dark tonal rim: vote text colour alpha.
-  static const _darkRimAlpha = 0.40;
+  static const _darkRimAlpha = 0.35;
 
   @override
   Widget build(BuildContext context) {
@@ -273,8 +276,10 @@ class _VotePill extends StatelessWidget {
       rim = (isDark ? text : fill).withValues(alpha: 0.45);
       rimWidth = 1.5;
     } else if (isDark) {
+      // Not `kc.voteSoft`: the pills need the per-side matched tint over
+      // the panel `surface`, whatever the shared dark soft tokens are.
       bg = Color.alphaBlend(
-        fill.withValues(alpha: _darkTintAlpha),
+        fill.withValues(alpha: _darkTintAlpha(hakli)),
         kc.surface,
       );
       fg = text;
@@ -396,7 +401,7 @@ class _VoteDetailRow extends StatelessWidget {
           borderRadius: KararRadius.all(6),
           child: LinearProgressIndicator(
             value: percent / 100,
-            color: kc.voteFill(hakli),
+            color: VoteBar.segmentColor(kc, hakli),
             // Dark: the soft tokens are near-black on the dialog; tint the
             // dialog colour instead so the track stays visible.
             backgroundColor: kc.isDark

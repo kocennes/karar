@@ -274,7 +274,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 }
 
 /// 56 px light capsule CTA on the gradient steps: `capsule` (white in
-/// light, dimmed #E4E1EC in dark — no glare) with #15131F text (≥ 14:1).
+/// light, the spec off-white #F4F3F8 in dark) with #15131F text (≥ 16:1).
 /// Not red: red reads as "Haksız".
 class _CapsuleButton extends StatelessWidget {
   const _CapsuleButton({
@@ -337,40 +337,57 @@ class _CategoryStep extends ConsumerWidget {
           alignment: Alignment.topCenter,
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 560),
+            // The 24 px side padding wraps the header only: the chip grid
+            // carries it inside its scroll view, so the viewport clip leaves
+            // room for the light chip shadows at the edges.
             child: Padding(
-              padding: EdgeInsets.fromLTRB(24, topRoom, 24, 0),
+              padding: EdgeInsets.only(top: topRoom),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  ExcludeSemantics(
-                    child: Container(
-                      width: 56,
-                      height: 56,
-                      decoration: BoxDecoration(
-                        color: kc.primaryContainer,
-                        borderRadius: KararRadius.all(KararRadius.tile),
-                      ),
-                      child: Icon(
-                        Icons.interests_rounded,
-                        size: 28,
-                        color: kc.primaryText,
-                      ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: _CategoryGrid.sidePadding,
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        ExcludeSemantics(
+                          child: Container(
+                            width: 56,
+                            height: 56,
+                            decoration: BoxDecoration(
+                              color: kc.primaryContainer,
+                              borderRadius: KararRadius.all(KararRadius.tile),
+                            ),
+                            child: Icon(
+                              Icons.interests_rounded,
+                              size: 28,
+                              color: kc.primaryText,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        Semantics(
+                          header: true,
+                          child: Text(
+                            'Neleri takip etmek istersin?',
+                            style:
+                                AppTypography.titleXL.copyWith(color: kc.text1),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Seçtiğin kategoriler akışında öne çıkar. İstediğin zaman değiştirebilirsin.',
+                          style: AppTypography.bodyL.copyWith(color: kc.text2),
+                        ),
+                        // 24 px to the chips: 16 here + the grid's 8 px top
+                        // padding.
+                        const SizedBox(height: 24 - _CategoryGrid.topPadding),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 20),
-                  Semantics(
-                    header: true,
-                    child: Text(
-                      'Neleri takip etmek istersin?',
-                      style: AppTypography.titleXL.copyWith(color: kc.text1),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Seçtiğin kategoriler akışında öne çıkar. İstediğin zaman değiştirebilirsin.',
-                    style: AppTypography.bodyL.copyWith(color: kc.text2),
-                  ),
-                  const SizedBox(height: 24),
                   Expanded(
                     child: categoriesAsync.when(
                       data: (categories) => _CategoryGrid(
@@ -381,10 +398,15 @@ class _CategoryStep extends ConsumerWidget {
                       ),
                       loading: () =>
                           const Center(child: CircularProgressIndicator()),
-                      error: (_, __) => Center(
-                        child: Text(
-                          'Kategoriler yüklenemedi.',
-                          style: AppTypography.body.copyWith(color: kc.text2),
+                      error: (_, __) => Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: _CategoryGrid.sidePadding,
+                        ),
+                        child: Center(
+                          child: Text(
+                            'Kategoriler yüklenemedi.',
+                            style: AppTypography.body.copyWith(color: kc.text2),
+                          ),
                         ),
                       ),
                     ),
@@ -407,6 +429,12 @@ class _CategoryGrid extends StatelessWidget {
     required this.bottomRoom,
   });
 
+  /// Page side padding of the category step.
+  static const double sidePadding = 24;
+
+  /// Room above the first chip row inside the scroll view (shadow tail).
+  static const double topPadding = KararSpace.s8;
+
   final List<Category> categories;
   final Set<int> selected;
   final void Function(int) onToggle;
@@ -415,7 +443,12 @@ class _CategoryGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
-      padding: EdgeInsets.only(bottom: bottomRoom),
+      padding: EdgeInsets.fromLTRB(
+        sidePadding,
+        topPadding,
+        sidePadding,
+        bottomRoom,
+      ),
       child: Wrap(
         spacing: KararSpace.s8,
         runSpacing: KararSpace.s4,
@@ -429,6 +462,7 @@ class _CategoryGrid extends StatelessWidget {
             icon: isSelected ? style.icon : style.iconOutlined,
             selected: isSelected,
             tone: KararChipTone.category(style),
+            onCanvas: true,
             onTap: () => onToggle(cat.id),
           );
         }).toList(),

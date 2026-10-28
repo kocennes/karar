@@ -148,38 +148,47 @@ class _NotificationControls extends ConsumerWidget {
 
     // Start-aligned (the narrower row used to be centred by the parent
     // Column on desktop), with the same 16 px inset as the cards below.
+    // On-canvas chips (white + soft shadow in light), clipped at the sides
+    // only so the shadow tail is not cut off below the row.
     return Align(
       alignment: AlignmentDirectional.centerStart,
-      child: SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-      child: Row(
-        children: [
-          KararChip(
-            icon: Icons.notifications_active_rounded,
-            label: prefs.pushEnabled ? 'İzin açık' : 'Bildirim izni ver',
-            onTap: () => _requestPermission(context, ref),
+      child: KararChipRowClip(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          clipBehavior: Clip.none,
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+          child: Row(
+            children: [
+              KararChip(
+                icon: Icons.notifications_active_rounded,
+                label: prefs.pushEnabled ? 'İzin açık' : 'Bildirim izni ver',
+                onCanvas: true,
+                onTap: () => _requestPermission(context, ref),
+              ),
+              const SizedBox(width: 8),
+              KararChip(
+                icon: Icons.volume_up_rounded,
+                label: prefs.soundEnabled ? 'Ses açık' : 'Bildirim sesini aç',
+                onCanvas: true,
+                onTap: () => _enableSound(context, ref),
+              ),
+              const SizedBox(width: 8),
+              KararChip(
+                icon: Icons.notifications_paused_rounded,
+                label: 'Sessize al',
+                onCanvas: true,
+                onTap: () => _showMuteSheet(context, ref),
+              ),
+              const SizedBox(width: 8),
+              KararChip(
+                icon: Icons.tune_rounded,
+                label: 'Tercihleri yönet',
+                onCanvas: true,
+                onTap: () => context.push('/settings/notifications'),
+              ),
+            ],
           ),
-          const SizedBox(width: 8),
-          KararChip(
-            icon: Icons.volume_up_rounded,
-            label: prefs.soundEnabled ? 'Ses açık' : 'Bildirim sesini aç',
-            onTap: () => _enableSound(context, ref),
-          ),
-          const SizedBox(width: 8),
-          KararChip(
-            icon: Icons.notifications_paused_rounded,
-            label: 'Sessize al',
-            onTap: () => _showMuteSheet(context, ref),
-          ),
-          const SizedBox(width: 8),
-          KararChip(
-            icon: Icons.tune_rounded,
-            label: 'Tercihleri yönet',
-            onTap: () => context.push('/settings/notifications'),
-          ),
-        ],
-      ),
+        ),
       ),
     );
   }
@@ -377,7 +386,7 @@ class _WebPushBannerState extends ConsumerState<_WebPushBanner> {
           ),
           child: Row(
             children: [
-              Icon(Icons.notifications_off_rounded, color: kc.haksizFill),
+              Icon(Icons.notifications_off_rounded, color: kc.voteIcon(false)),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
@@ -534,8 +543,10 @@ class _DigestWidget extends ConsumerWidget {
       error: (_, __) => const SizedBox.shrink(),
       data: (posts) {
         if (posts.isEmpty) return const SizedBox.shrink();
+        // Bottom 26 (+ the rows' 2 px) = the §2.5 28 px section gap, so the
+        // digest reads as its own block above the notification list.
         return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 26),
           child: Container(
             decoration: BoxDecoration(
               gradient: KararGradients.hero,
@@ -670,7 +681,7 @@ class _DigestItem extends StatelessWidget {
       (bg: kc.primaryContainer, fg: dark ? kc.navActive : kc.primary),
     'reply_on_comment' => tinted(CategoryStyle.ocean.start),
     'mention' => tinted(CategoryStyle.magenta.start),
-    'moderation_result' => (bg: kc.haksizSoft, fg: kc.haksizFill),
+    'moderation_result' => (bg: kc.haksizSoft, fg: kc.voteIcon(false)),
     'trend_alert' || 'viral_post_owner' => tinted(CategoryStyle.amber.start),
     'weekly_digest' => (bg: kc.hakliSoft, fg: dark ? kc.hakliText : kc.hakliFill),
     _ => (bg: kc.muted, fg: kc.text2),

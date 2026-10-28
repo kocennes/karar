@@ -20,7 +20,8 @@ import '../models/post.dart';
 ///   error frame inside a card).
 /// * Light theme: coloured glow (`KararShadow.card`) / photo shadow.
 ///   Dark theme: the palette's dark stops (`CategoryStyle.gradientFor`), no
-///   shadow, 1 px inner hairline white 10 % (13 % on Diğer / seen cards).
+///   shadow, 1 px inner hairline white 10 % (13 % on Diğer / seen cards),
+///   a softer 14 % sheen (Diğer keeps the full 18 %).
 /// * [seen]: darker palette (photos +20 % black), no glow.
 ///
 /// [child] is laid out on top and defines the size (the background fills
@@ -117,10 +118,14 @@ class PostSurface extends StatelessWidget {
           ),
         ),
         if (!isPhoto) ...[
+          // Dark: the softer sheen, except on low-key (Diğer) palettes,
+          // which keep the full 18 % so the deep midnight card gets its
+          // lift from light, not from a greyed-out fill.
           DecoratedBox(
             decoration: BoxDecoration(
-              gradient:
-                  isDark ? KararGradients.cardSheenDark : KararGradients.cardSheen,
+              gradient: isDark && !palette.lowKey
+                  ? KararGradients.cardSheenDark
+                  : KararGradients.cardSheen,
             ),
           ),
           if (showRailSheen)

@@ -146,10 +146,11 @@ class KararColors extends ThemeExtension<KararColors> {
   /// Modal barrier.
   final Color scrim;
 
-  /// Rail buttons and verdict chip background. Light white; dark a dimmed
-  /// lavender-grey #E4E1EC so the capsules do not glare on the dark canvas
-  /// (#15131F text 14.2:1, #5B576D 5.37:1, #116B34 5.13:1, #B4232A 5.06:1,
-  /// #15803D icon 3.89:1, #D6363C icon 3.66:1, #7D50F0 icon 3.81:1).
+  /// Rail buttons, verdict chip and on-colour CTAs (onboarding "Devam").
+  /// Light white; dark the spec §2.2 off-white #F4F3F8 — never a dimmed
+  /// grey, which read as a disabled button on the vivid gradients
+  /// (#15131F text 16.6:1, #5B576D 6.28:1, #116B34 5.99:1, #B4232A 5.92:1,
+  /// #15803D icon 4.54:1, #D6363C icon 4.27:1, #7D50F0 icon 4.45:1).
   final Color capsule;
 
   /// Text on capsules — theme-independent (capsules are light in both themes).
@@ -178,8 +179,11 @@ class KararColors extends ThemeExtension<KararColors> {
   final Color raised;
 
   /// Text field fill and enabled border. Light: white field with a 1 px
-  /// #8E8AA3 border (3.07:1 on canvas, 3.33:1 on white) so fields are
-  /// visible on the lavender canvas. Dark: #262233 with the #2F2B3D hairline.
+  /// #8E8AA3 border (3.04:1 on canvas, 3.33:1 on white) so fields are
+  /// visible on the lavender canvas. Dark: #262233 fill with a 1 px #706B8A
+  /// border — 3.86:1 on the canvas, 3.31:1 on sheets, 3.06:1 against its
+  /// own fill — so dark fields keep a real boundary (the old #2F2B3D
+  /// hairline was 1.42:1 and fields read as flat smudges).
   final Color fieldFill;
   final Color fieldBorder;
 
@@ -220,6 +224,35 @@ class KararColors extends ThemeExtension<KararColors> {
 
   /// Soft tonal background for a vote side.
   Color voteSoft(bool hakli) => hakli ? hakliSoft : haksizSoft;
+
+  /// Icon colour for a vote side on surfaces and soft tints: the fill tone
+  /// in light, the brighter text tone in dark (the fill tones drop to
+  /// ~2.7–3.5:1 on dark surfaces and on the dark soft tints).
+  Color voteIcon(bool hakli) => isDark ? voteText(hakli) : voteFill(hakli);
+
+  /// Split-bar colour for a vote side (bar segments and progress tracks on
+  /// surfaces; never under text). Light: the vote fill. Dark: halfway
+  /// between fill and text tone — #30AF5F (6.4:1 on `surface`) and #EB585B
+  /// (5.2:1), near-equal lightness, so the bar matches the bright labels
+  /// beside it instead of a dull forest green next to a more vivid red.
+  Color voteBar(bool hakli) => isDark
+      ? Color.lerp(voteFill(hakli), voteText(hakli), 0.5)!
+      : voteFill(hakli);
+
+  Color get hakliBar => voteBar(true);
+  Color get haksizBar => voteBar(false);
+
+  /// Search-match highlight behind text on cards. Light: primaryContainer
+  /// (#EEE8FD). Dark: primaryContainer was 1.20:1 on the card and the match
+  /// vanished, so dark uses the brand fill at 55 % over `surface` (#4F3592,
+  /// 1.94:1 against the card).
+  Color get searchHighlightBg => isDark
+      ? Color.alphaBlend(primaryFill.withValues(alpha: 0.55), surface)
+      : primaryContainer;
+
+  /// Text on [searchHighlightBg]: onPrimaryContainer (#4A22B5) in light,
+  /// text1 in dark (8.4:1 on #4F3592).
+  Color get searchHighlightFg => isDark ? text1 : onPrimaryContainer;
 
   static const light = KararColors(
     brightness: Brightness.light,
@@ -297,17 +330,23 @@ class KararColors extends ThemeExtension<KararColors> {
     onInk: Color(0xFFFFFFFF),
     hakliFill: Color(0xFF15803D),
     hakliText: Color(0xFF4ADE80),
-    hakliSoft: Color(0xFF15281E),
+    // Vote fill over `surface`, matched per side like the verdict panel's
+    // tonal pills: Haklı 26 %, Haksız 17 %. Near-equal OKLab lightness and
+    // chroma (L .288 / .264, C .038 / .046), so the red never reads as a
+    // maroon slab next to a muted green (a shared 30 % gave C .074 vs
+    // .044). 1.29 / 1.16:1 against the surface; text tone on it 8.02 /
+    // 6.18:1.
+    hakliSoft: Color(0xFF163127),
     haksizFill: Color(0xFFD6363C),
     haksizText: Color(0xFFFF7A7A),
-    haksizSoft: Color(0xFF2E171A),
+    haksizSoft: Color(0xFF371B24),
     gold: Color(0xFFF5C04E),
     goldText: Color(0xFFF5C04E),
     warnSoft: Color(0xFF2E2716),
     warnText: Color(0xFFF5C04E),
     mint: Color(0xFF57CA8C),
     scrim: Color(0x99000000), // rgba(0,0,0,.60)
-    capsule: Color(0xFFE4E1EC), // dimmed: no glare blocks on the rail
+    capsule: Color(0xFFF4F3F8), // spec off-white (not a dimmed grey)
     onCapsuleText: Color(0xFF15131F),
     onCapsuleMuted: Color(0xFF5B576D),
     onCapsuleHakli: Color(0xFF116B34),
@@ -319,7 +358,7 @@ class KararColors extends ThemeExtension<KararColors> {
     shimmerHighlight: Color(0xFF2A2638),
     raised: Color(0xFF3A3552),
     fieldFill: Color(0xFF262233),
-    fieldBorder: Color(0xFF2F2B3D),
+    fieldBorder: Color(0xFF706B8A),
     onColor: Color(0xFFFFFFFF),
     onColorSoft: Color(0x40FFFFFF), // white 25 %
     onColorTrack: Color(0x24FFFFFF), // white 14 %
@@ -853,6 +892,17 @@ abstract final class KararGradients {
     center: Alignment.topLeft,
     radius: 1.4,
     colors: [Color(0xFF3A2F5E), Color(0xFF1B1828)],
+  );
+
+  /// Dark weekly hero: on the near-black canvas the plain [hero] read as one
+  /// more grey card, so dark gets a brighter violet core — the brand fill
+  /// blended at 28 % into the hero's top stop (#4D3887) — before the regular
+  /// [hero] stops (white text ≥ 9:1, gold overline ≥ 5.5:1 on it).
+  static const RadialGradient heroDark = RadialGradient(
+    center: Alignment.topLeft,
+    radius: 1.4,
+    colors: [Color(0xFF4D3887), Color(0xFF3A2F5E), Color(0xFF1B1828)],
+    stops: [0, 0.45, 1],
   );
 
   /// Auth brand panel / violet fallback.

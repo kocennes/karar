@@ -740,7 +740,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
               ListTile(
                 leading:
-                    Icon(Icons.notifications_off_rounded, color: kc.haksizFill),
+                    Icon(Icons.notifications_off_rounded,
+                        color: kc.voteIcon(false)),
                 title: Text('Bildirimleri tamamen kapat',
                     style: TextStyle(color: kc.haksizText)),
                 subtitle: const Text('Hiçbir push bildirimi almayacaksın'),

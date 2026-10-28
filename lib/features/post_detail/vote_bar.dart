@@ -8,9 +8,9 @@ import '../../shared/models/post.dart';
 /// Result split bar (spec §5.7).
 ///
 /// * ≥ 40 votes: two rounded `Flexible` segments (Haklı | 3 px | Haksız,
-///   same fills in both themes, no text inside), with the labels in a row
-///   below ("✓ Haklı  %75" … "Haksız  %25 ✕") so the minority side never
-///   truncates.
+///   no text inside, colours from [VoteBar.segmentColor]), with the labels
+///   in a row below ("✓ Haklı  %75" … "Haksız  %25 ✕") so the minority side
+///   never truncates.
 /// * < 40 votes: a muted track + "{n} oy · Karar için 40 oy bekleniyor".
 /// * The split tweens from the previous fraction when the counts change
 ///   (compact 420 ms, detail 480 ms); the first appearance animates from
@@ -28,6 +28,16 @@ class VoteBar extends StatefulWidget {
 
   /// Shows the label row below the bar (or the waiting text below 40 votes).
   final bool showLabels;
+
+  /// Bar colour for a vote side (segments and tracks; never under text):
+  /// the theme's [KararColors.voteBar] tone.
+  ///
+  /// Light: the vote fill. Dark: halfway between the fill and the text
+  /// tone — #30AF5F (6.4:1 on `surface`) and #EB585B (5.2:1), near-equal
+  /// lightness. The light fills on dark were a dull 3.6:1 forest green that
+  /// did not match the neon "Haklı" labels next to a more vivid 3.8:1 red,
+  /// so even an 81/19 split read red-heavy.
+  static Color segmentColor(KararColors kc, bool hakli) => kc.voteBar(hakli);
 
   @override
   State<VoteBar> createState() => _VoteBarState();
@@ -173,7 +183,7 @@ class _VoteBarState extends State<VoteBar> with SingleTickerProviderStateMixin {
                           fit: FlexFit.tight,
                           flex: (f * 1000).round().clamp(1, 999),
                           child: _Segment(
-                            color: kc.hakliFill,
+                            color: VoteBar.segmentColor(kc, true),
                             height: barHeight,
                           ),
                         ),
@@ -184,7 +194,7 @@ class _VoteBarState extends State<VoteBar> with SingleTickerProviderStateMixin {
                           fit: FlexFit.tight,
                           flex: ((1 - f) * 1000).round().clamp(1, 999),
                           child: _Segment(
-                            color: kc.haksizFill,
+                            color: VoteBar.segmentColor(kc, false),
                             height: barHeight,
                           ),
                         ),

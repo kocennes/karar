@@ -26,7 +26,7 @@ enum KararCircleStyle {
   /// Brand fill (`primaryFill`, both themes) with a white icon.
   primary,
 
-  /// Light capsule (white / dimmed #E4E1EC in dark) + capsule shadow,
+  /// Light capsule (white / off-white #F4F3F8 in dark) + capsule shadow,
   /// #15131F icon in both themes.
   capsule,
 }

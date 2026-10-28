@@ -10,9 +10,10 @@ import '../../shared/widgets/karar_pressable.dart';
 import 'weekly_featured_provider.dart';
 import 'widgets/feed_skeletons.dart';
 
-/// "Bu Haftanın Kararı" hero (spec §5.8): an ink radial-gradient card in
-/// both themes with a gold overline, a quoted title, a mini verdict bar,
-/// the comment count and a "Görüntüle" pill.
+/// "Bu Haftanın Kararı" hero (spec §5.8): an ink radial-gradient card (dark:
+/// a brighter violet core with a gold edge, see [_HeroFrame]) with a gold
+/// overline, a quoted two-line title, a mini verdict bar, the comment count
+/// and a "Görüntüle" pill (dense / narrow: an arrow disc).
 class WeeklyFeaturedCard extends ConsumerWidget {
   const WeeklyFeaturedCard({
     super.key,
@@ -23,8 +24,9 @@ class WeeklyFeaturedCard extends ConsumerWidget {
   /// Outer margin (the desktop right rail passes zero).
   final EdgeInsetsGeometry margin;
 
-  /// Phone feed header: a one-line title and tighter padding, so the first
-  /// post card's verdict clears the floating nav on ~844 pt screens.
+  /// Phone feed header: the two-line title sits beside a 40 px arrow disc
+  /// (no separate "Görüntüle" row) with tighter padding, so the first post
+  /// card's verdict still clears the floating nav on ~844 pt screens.
   final bool dense;
 
   @override
@@ -47,8 +49,16 @@ class WeeklyFeaturedCard extends ConsumerWidget {
   }
 }
 
-/// Shared hero container: radial ink gradient, radius 24, light shadow /
-/// dark hairline.
+/// Shared hero container: radial ink gradient, radius 24.
+///
+/// * Light: the ink block with a soft ink shadow (it already stands out on
+///   the pale canvas).
+/// * Dark: on a near-black canvas the plain ink gradient read as one more
+///   grey card (same family as the nav pill and the trend panel), so dark
+///   gets its own hero treatment: a brighter violet core (brand fill
+///   blended into the hero's top stop, white text ≥ 9:1, gold overline
+///   ≥ 5.5:1), a gold hairline, a soft violet glow underneath and a faint
+///   gold sheen behind the trophy.
 class _HeroFrame extends StatelessWidget {
   const _HeroFrame({required this.child});
 
@@ -56,36 +66,56 @@ class _HeroFrame extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = context.isDark;
+    final kc = context.kc;
+    final isDark = kc.isDark;
     final radius = KararRadius.all(KararRadius.surface);
+    final heroBottom = KararGradients.hero.colors.last;
+
+    final gradient = isDark ? KararGradients.heroDark : KararGradients.hero;
+
+    final shadow = isDark
+        ? BoxShadow(
+            color: kc.primaryFill.withValues(alpha: 0.25),
+            offset: const Offset(0, 10),
+            blurRadius: 28,
+            spreadRadius: -6,
+          )
+        : BoxShadow(
+            color: heroBottom.withValues(alpha: 0.22),
+            offset: const Offset(0, 10),
+            blurRadius: 24,
+            spreadRadius: -6,
+          );
+
     return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: radius,
-        boxShadow: isDark
-            ? null
-            : [
-                BoxShadow(
-                  color:
-                      KararGradients.hero.colors.last.withValues(alpha: 0.22),
-                  offset: const Offset(0, 10),
-                  blurRadius: 24,
-                  spreadRadius: -6,
-                ),
-              ],
-      ),
+      decoration: BoxDecoration(borderRadius: radius, boxShadow: [shadow]),
       child: ClipRRect(
         borderRadius: radius,
         child: Material(
           type: MaterialType.transparency,
           child: Ink(
             decoration: BoxDecoration(
-              gradient: KararGradients.hero,
+              gradient: gradient,
               borderRadius: radius,
               border: isDark
-                  ? Border.all(color: KararShadow.cardHairlineDark)
+                  ? Border.all(color: kc.gold.withValues(alpha: 0.26))
                   : null,
             ),
-            child: child,
+            child: isDark
+                ? DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: RadialGradient(
+                        center: Alignment.topLeft,
+                        radius: 0.75,
+                        colors: [
+                          kc.gold.withValues(alpha: 0.14),
+                          kc.gold.withValues(alpha: 0),
+                        ],
+                      ),
+                    ),
+                    child: child,
+                  )
+                : child,
           ),
         ),
       ),
@@ -113,6 +143,121 @@ class _FeaturedCard extends StatelessWidget {
       fontFeatures: AppTypography.tabular,
     );
 
+    // "🏆 Bu Haftanın Kararı" in gold.
+    final overline = Row(
+      children: [
+        const ExcludeSemantics(
+          child: Text('🏆', style: TextStyle(fontSize: 14)),
+        ),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            'Bu Haftanın Kararı',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTypography.meta.copyWith(
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.2,
+              color: kc.gold,
+            ),
+          ),
+        ),
+      ],
+    );
+
+    Widget title({required double fontSize, required double height}) => Text(
+          '“${post.title}”',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: AppTypography.bodyStrong.copyWith(
+            fontSize: fontSize,
+            height: height,
+            fontWeight: FontWeight.w800,
+            color: kc.onColor,
+          ),
+        );
+
+    // Mini verdict bar + "%95 Haklı" + comment count.
+    final stats = <Widget>[
+      if (showPct) ...[
+        Flexible(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 84),
+            child: _MiniBar(hakliPercent: hakliPct),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text('%$hakliPct Haklı', style: white12),
+        const SizedBox(width: 12),
+      ],
+      ExcludeSemantics(
+        child: Icon(
+          Icons.chat_bubble_outline_rounded,
+          size: 15,
+          color: kc.onColor,
+        ),
+      ),
+      const SizedBox(width: 4),
+      Text(formatCompactCount(post.commentCount), style: white12),
+    ];
+
+    Widget arrowButton(double size) => KararPressable(
+          onTap: open,
+          semanticLabel: 'Görüntüle',
+          tooltip: 'Görüntüle',
+          focusShape: BoxShape.circle,
+          child: Container(
+            width: size,
+            height: size,
+            decoration: BoxDecoration(
+              color: kc.onColorTrack,
+              shape: BoxShape.circle,
+            ),
+            alignment: Alignment.center,
+            child: Icon(
+              Icons.arrow_forward_rounded,
+              size: size / 2,
+              color: kc.onColor,
+            ),
+          ),
+        );
+
+    if (dense) {
+      // Phone header: the full two-line title stays readable (spec §5.8)
+      // while the card stays short — the "Görüntüle" action becomes an
+      // arrow disc beside the text column instead of a third 44 px row.
+      return _HeroFrame(
+        child: InkWell(
+          onTap: open,
+          splashColor: kc.splashOnColor,
+          highlightColor: kc.highlightOnColor,
+          child: Padding(
+            // Right: 12 + the disc's 2 px hit-box inset = 14 visual.
+            padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      overline,
+                      const SizedBox(height: 6),
+                      title(fontSize: 15, height: 1.25),
+                      const SizedBox(height: 8),
+                      Row(children: stats),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 4),
+                arrowButton(40),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final textScale = MediaQuery.textScalerOf(context).scale(12) / 12;
@@ -124,26 +269,7 @@ class _FeaturedCard extends StatelessWidget {
         // The button's 44 px hit box is taller than its 32/36 px visual, so
         // the paddings below are 6 px smaller than the visual gaps.
         final viewButton = narrow
-            ? KararPressable(
-                onTap: open,
-                semanticLabel: 'Görüntüle',
-                tooltip: 'Görüntüle',
-                focusShape: BoxShape.circle,
-                child: Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: kc.onColorTrack,
-                    shape: BoxShape.circle,
-                  ),
-                  alignment: Alignment.center,
-                  child: Icon(
-                    Icons.arrow_forward_rounded,
-                    size: 18,
-                    color: kc.onColor,
-                  ),
-                ),
-              )
+            ? arrowButton(36)
             : KararPressable(
                 onTap: open,
                 semanticLabel: 'Görüntüle',
@@ -176,78 +302,18 @@ class _FeaturedCard extends StatelessWidget {
             splashColor: kc.splashOnColor,
             highlightColor: kc.highlightOnColor,
             child: Padding(
-              padding: dense
-                  ? const EdgeInsets.fromLTRB(16, 12, 12, 6)
-                  : const EdgeInsets.fromLTRB(16, 14, 14, 8),
+              padding: const EdgeInsets.fromLTRB(16, 14, 14, 8),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  overline,
+                  const SizedBox(height: 8),
+                  title(fontSize: 16, height: 1.3),
+                  const SizedBox(height: 6),
                   Row(
                     children: [
-                      const ExcludeSemantics(
-                        child: Text('🏆', style: TextStyle(fontSize: 14)),
-                      ),
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: Text(
-                          'Bu Haftanın Kararı',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: AppTypography.meta.copyWith(
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.2,
-                            color: kc.gold,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  SizedBox(height: dense ? 6 : 8),
-                  Text(
-                    '“${post.title}”',
-                    maxLines: dense ? 1 : 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppTypography.bodyStrong.copyWith(
-                      fontSize: dense ? 15 : 16,
-                      height: 1.3,
-                      fontWeight: FontWeight.w800,
-                      color: kc.onColor,
-                    ),
-                  ),
-                  SizedBox(height: dense ? 4 : 6),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Row(
-                          children: [
-                            if (showPct) ...[
-                              Flexible(
-                                child: ConstrainedBox(
-                                  constraints:
-                                      const BoxConstraints(maxWidth: 84),
-                                  child: _MiniBar(hakliPercent: hakliPct),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Text('%$hakliPct Haklı', style: white12),
-                              const SizedBox(width: 12),
-                            ],
-                            ExcludeSemantics(
-                              child: Icon(
-                                Icons.chat_bubble_outline_rounded,
-                                size: 15,
-                                color: kc.onColor,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              formatCompactCount(post.commentCount),
-                              style: white12,
-                            ),
-                          ],
-                        ),
-                      ),
+                      Expanded(child: Row(children: stats)),
                       const SizedBox(width: 8),
                       viewButton,
                     ],
@@ -316,35 +382,57 @@ class _FeaturedCardSkeleton extends StatelessWidget {
   Widget build(BuildContext context) {
     final kc = context.kc;
     final bar = kc.onColor;
+    // Mirrors the loaded layouts: dense = text column + arrow disc,
+    // regular = overline, two title lines, stats row with the pill.
+    final Widget bones = dense
+        ? Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _bar(bar, width: 130, height: 12),
+                    const SizedBox(height: 10),
+                    _bar(bar, height: 14),
+                    const SizedBox(height: 6),
+                    _bar(bar, width: 180, height: 14),
+                    const SizedBox(height: 12),
+                    _bar(bar, width: 84, height: 6),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              _bar(bar, width: 40, height: 40, radius: 20),
+            ],
+          )
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _bar(bar, width: 130, height: 12),
+              const SizedBox(height: 12),
+              _bar(bar, height: 16),
+              const SizedBox(height: 8),
+              _bar(bar, width: 200, height: 16),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  _bar(bar, width: 84, height: 6),
+                  const Spacer(),
+                  _bar(bar, width: 96, height: 32, radius: 16),
+                ],
+              ),
+            ],
+          );
     return ExcludeSemantics(
       child: _HeroFrame(
         child: Padding(
           padding: dense
-              ? const EdgeInsets.fromLTRB(16, 12, 12, 12)
+              ? const EdgeInsets.fromLTRB(16, 14, 14, 14)
               : const EdgeInsets.fromLTRB(16, 16, 14, 16),
           child: KararShimmer(
             baseColor: kc.highlightOnColor,
             highlightColor: kc.onColorTrack,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _bar(bar, width: 130, height: 12),
-                SizedBox(height: dense ? 10 : 12),
-                _bar(bar, height: 16),
-                if (!dense) ...[
-                  const SizedBox(height: 8),
-                  _bar(bar, width: 200, height: 16),
-                ],
-                SizedBox(height: dense ? 12 : 16),
-                Row(
-                  children: [
-                    _bar(bar, width: 84, height: 6),
-                    const Spacer(),
-                    _bar(bar, width: 96, height: 32, radius: 16),
-                  ],
-                ),
-              ],
-            ),
+            child: bones,
           ),
         ),
       ),
