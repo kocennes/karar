@@ -51,8 +51,6 @@ Telif Hakkı / FSEK: telif@karar.app
 - TCK 314: Terör örgütü propagandası → anında kaldırma, BTK bildirimi
 - Doxxing → KVKK + kişisel haklar
 
-**Aksiyon:** Moderasyon sistemi bu içerikleri tespit etmeli. Tespitte anında kaldır, compliance_logs yaz.
-
 ---
 
 ## Kullanım Koşulları — Özet
@@ -67,13 +65,6 @@ Telif Hakkı / FSEK: telif@karar.app
 - Askıya alma: İhlal durumunda hesap kapatma hakkı
 - Yetkili mahkeme: İstanbul Türk mahkemeleri
 
-**Kontrol noktaları (hukukçu):**
-- [ ] Hizmet tanımı yeterince açık mı?
-- [ ] Kullanıcı sorumluluğu sınırı doğru mu?
-- [ ] İçerik lisansı uygun mu (FSEK)?
-- [ ] 18+ beyan yöntemi yeterli mi?
-- [ ] Askıya alma prosedürü açık mı?
-
 ---
 
 ## Gizlilik Politikası
@@ -81,7 +72,6 @@ Telif Hakkı / FSEK: telif@karar.app
 `docs/privacy.md` — ayrı belge.
 
 Önemli noktalar:
-- Çocuk gizliliği (COPPA uyumlu değil ama Türkiye'de zorunluluk yok)
 - Reklam veri (AdMob UMP rızası)
 - Üçüncü taraf paylaşımı (GCP, Firebase, Perspective)
 

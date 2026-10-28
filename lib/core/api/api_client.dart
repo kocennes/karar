@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 
+import '../auth/age_gate.dart';
 import '../config/app_config.dart';
 import 'api_exception.dart';
 
@@ -14,6 +15,25 @@ class SseEvent {
 
 typedef TokenReader = Future<String?> Function();
 typedef TokenRefresher = Future<String?> Function();
+
+/// P0-02: the app's answer to the age-gate error codes (403). [ApiClient]
+/// runs it for every request before the error reaches the caller, so no
+/// screen or provider has to know about these codes.
+abstract interface class AgeGateHooks {
+  /// [AgeGate.notEligibleCode]: lock the device, end any session, show the
+  /// neutral refusal. Must not throw.
+  Future<void> onNotEligible();
+
+  /// [AgeGate.verificationRequiredCode]: the signed-in account has no birth
+  /// date; route to the birth-date step. Must not throw.
+  Future<void> onVerificationRequired();
+
+  /// [AgeGate.declarationRequiredCode] (guest vote): ask for the neutral
+  /// declaration. True when the device has now declared, so the request is
+  /// retried once; false gives up with the original error. May throw an
+  /// [ApiException] that replaces it (the refusal).
+  Future<bool> onDeclarationRequired();
+}
 
 class ApiClient {
   ApiClient({
@@ -37,6 +57,10 @@ class ApiClient {
 
   void setOnMaintenance(void Function() callback) =>
       _onMaintenance = callback;
+
+  AgeGateHooks? _ageGateHooks;
+
+  void setAgeGateHooks(AgeGateHooks hooks) => _ageGateHooks = hooks;
 
   static Dio _buildDio(String baseUrl) => Dio(
         BaseOptions(
@@ -141,7 +165,36 @@ class ApiClient {
         ),
       );
 
-  Future<T> _request<T>(Future<Response<dynamic>> Function() call) async {
+  Future<T> _request<T>(
+    Future<Response<dynamic>> Function() call, {
+    bool afterDeclaration = false,
+  }) async {
+    try {
+      return await _send<T>(call);
+    } on ApiException catch (e) {
+      final hooks = _ageGateHooks;
+      if (hooks == null || e.statusCode != 403) rethrow;
+      switch (e.code) {
+        case AgeGate.notEligibleCode:
+          await _quietly(hooks.onNotEligible);
+        case AgeGate.verificationRequiredCode:
+          await _quietly(hooks.onVerificationRequired);
+        case AgeGate.declarationRequiredCode when !afterDeclaration:
+          if (await hooks.onDeclarationRequired()) {
+            return _request<T>(call, afterDeclaration: true);
+          }
+      }
+      rethrow;
+    }
+  }
+
+  static Future<void> _quietly(Future<void> Function() hook) async {
+    try {
+      await hook();
+    } catch (_) {}
+  }
+
+  Future<T> _send<T>(Future<Response<dynamic>> Function() call) async {
     try {
       final response = await call();
       if ((response.statusCode ?? 0) >= 400) {

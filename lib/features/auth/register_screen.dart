@@ -2,11 +2,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/api/api_exception.dart';
+import '../../core/auth/age_gate.dart';
 import '../../core/auth/auth_service.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/theme/karar_tokens.dart';
 import '../../core/utils/validators.dart';
 import '../../shared/widgets/karar_button.dart';
+import 'widgets/age_gate_widgets.dart';
 import 'widgets/auth_layout.dart';
 
 enum UsernameStatus { idle, checking, available, taken }
@@ -33,12 +36,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _confirmPasswordCtrl = TextEditingController();
-  final _dobCtrl = TextEditingController();
 
   DateTime? _selectedDob;
   String? _selectedGender;
-  bool _ageConfirmed = false;
   bool _acceptedPolicy = false;
+
+  /// P0-02: null until the device lock is read; true keeps the gate closed.
+  bool? _ageGateLocked;
 
   var _isLoading = false;
   var _obscure = true;
@@ -55,6 +59,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
   void initState() {
     super.initState();
     _usernameCtrl.addListener(_onUsernameChanged);
+    widget.authService.isAgeGateLocked().then(
+      (locked) {
+        if (mounted) setState(() => _ageGateLocked = locked);
+      },
+      onError: (Object _) {
+        if (mounted) setState(() => _ageGateLocked = false);
+      },
+    );
   }
 
   @override
@@ -65,7 +77,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
     _confirmPasswordCtrl.dispose();
-    _dobCtrl.dispose();
     _confirmPasswordFocus.dispose();
     super.dispose();
   }
@@ -127,21 +138,27 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  Future<void> _selectDob() async {
-    final now = DateTime.now();
-    final initialDate = _selectedDob ?? DateTime(2000);
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: initialDate,
-      firstDate: DateTime(now.year - 100),
-      lastDate: DateTime(now.year - 18, now.month, now.day),
-      helpText: 'Doğum Tarihini Seç',
-    );
-    if (picked != null && picked != _selectedDob) {
-      setState(() {
-        _selectedDob = picked;
-        _dobCtrl.text = "${picked.day}/${picked.month}/${picked.year}";
-      });
+  /// P0-02: an ineligible date closes the gate on this device for good. The
+  /// lock is written first so it holds even offline; the server copy
+  /// (`devices.age_gate_failed_at`) is best effort and gets only the date.
+  Future<void> _closeAgeGate({DateTime? declaredDob}) async {
+    try {
+      await widget.authService.lockAgeGate();
+    } catch (_) {}
+    if (declaredDob != null) unawaited(_recordOnServer(declaredDob));
+    if (!mounted) return;
+    setState(() {
+      _ageGateLocked = true;
+      _isLoading = false;
+      _error = null;
+    });
+  }
+
+  Future<void> _recordOnServer(DateTime dob) async {
+    try {
+      await widget.authService.declareDeviceAge(dob);
+    } catch (_) {
+      // Expected: the server answers 403 AGE_NOT_ELIGIBLE.
     }
   }
 
@@ -150,6 +167,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     if (_selectedDob == null) {
       setState(() => _error = 'Doğum tarihi seçmelisin.');
+      return;
+    }
+
+    // Local pre-check against today's Turkish date (as the server counts), so
+    // no account data is sent for an ineligible date; the server still checks.
+    if (!AgeGate.isEligible(_selectedDob!)) {
+      await _closeAgeGate(declaredDob: _selectedDob);
       return;
     }
 
@@ -164,11 +188,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
 
     if (_usernameStatus == UsernameStatus.checking) {
-      return;
-    }
-
-    if (!_ageConfirmed) {
-      setState(() => _error = '18 yaşında veya daha büyük olduğunu onaylamalısın.');
       return;
     }
 
@@ -193,10 +212,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
         gender: _selectedGender!,
         acceptedTerms: _acceptedPolicy,
         acceptedCommunityGuidelines: _acceptedPolicy,
-        ageConfirmed: _ageConfirmed,
       );
       if (!mounted) return;
       context.go(_authLocation('/auth/verify-email'), extra: email);
+    } on ApiException catch (e) {
+      if (e.code == AgeGate.notEligibleCode) {
+        // The server refused this device (e.g. an earlier attempt elsewhere).
+        await _closeAgeGate();
+        return;
+      }
+      setState(() => _error = e.message);
     } catch (e) {
       setState(() => _error = e.toString().replaceAll('Exception:', '').trim());
     } finally {
@@ -210,8 +235,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _error = null;
     });
     try {
+      // A refused device never reaches Google or the API (see
+      // AuthService.loginWithGoogle); a refusal from /auth/google has already
+      // locked the device and ended the session centrally.
       await widget.authService.loginWithGoogle();
       widget.onSuccess?.call();
+    } on ApiException catch (e) {
+      if (e.code == AgeGate.notEligibleCode) {
+        await _closeAgeGate();
+        return;
+      }
+      setState(() => _error = e.friendlyMessage);
     } catch (e) {
       setState(() => _error = e.toString().replaceAll('Exception:', '').trim());
     } finally {
@@ -222,6 +256,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   Widget build(BuildContext context) {
     final kc = context.kc;
+
+    switch (_ageGateLocked) {
+      case null:
+        return const AuthScaffold(child: SizedBox.shrink());
+      case true:
+        return const AuthScaffold(child: AgeGateRefusal());
+      case false:
+        break;
+    }
 
     return AuthScaffold(
       child: Form(
@@ -299,17 +342,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
               validator: Validators.email,
             ),
             const SizedBox(height: 14),
-            TextFormField(
-              controller: _dobCtrl,
-              readOnly: true,
-              onTap: _selectDob,
-              decoration: const InputDecoration(
-                labelText: 'Doğum Tarihi',
-                prefixIcon: Icon(Icons.calendar_today_rounded),
-                hintText: 'Gün/Ay/Yıl',
-              ),
-              validator: (v) =>
-                  v == null || v.isEmpty ? 'Doğum tarihi gerekli.' : null,
+            BirthDateField(
+              value: _selectedDob,
+              enabled: !_isLoading,
+              onChanged: (picked) => setState(() => _selectedDob = picked),
             ),
             const SizedBox(height: 14),
             DropdownButtonFormField<String>(
@@ -374,23 +410,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
               validator: (v) => Validators.passwordsMatch(v, _passwordCtrl.text),
             ),
             const SizedBox(height: 16),
-            CheckboxListTile(
-              value: _ageConfirmed,
-              onChanged: _isLoading
-                  ? null
-                  : (value) => setState(
-                        () => _ageConfirmed = value ?? false,
-                      ),
-              controlAffinity: ListTileControlAffinity.leading,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-              shape: RoundedRectangleBorder(
-                borderRadius: KararRadius.all(KararRadius.input),
-              ),
-              title: Text(
-                '18 yaşında veya daha büyük olduğumu beyan ediyorum.',
-                style: AppTypography.bodyS.copyWith(color: kc.text1),
-              ),
-            ),
             CheckboxListTile(
               value: _acceptedPolicy,
               onChanged: _isLoading

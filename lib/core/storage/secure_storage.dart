@@ -48,6 +48,14 @@ class SecureStorage {
     await _delete(_keyRefreshToken);
   }
 
+  // P0-02: set once this device declared an ineligible birth date. Never cleared
+  // by logout (clearAuthTokens) so the age gate stays closed on this device.
+  static const _keyAgeGateLock = 'age_gate_locked_at';
+
+  Future<String?> readAgeGateLock() => _read(_keyAgeGateLock);
+  Future<void> writeAgeGateLock(DateTime at) =>
+      _write(_keyAgeGateLock, at.toUtc().toIso8601String());
+
   Future<String?> readPendingEmailChange() => _read(_keyPendingEmailChange);
   Future<void> writePendingEmailChange(String email) =>
       _write(_keyPendingEmailChange, email);

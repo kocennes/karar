@@ -1,3 +1,5 @@
+import '../auth/age_gate.dart';
+
 class ApiException implements Exception {
   const ApiException({
     required this.statusCode,
@@ -14,6 +16,15 @@ class ApiException implements Exception {
   bool get isMaintenance => statusCode == 503;
 
   String get friendlyMessage {
+    // P0-02: never the generic 403 text for the age gate. The app has already
+    // answered these centrally (refusal page, birth-date step or sheet).
+    switch (code) {
+      case AgeGate.notEligibleCode:
+        return AgeGate.refusalMessage;
+      case AgeGate.verificationRequiredCode:
+      case AgeGate.declarationRequiredCode:
+        return AgeGate.birthDatePrompt;
+    }
     switch (statusCode) {
       case 400:
         return 'Bilgileri kontrol et.';
