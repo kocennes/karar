@@ -121,6 +121,40 @@ public class RealStackRegressionTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    [Fact]
+    public async Task DiscoverDwell_PastTenMinutes_IsClampedNotRejected()
+    {
+        var author = await RegisterDeviceAsync();
+        Guid postId;
+        using (var create = new HttpRequestMessage(HttpMethod.Post, "/api/v1/posts"))
+        {
+            create.Headers.Add("X-Device-Token", author);
+            create.Content = JsonContent.Create(new
+            {
+                title = "Kesfet bekleme suresi testi",
+                content = "Kesfet bekleme suresi icin yazilmis, elli karakterden uzun bir gonderi icerigi.",
+                categoryId = 1,
+                acceptedTerms = true,
+                acceptedCommunityGuidelines = true,
+            });
+            var created = await _client.SendAsync(create);
+            Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+            using var json = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+            postId = json.RootElement.GetProperty("id").GetGuid();
+        }
+
+        var reader = await RegisterDeviceAsync();
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/posts/discover/events")
+        {
+            Content = JsonContent.Create(new { postId, eventType = "dwell", dwellSeconds = 700 }),
+        };
+        request.Headers.Add("X-Device-Token", reader);
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+    }
+
     [Theory]
     [InlineData("/api/v1/admin/categories/health")]
     [InlineData("/api/v1/admin/analytics/feed-quality/posts")]
