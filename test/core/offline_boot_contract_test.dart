@@ -44,7 +44,10 @@ void main() {
   });
 
   test('first frame is painted before any network-bound start-up', () {
-    final src = File('lib/main.dart').readAsStringSync();
+    // Normalised so the '\n}\n' lookup below also works in CRLF checkouts
+    // (Windows with core.autocrlf=true).
+    final src =
+        File('lib/main.dart').readAsStringSync().replaceAll('\r\n', '\n');
 
     // main() itself must not await Firebase/AdMob: on web initializeApp
     // downloads the Firebase JS SDK from www.gstatic.com, and awaiting it
