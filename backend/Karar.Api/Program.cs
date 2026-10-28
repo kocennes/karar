@@ -231,6 +231,32 @@ builder.Services.AddRateLimiter(options =>
         )
     );
 
+    // POST /api/v1/feedback: anonim yazılabilir, admin kuyruğuna düşer (spam vektörü).
+    options.AddPolicy("feedback", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(10),
+                QueueLimit = 0
+            }
+        )
+    );
+
+    // POST /api/v1/posts/{id}/ai-summary: özet 24 saat önbelleklenir ama her çağrı DB'ye gider/yazar.
+    options.AddPolicy("ai-summary", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 30,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            }
+        )
+    );
+
     options.AddPolicy("growth-events", context =>
         RateLimitPartition.GetFixedWindowLimiter(
             context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
@@ -957,6 +983,13 @@ app.MapPut("/api/v1/devices/fcm-token", async (
     RequestDevice requestDevice
 ) =>
 {
+    // Kimlik önce: kimliği olmayan çağıran gövde doğrulamasından (400) önce 401 alır.
+    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    if (deviceId is null)
+    {
+        return Unauthorized();
+    }
+
     if (ValidateRequest(request) is { } validationError)
     {
         return validationError;
@@ -965,12 +998,6 @@ app.MapPut("/api/v1/devices/fcm-token", async (
     if (!IsSupportedPlatform(request.Platform))
     {
         return BadRequest("INVALID_PLATFORM", "Platform android, ios veya web olmalı.");
-    }
-
-    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
-    if (deviceId is null)
-    {
-        return Unauthorized();
     }
 
     await using var connection = await db.OpenConnectionAsync();
@@ -1023,15 +1050,25 @@ app.MapGet("/api/v1/moderation/transparency", async (Db db, RedisService redis) 
 
     await using var connection = await db.OpenConnectionAsync();
 
+    // Kaldırılan içerik = moderasyonla gizlenen (auto_hidden) ya da admin işlemiyle silinen (deleted + admin_actions kaydı).
+    // Yazarın kendi sildiği içerik sayılmaz. Şemada posts.status='removed', comments.is_deleted ve reports.updated_at yoktur.
     await using var cmd = new NpgsqlCommand(
         """
         SELECT
             (SELECT COUNT(*) FROM posts  WHERE created_at >= NOW() - INTERVAL '30 days')                    AS posts_created,
-            (SELECT COUNT(*) FROM posts  WHERE status = 'removed' AND updated_at >= NOW() - INTERVAL '30 days') AS posts_removed,
+            (SELECT COUNT(*) FROM posts p
+              WHERE p.updated_at >= NOW() - INTERVAL '30 days'
+                AND (p.status = 'auto_hidden'
+                     OR (p.status = 'deleted' AND EXISTS (
+                         SELECT 1 FROM admin_actions aa WHERE aa.target_type = 'post' AND aa.target_id = p.id)))) AS posts_removed,
             (SELECT COUNT(*) FROM comments WHERE created_at >= NOW() - INTERVAL '30 days')                  AS comments_created,
-            (SELECT COUNT(*) FROM comments WHERE is_deleted = true AND updated_at >= NOW() - INTERVAL '30 days') AS comments_removed,
+            (SELECT COUNT(*) FROM comments c
+              WHERE c.updated_at >= NOW() - INTERVAL '30 days'
+                AND (c.status = 'auto_hidden'
+                     OR (c.status = 'deleted' AND EXISTS (
+                         SELECT 1 FROM admin_actions aa WHERE aa.target_type = 'comment' AND aa.target_id = c.id)))) AS comments_removed,
             (SELECT COUNT(*) FROM reports WHERE created_at >= NOW() - INTERVAL '30 days')                   AS reports_received,
-            (SELECT COUNT(*) FROM reports WHERE status IN ('resolved','actioned') AND updated_at >= NOW() - INTERVAL '30 days') AS reports_actioned,
+            (SELECT COUNT(*) FROM reports WHERE status = 'actioned' AND created_at >= NOW() - INTERVAL '30 days') AS reports_actioned,
             (SELECT COUNT(*) FROM reports r WHERE r.created_at >= NOW() - INTERVAL '30 days' AND r.reason = 'harassment')    AS reason_harassment,
             (SELECT COUNT(*) FROM reports r WHERE r.created_at >= NOW() - INTERVAL '30 days' AND r.reason = 'hate_speech')   AS reason_hate_speech,
             (SELECT COUNT(*) FROM reports r WHERE r.created_at >= NOW() - INTERVAL '30 days' AND r.reason = 'spam')          AS reason_spam,
@@ -1387,7 +1424,7 @@ app.MapGet("/api/v1/posts", async (
                 SELECT p.id, p.title, p.content, p.image_url, c.id AS cat_id, c.name AS cat_name, c.emoji,
                        p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                        v.vote_type, p.trend_score, p.created_at,
-                       (p.device_id = @deviceId OR p.user_id = @userId),
+                       (p.device_id = @deviceId OR p.user_id = @userId) AS is_owner,
                        p.is_anonymous,
                        ROW_NUMBER() OVER (PARTITION BY p.category_id ORDER BY p.trend_score DESC, p.created_at DESC) AS cat_rank,
                        ROW_NUMBER() OVER (PARTITION BY COALESCE(p.user_id::text, p.device_id::text) ORDER BY p.trend_score DESC, p.created_at DESC) AS author_rank
@@ -2572,6 +2609,14 @@ app.MapPost("/api/v1/posts", async (
         return BadRequest("INVALID_REQUEST", "Gönderi içeriği okunamadı.");
     }
 
+    // Kimlik önce: kimliği olmayan çağıran gövde doğrulamasından (400) önce 401 alır.
+    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    var userId = GetOptionalUserId(httpRequest, jwtService);
+    if (deviceId is null && userId is null)
+    {
+        return Unauthorized();
+    }
+
     if (ValidateRequest(request) is { } validationError)
     {
         return validationError;
@@ -2589,13 +2634,6 @@ app.MapPost("/api/v1/posts", async (
         using var stream = imageFile.OpenReadStream();
         if (ImageValidator.DetectFormat(stream) is null)
             return BadRequest("INVALID_IMAGE_FORMAT", "Desteklenmeyen görsel formatı. jpg, png veya webp kullanın.");
-    }
-
-    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
-    var userId = GetOptionalUserId(httpRequest, jwtService);
-    if (deviceId is null && userId is null)
-    {
-        return Unauthorized();
     }
 
     await using var connection = await db.OpenConnectionAsync();
@@ -2995,7 +3033,7 @@ app.MapPost("/api/v1/posts/{id:guid}/ai-summary", async (
 
     var posts = await ReadPostsAsync(postCmd);
     return posts.Count == 0 ? NotFound("POST_NOT_FOUND", "Post bulunamadı.") : Results.Ok(posts[0]);
-}).RequireRateLimiting("fixed");
+}).RequireRateLimiting("ai-summary");
 
 app.MapDelete("/api/v1/posts/{id:guid}", async (
     Guid id,
@@ -3133,16 +3171,17 @@ app.MapPut("/api/v1/posts/{id:guid}", async (
     RedisService redis
 ) =>
 {
-    if (ValidateRequest(request) is { } validationError)
-    {
-        return validationError;
-    }
-
+    // Kimlik önce: kimliği olmayan çağıran gövde doğrulamasından (400) önce 401 alır.
     var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
     var userId = GetOptionalUserId(httpRequest, jwtService);
     if (deviceId is null && userId is null)
     {
         return Unauthorized();
+    }
+
+    if (ValidateRequest(request) is { } validationError)
+    {
+        return validationError;
     }
 
     await using var connection = await db.OpenConnectionAsync();
@@ -3306,6 +3345,14 @@ app.MapPost("/api/v1/posts/discover/events", async (
     RedisService redis
 ) =>
 {
+    // Kimlik önce: kimliği olmayan çağıran gövde doğrulamasından (400) önce 401 alır.
+    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    var userId = GetOptionalUserId(httpRequest, jwtService);
+    if (deviceId is null && userId is null)
+    {
+        return Unauthorized();
+    }
+
     if (ValidateRequest(request) is { } validationError)
     {
         return validationError;
@@ -3332,13 +3379,6 @@ app.MapPost("/api/v1/posts/discover/events", async (
     if (request.EventType == "dwell" && request.DwellSeconds is null)
     {
         return BadRequest("DWELL_SECONDS_REQUIRED", "Dwell event için süre gerekli.");
-    }
-
-    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
-    var userId = GetOptionalUserId(httpRequest, jwtService);
-    if (deviceId is null && userId is null)
-    {
-        return Unauthorized();
     }
 
     var metadata = string.IsNullOrWhiteSpace(request.Metadata) ? "{}" : request.Metadata;
@@ -3620,6 +3660,14 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
 {
     await AddVoteTimingJitterAsync(httpRequest.HttpContext.RequestAborted);
 
+    // Kimlik önce: kimliği olmayan çağıran gövde doğrulamasından (400) önce 401 alır.
+    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    var userId = GetOptionalUserId(httpRequest, jwtService);
+    if (deviceId is null && userId is null)
+    {
+        return Unauthorized();
+    }
+
     if (ValidateRequest(request) is { } validationError)
     {
         return validationError;
@@ -3628,13 +3676,6 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
     if (request.VoteType is not ("hakli" or "haksiz"))
     {
         return BadRequest("INVALID_VOTE_TYPE", "Oy tipi hakli veya haksiz olmalı.");
-    }
-
-    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
-    var userId = GetOptionalUserId(httpRequest, jwtService);
-    if (deviceId is null && userId is null)
-    {
-        return Unauthorized();
     }
 
     await using var connection = await db.OpenConnectionAsync();
@@ -4384,17 +4425,19 @@ app.MapPut("/api/v1/comments/{id:guid}", async (
     JwtService jwtService
 ) =>
 {
-    if (ValidateRequest(request) is { } validationError)
-    {
-        return validationError;
-    }
-
+    // Kimlik önce: kimliği olmayan çağıran gövde doğrulamasından (400) önce 401 alır.
     var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
     var userId = GetOptionalUserId(httpRequest, jwtService);
     if (deviceId is null && userId is null)
     {
         return Unauthorized();
     }
+
+    if (ValidateRequest(request) is { } validationError)
+    {
+        return validationError;
+    }
+
     var deviceParam = deviceId ?? Guid.Empty;
     var userParam = userId ?? Guid.Empty;
 
@@ -4529,6 +4572,13 @@ app.MapPost("/api/v1/reports", async (
     ComplianceLogService complianceLog
 ) =>
 {
+    // Kimlik önce: kimliği olmayan çağıran gövde doğrulamasından (400) önce 401 alır.
+    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    if (deviceId is null)
+    {
+        return Unauthorized();
+    }
+
     if (ValidateRequest(request) is { } validationError)
     {
         return validationError;
@@ -4542,12 +4592,6 @@ app.MapPost("/api/v1/reports", async (
     if (request.Reason is not ("hate_speech" or "harassment" or "personal_info" or "misinformation" or "spam" or "self_harm" or "illegal" or "other"))
     {
         return BadRequest("INVALID_REPORT_REASON", "Geçersiz rapor sebebi.");
-    }
-
-    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
-    if (deviceId is null)
-    {
-        return Unauthorized();
     }
 
     // Cihaz bazlı sliding window: saatte max 10 rapor (Redis-backed, çok instance'lı deploy'da paylaşılır)
@@ -4730,7 +4774,7 @@ app.MapPost("/api/v1/feedback", async (
         ?? throw new InvalidOperationException("Feedback id olusturulamadi."));
 
     return Results.Created($"/api/v1/feedback/{feedbackId}", new { id = feedbackId });
-}).RequireRateLimiting("api");
+}).RequireRateLimiting("feedback");
 
 // SSE: Kullanıcıya özgü gerçek zamanlı bildirim akışı (JWT zorunlu, Redis Pub/Sub fan-out)
 app.MapGet("/api/v1/notifications/events", async (
@@ -8177,15 +8221,22 @@ app.MapPost("/api/v1/auth/register", async (
     RedisService redis
 ) =>
 {
+    // Kimlik önce: kimliği olmayan çağıran gövde doğrulamasından (400) önce 401 alır.
+    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    if (deviceId is null)
+    {
+        return Unauthorized();
+    }
+
     if (ValidateRequest(request) is { } validationError)
     {
         return validationError;
     }
 
-    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
-    if (deviceId is null)
+    // users.gender CHECK (V31): başka bir değer INSERT'te 23514 ile 500 döndürüyordu.
+    if (request.Gender is not ("male" or "female" or "other" or "prefer_not_to_say"))
     {
-        return Unauthorized();
+        return BadRequest("INVALID_GENDER", "Geçersiz cinsiyet değeri.");
     }
 
     if (!request.AcceptedTerms || !request.AcceptedCommunityGuidelines)
@@ -10010,9 +10061,9 @@ app.MapPost("/api/v1/auth/2fa/enable", async (
     JwtService jwtService
 ) =>
 {
-    if (ValidateRequest(request) is { } validationError) return validationError;
     var principal = GetJwtPrincipal(httpRequest, jwtService);
     if (principal is null) return Unauthorized();
+    if (ValidateRequest(request) is { } validationError) return validationError;
     var userId = GetUserId(principal);
 
     await using var connection = await db.OpenConnectionAsync();
@@ -10274,11 +10325,14 @@ app.MapGet("/api/v1/users/{username}/posts", async (
     var ownerId = await ownerCmd.ExecuteScalarAsync();
     if (ownerId is null) return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
 
+    // Anonim postlar kullanıcı adı altında listelenirse (isim gizlense bile) yazarı açığa çıkar;
+    // yalnızca sahibi kendi profilinde görür.
     await using var countCmd = new NpgsqlCommand(
-        "SELECT COUNT(*) FROM posts WHERE user_id = @ownerId AND status = 'active'",
+        "SELECT COUNT(*) FROM posts WHERE user_id = @ownerId AND status = 'active' AND (is_anonymous = FALSE OR user_id = @viewerId) AND is_unlisted = FALSE",
         connection
     );
     countCmd.Parameters.AddWithValue("ownerId", ownerId);
+    countCmd.Parameters.AddWithValue("viewerId", userParam);
     var total = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
 
     await using var cmd = new NpgsqlCommand(
@@ -10287,7 +10341,7 @@ app.MapGet("/api/v1/users/{username}/posts", async (
                p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                v.vote_type, p.trend_score, p.created_at,
                (p.user_id = @userParam), p.is_edited,
-               EXISTS(SELECT 1 FROM saved_posts sp WHERE sp.post_id = p.id AND sp.device_id = @deviceParam),
+               EXISTS(SELECT 1 FROM saved_posts sp WHERE sp.post_id = p.id AND sp.user_id = @userParam),
                CASE WHEN p.is_anonymous THEN NULL ELSE u.username END AS username,
                p.tags, p.is_anonymous
         FROM posts p
@@ -10295,6 +10349,7 @@ app.MapGet("/api/v1/users/{username}/posts", async (
         JOIN users u ON u.id = p.user_id
         LEFT JOIN votes v ON v.post_id = p.id AND v.device_id = @deviceParam
         WHERE p.user_id = @ownerId AND p.status = 'active'
+          AND (p.is_anonymous = FALSE OR p.user_id = @userParam) AND p.is_unlisted = FALSE
         ORDER BY {orderBy}
         LIMIT @limit OFFSET @offset
         """,
@@ -10851,10 +10906,9 @@ app.MapPut("/api/v1/users/me/password", async (
     JwtService jwtService
 ) =>
 {
-    if (ValidateRequest(request) is { } validationError) return validationError;
-
     var principal = GetJwtPrincipal(httpRequest, jwtService);
     if (principal is null) return Unauthorized();
+    if (ValidateRequest(request) is { } validationError) return validationError;
     var userId = GetUserId(principal);
 
     await using var connection = await db.OpenConnectionAsync();
@@ -11280,7 +11334,9 @@ app.MapGet("/api/v1/admin/categories/health", async (
                 WHEN EXTRACT(EPOCH FROM (NOW() - d.created_at)) / 86400.0 < 7
                 THEN 1.0 ELSE 0.0
             END) AS new_user_comment_ratio,
-            COUNT(DISTINCT r.id)::float / NULLIF(COUNT(DISTINCT v.id), 0) AS report_vote_ratio,
+            -- votes has no id column (PK is post_id, device_id); reports point at posts via target_type/target_id.
+            COUNT(DISTINCT r.id)::float
+                / NULLIF(COUNT(DISTINCT (v.post_id, v.device_id)) FILTER (WHERE v.post_id IS NOT NULL), 0) AS report_vote_ratio,
             AVG(p.perspective_toxicity) AS avg_toxicity
         FROM categories c
         LEFT JOIN posts p ON p.category_id = c.id
@@ -11288,11 +11344,12 @@ app.MapGet("/api/v1/admin/categories/health", async (
             AND p.created_at > NOW() - (@days || ' days')::INTERVAL
         LEFT JOIN comments cm ON cm.post_id = p.id AND cm.status = 'active'
         LEFT JOIN devices d ON d.id = cm.device_id
-        LEFT JOIN reports r ON r.post_id = p.id
+        LEFT JOIN reports r ON r.target_type = 'post' AND r.target_id = p.id
         LEFT JOIN votes v ON v.post_id = p.id
         WHERE c.id > 0
         GROUP BY c.id, c.name, c.emoji
-        ORDER BY COALESCE(controversial_ratio, 0) DESC
+        -- An output alias is only valid as a bare ORDER BY item, not inside COALESCE(...).
+        ORDER BY controversial_ratio DESC NULLS LAST
         """,
         connection
     );
@@ -11954,7 +12011,8 @@ app.MapGet("/api/v1/admin/analytics/feed-quality/posts", async (
         """,
         connection);
     cmd.Parameters.AddWithValue("days", days);
-    cmd.Parameters.AddWithValue("rankingReason", rankingReason as object ?? DBNull.Value);
+    // Typed: "@rankingReason IS NULL" alone gives Postgres no type for an untyped NULL (42P08).
+    cmd.Parameters.Add("rankingReason", NpgsqlDbType.Text).Value = (object?)rankingReason ?? DBNull.Value;
 
     var posts = new List<object>();
     await using var reader = await cmd.ExecuteReaderAsync();
@@ -13418,9 +13476,9 @@ app.MapPost("/api/v1/auth/change-email/request", async (
     RedisService redis
 ) =>
 {
-    if (ValidateRequest(request) is { } ve) return ve;
     var principal = GetJwtPrincipal(httpRequest, jwtService);
     if (principal is null) return Unauthorized();
+    if (ValidateRequest(request) is { } ve) return ve;
     var userId = GetUserId(principal);
 
     var newEmail = request.NewEmail.ToLowerInvariant();
@@ -13487,9 +13545,9 @@ app.MapPost("/api/v1/auth/change-email/confirm", async (
     RedisService redis
 ) =>
 {
-    if (ValidateRequest(request) is { } ve) return ve;
     var principal = GetJwtPrincipal(httpRequest, jwtService);
     if (principal is null) return Unauthorized();
+    if (ValidateRequest(request) is { } ve) return ve;
     var userId = GetUserId(principal);
 
     var newEmail = request.NewEmail.ToLowerInvariant();
@@ -13923,9 +13981,10 @@ static async Task<bool> ValidateCachedOtpAsync(IDatabase redis, string key, stri
 
 static IResult? ValidateRequest(object request)
 {
+    // RequestValidation also enforces attributes written on positional record parameters
+    // (all of Contracts/Requests.cs), which Validator.TryValidateObject alone ignores.
     var results = new List<ValidationResult>();
-    var context = new ValidationContext(request);
-    if (Validator.TryValidateObject(request, context, results, validateAllProperties: true))
+    if (RequestValidation.TryValidate(request, results))
     {
         return null;
     }

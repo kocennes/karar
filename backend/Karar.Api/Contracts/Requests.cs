@@ -149,7 +149,9 @@ public sealed record PostFeedbackRequest(
 public sealed record DiscoverEventRequest(
     [Required] Guid PostId,
     [Required] string EventType,
-    [Range(3, 600)] int? DwellSeconds = null,
+    // No [Range]: POST /posts/discover/events clamps to 3..600 on purpose. The client reports the full time on
+    // the card (>= 3 s, no upper cap), so a reader who stays past 10 minutes is recorded as 600, not rejected.
+    int? DwellSeconds = null,
     [StringLength(500)] string? ImpressionToken = null,
     string? Metadata = null
 );
