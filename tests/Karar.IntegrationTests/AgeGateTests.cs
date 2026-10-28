@@ -7,8 +7,8 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Karar.IntegrationTests;
 
 // P0-02 neutral age gate. These tests need no database: they cover the wiring that runs
-// before any SQL (flag defaults, identity checks). The SQL paths were smoke-tested against
-// PostgreSQL 16; see the PR description.
+// before any SQL (flag defaults, identity checks). The SQL paths are covered end to end in
+// AgeGateRealStackTests (Category=RequiresDb).
 [Collection("ApiTests")]
 public class AgeGateTests
 {

@@ -4,7 +4,9 @@ using Google.Apis.Auth.OAuth2;
 
 namespace Karar.Api.Services;
 
-public sealed class FirebaseAuthService
+// Not sealed, VerifyIdTokenAsync virtual: the integration tests substitute a fake verifier
+// (a real Google ID token cannot be minted in a test).
+public class FirebaseAuthService
 {
     private readonly ILogger<FirebaseAuthService>? _logger;
 
@@ -29,7 +31,7 @@ public sealed class FirebaseAuthService
         }
     }
 
-    public async Task<FirebaseToken?> VerifyIdTokenAsync(string idToken)
+    public virtual async Task<FirebaseToken?> VerifyIdTokenAsync(string idToken)
     {
         if (FirebaseApp.DefaultInstance is null) return null;
         try
