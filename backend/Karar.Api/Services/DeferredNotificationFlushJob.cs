@@ -9,6 +9,7 @@ namespace Karar.Api.Services;
 public sealed class DeferredNotificationFlushJob(
     IConfiguration configuration,
     NotificationDecisionService decisionService,
+    ActivityTracker activityTracker,
     ILogger<DeferredNotificationFlushJob> logger)
     : BackgroundService
 {
@@ -57,6 +58,10 @@ public sealed class DeferredNotificationFlushJob(
 
         logger.LogInformation("DeferredNotificationFlushJob flushing {Count} deferred notifications", ids.Count);
 
+        // Redis ZSET is the pending-work signal: once ids were popped the DB must be touched even while idle.
+        if (activityTracker.IsIdle())
+            logger.LogDebug("DeferredNotificationFlushJob: API idle, flushing anyway (Redis signal, daily job)");
+
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(ct);
 
@@ -72,6 +77,10 @@ public sealed class DeferredNotificationFlushJob(
             connection);
         cmd.Parameters.AddWithValue("ids", ids.ToArray());
         var updated = await cmd.ExecuteNonQueryAsync(ct);
+
+        // Unlocked rows are dispatcher work; wake the (idle-gated) NotificationDispatcher.
+        if (updated > 0)
+            activityTracker.MarkPendingWork();
 
         logger.LogInformation(
             "DeferredNotificationFlushJob unlocked {Updated}/{Total} deferred notifications",

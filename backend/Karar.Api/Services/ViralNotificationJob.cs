@@ -17,6 +17,7 @@ namespace Karar.Api.Services;
 public sealed class ViralNotificationJob(
     IConfiguration configuration,
     RedisService redis,
+    ActivityTracker activityTracker,
     ILogger<ViralNotificationJob> logger)
     : BackgroundService
 {
@@ -50,6 +51,14 @@ public sealed class ViralNotificationJob(
 
     public async Task RunAsync(CancellationToken ct = default)
     {
+        // Velocity needs votes in the last 30 min; gate on that window, not IdleAfter, so a burst
+        // followed by silence is still scored before the window empties.
+        if (activityTracker.IsIdle(VelocityWindow))
+        {
+            logger.LogDebug("ViralNotificationJob: API idle, cycle skipped (free tier)");
+            return;
+        }
+
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(ct);
 

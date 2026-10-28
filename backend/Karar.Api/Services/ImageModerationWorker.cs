@@ -11,6 +11,7 @@ namespace Karar.Api.Services;
 public sealed class ImageModerationWorker(
     Db db,
     SafeSearchService safeSearch,
+    ActivityTracker activityTracker,
     ILogger<ImageModerationWorker> logger) : BackgroundService
 {
     private static readonly TimeSpan _interval = TimeSpan.FromSeconds(30);
@@ -37,6 +38,13 @@ public sealed class ImageModerationWorker(
     private async Task ProcessPendingAsync(CancellationToken ct)
     {
         if (!safeSearch.IsEnabled) return;
+
+        // Pending images only come from uploads (user activity); nobody around means nothing to scan.
+        if (activityTracker.IsIdle())
+        {
+            logger.LogDebug("ImageModerationWorker: API idle, cycle skipped (free tier).");
+            return;
+        }
 
         using var activity = KararTelemetry.StartActivity("image_moderation_worker.process_batch");
         activity?.SetTag("db.system", "postgresql");

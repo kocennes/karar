@@ -8,7 +8,8 @@ public sealed class PoliticalNarrativeClusterJob(
     ILogger<PoliticalNarrativeClusterJob> logger,
     EmailService emailService,
     CategoryThrottleService categoryThrottle,
-    ComplianceLogService complianceLog)
+    ComplianceLogService complianceLog,
+    ActivityTracker activityTracker)
     : BackgroundService
 {
     private readonly string _connectionString = Db.ConvertToKeyValue(
@@ -41,6 +42,10 @@ public sealed class PoliticalNarrativeClusterJob(
 
     private async Task CheckForVoteAnomaliesAsync(CancellationToken ct)
     {
+        // 6-hourly job: keeps its schedule on the free tier; only leaves a trace when it wakes the DB while idle.
+        if (activityTracker.IsIdle())
+            logger.LogDebug("PoliticalNarrativeClusterJob: API idle, scheduled run proceeds (not gated)");
+
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(ct);
 

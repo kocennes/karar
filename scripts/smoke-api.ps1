@@ -57,19 +57,27 @@ Write-Host "=== Smoke Test: $BaseUrl ($mode mode) ==="
 Write-Host ""
 Write-Host "[1/3] Health checks"
 
-# /health/ready -- retry up to 3 times to handle cold-start on Render free tier
-Write-Host "  Checking /health/ready..."
-$ready = $false
+# /health/live -- retry up to 3 times to handle cold-start on Render free tier.
+# Liveness is DB-free (does not wake Neon); it only tells us the instance is up.
+Write-Host "  Checking /health/live..."
+$live = $false
 for ($i = 1; $i -le 3; $i++) {
     try {
-        $r = Invoke-WebRequest -Uri "$BaseUrl/health/ready" -Method GET -UseBasicParsing -TimeoutSec 20
-        if ($r.StatusCode -eq 200) { $ready = $true; break }
+        $r = Invoke-WebRequest -Uri "$BaseUrl/health/live" -Method GET -UseBasicParsing -TimeoutSec 20
+        if ($r.StatusCode -eq 200) { $live = $true; break }
     } catch {
         Write-Host "    Attempt $i/3 failed: $($_.Exception.Message)"
         if ($i -lt 3) { Start-Sleep -Seconds 10 }
     }
 }
-if (-not $ready) { throw "/health/ready did not return 200 after 3 attempts." }
+if (-not $live) { throw "/health/live did not return 200 after 3 attempts." }
+Write-Host "    /health/live OK"
+
+# /health/ready -- DB + Redis readiness, asked once the instance is live.
+# The public API checks below need the DB anyway, so readiness is a real question here.
+Write-Host "  Checking /health/ready..."
+$r = Invoke-WebRequest -Uri "$BaseUrl/health/ready" -Method GET -UseBasicParsing -TimeoutSec 20
+if ($r.StatusCode -ne 200) { throw "/health/ready returned $($r.StatusCode)." }
 Write-Host "    /health/ready OK"
 
 # /health/version -- log deployed commit SHA (informational, non-fatal)

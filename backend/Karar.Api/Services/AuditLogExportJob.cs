@@ -14,6 +14,7 @@ namespace Karar.Api.Services;
 public sealed class AuditLogExportJob(
     IConfiguration configuration,
     Db db,
+    ActivityTracker activityTracker,
     ILogger<AuditLogExportJob> logger) : BackgroundService
 {
     private static readonly TimeSpan CheckInterval = TimeSpan.FromHours(1);
@@ -61,6 +62,10 @@ public sealed class AuditLogExportJob(
         // Saat 00:00 – 01:00 aralığında çalış (job start'ı bekleme süresiyle kayar)
         if (utcNow.Hour != 0)
             return;
+
+        // Günlük export ücretsiz katmanda da planında kalır; boştayken yalnızca iz bırakır.
+        if (activityTracker.IsIdle())
+            logger.LogDebug("AuditLogExportJob: API boşta, günlük export yine de planında çalışıyor (kapı yok).");
 
         await ExportDayAsync(targetDate, ct);
         _lastExportDate = targetDate;

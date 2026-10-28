@@ -6,6 +6,7 @@ namespace Karar.Api.Services;
 public sealed class VerdictReminderJob(
     IConfiguration configuration,
     RedisService redis,
+    ActivityTracker activityTracker,
     ILogger<VerdictReminderJob> logger)
     : BackgroundService
 {
@@ -37,6 +38,11 @@ public sealed class VerdictReminderJob(
 
     public async Task RunAsync(CancellationToken ct = default)
     {
+        // Hourly job: keeps its schedule on the free tier (candidates are posts from 6-12h ago,
+        // whose owners may have left since); only leaves a trace when it wakes the DB while idle.
+        if (activityTracker.IsIdle())
+            logger.LogDebug("VerdictReminderJob: API idle, hourly run proceeds on schedule (not gated)");
+
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(ct);
 
@@ -82,6 +88,7 @@ public sealed class VerdictReminderJob(
             var total = candidate.Hakli + candidate.Haksiz;
             var hakliPercent = CalculateHakliPercent(candidate.Hakli, candidate.Haksiz);
             await InsertReminderAsync(connection, candidate.DeviceId, candidate.PostId, total, hakliPercent, ct);
+            activityTracker.MarkPendingWork(); // reminder sits in the outbox: wake the idle-gated dispatcher
         }
     }
 

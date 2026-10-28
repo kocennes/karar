@@ -7,6 +7,7 @@ namespace Karar.Api.Services;
 public sealed class CommentNotificationBatcher(
     IConfiguration configuration,
     RedisService redis,
+    ActivityTracker activityTracker,
     ILogger<CommentNotificationBatcher> logger)
     : BackgroundService
 {
@@ -172,6 +173,10 @@ public sealed class CommentNotificationBatcher(
         var keys = await db.SetMembersAsync(BatchIndexKey);
         var cutoff = DateTimeOffset.UtcNow.Subtract(BatchWindow).ToUnixTimeSeconds();
 
+        // Redis index set is the pending-work signal; Postgres is only touched for batches that are due.
+        if (keys.Length > 0 && activityTracker.IsIdle())
+            logger.LogDebug("CommentNotificationBatcher: API idle, {Count} batch key(s) in Redis; DB touched only for due batches", keys.Length);
+
         foreach (var value in keys)
         {
             ct.ThrowIfCancellationRequested();
@@ -298,6 +303,7 @@ public sealed class CommentNotificationBatcher(
         command.Parameters.AddWithValue("postId", postId);
         command.Parameters.AddWithValue("payload", payloadJson);
         await command.ExecuteNonQueryAsync();
+        activityTracker.MarkPendingWork(); // outbox row written: wake the idle-gated NotificationDispatcher
     }
 
     private static string GetBatchKey(Guid postId, Guid ownerDeviceId)

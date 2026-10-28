@@ -10,6 +10,7 @@ namespace Karar.Api.Services;
 // medyan hesap yaşı < 72 saat, son 24 saatte birden fazla farklı posta aynı yönde oy.
 public sealed class BrigadeCoordinatedDetectorJob(
     IConfiguration configuration,
+    ActivityTracker activityTracker,
     ILogger<BrigadeCoordinatedDetectorJob> logger)
     : BackgroundService
 {
@@ -44,6 +45,13 @@ public sealed class BrigadeCoordinatedDetectorJob(
 
     internal async Task DetectAsync(CancellationToken ct)
     {
+        // A brigade is itself traffic; gate on the vote window so a burst is still inspected after it ends.
+        if (activityTracker.IsIdle(TimeSpan.FromMinutes(VoteWindowMinutes)))
+        {
+            logger.LogDebug("BrigadeCoordinatedDetectorJob: API idle, cycle skipped (free tier)");
+            return;
+        }
+
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(ct);
 
