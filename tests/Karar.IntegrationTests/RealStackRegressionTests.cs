@@ -115,19 +115,27 @@ public class RealStackRegressionTests
     [Fact]
     public async Task Register_WithAGenderOutsideTheCheckConstraint_Returns400()
     {
-        var response = await _client.PostAsJsonAsync("/api/v1/auth/register", new
+        var deviceToken = await RegisterDeviceAsync();
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/register")
         {
-            username = "gender_check_user",
-            email = "gender-check@example.test",
-            password = "long-enough-password",
-            dateOfBirth = "1990-01-01T00:00:00Z",
-            gender = "unspecified",
-            acceptedTerms = true,
-            acceptedCommunityGuidelines = true,
-            ageConfirmed = true,
-        });
+            Content = JsonContent.Create(new
+            {
+                username = "gender_check_user",
+                email = "gender-check@example.test",
+                password = "long-enough-password",
+                dateOfBirth = "1990-01-01T00:00:00Z",
+                gender = "unspecified",
+                acceptedTerms = true,
+                acceptedCommunityGuidelines = true,
+                ageConfirmed = true,
+            }),
+        };
+        request.Headers.Add("X-Device-Token", deviceToken);
+
+        var response = await _client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("INVALID_GENDER", await response.Content.ReadAsStringAsync());
     }
 
     private async Task<string> RegisterDeviceAsync()
