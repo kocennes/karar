@@ -1,6 +1,7 @@
 abstract final class ApiEndpoints {
   static const String devices = '/api/v1/devices/register';
   static const String fcmToken = '/api/v1/devices/fcm-token';
+  static const String deviceAgeDeclaration = '/api/v1/devices/age-declaration';
 
   static const String authRegister = '/api/v1/auth/register';
   static const String authVerifyEmail = '/api/v1/auth/verify-email';
@@ -39,6 +40,7 @@ abstract final class ApiEndpoints {
   static const String notificationsEvents = '/api/v1/notifications/events';
 
   static const String userMe = '/api/v1/users/me';
+  static const String userMeOnboarding = '/api/v1/users/me/onboarding';
   static const String userMePosts = '/api/v1/users/me/posts';
   static const String userMePassword = '/api/v1/users/me/password';
   static const String usernameAvailability =

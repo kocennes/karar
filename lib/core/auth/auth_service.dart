@@ -6,6 +6,7 @@ import '../api/api_endpoints.dart';
 import '../api/api_exception.dart';
 import '../storage/secure_storage.dart';
 import '../web/tab_auth_sync.dart';
+import 'age_gate.dart';
 
 class AuthUser {
   const AuthUser({
@@ -21,6 +22,7 @@ class AuthUser {
     this.joinedAt,
     this.isNewUser = false,
     this.is2faEnabled = false,
+    this.requiresOnboarding = false,
   });
 
   final String id;
@@ -35,6 +37,10 @@ class AuthUser {
   final DateTime? joinedAt;
   final bool isNewUser;
   final bool is2faEnabled;
+
+  /// P0-02: the account has no birth date yet (Google sign-up, old accounts).
+  /// The app must run the neutral birth-date step before anything else.
+  final bool requiresOnboarding;
 
   bool get canChangeUsername {
     if (usernameChangedAt == null) return true;
@@ -57,8 +63,27 @@ class AuthUser {
       joinedAt: DateTime.tryParse(user['joinedAt'] as String? ?? ''),
       isNewUser: json['isNewUser'] as bool? ?? false,
       is2faEnabled: user['is2faEnabled'] as bool? ?? false,
+      // Top level on auth responses, the profile itself on GET /users/me.
+      requiresOnboarding: json['requiresOnboarding'] as bool? ??
+          user['requiresOnboarding'] as bool? ??
+          false,
     );
   }
+
+  AuthUser _onboarded() => AuthUser(
+        id: id,
+        username: username,
+        email: email,
+        karma: karma,
+        authProvider: authProvider,
+        bio: bio,
+        usernameChangedAt: usernameChangedAt,
+        postCount: postCount,
+        commentCount: commentCount,
+        joinedAt: joinedAt,
+        isNewUser: isNewUser,
+        is2faEnabled: is2faEnabled,
+      );
 }
 
 enum LogoutReason { manual, sessionExpired }
@@ -134,7 +159,6 @@ class AuthService {
     required String gender,
     required bool acceptedTerms,
     required bool acceptedCommunityGuidelines,
-    required bool ageConfirmed,
   }) async {
     await _apiClient.postJson<Map<String, Object?>>(
       ApiEndpoints.authRegister,
@@ -142,15 +166,66 @@ class AuthService {
         'username': username,
         'email': email,
         'password': password,
-        'dateOfBirth': dateOfBirth.toIso8601String(),
+        'dateOfBirth': _dateOnlyIso(dateOfBirth),
         'gender': gender,
         'acceptedTerms': acceptedTerms,
         'acceptedCommunityGuidelines': acceptedCommunityGuidelines,
-        'ageConfirmed': ageConfirmed,
+        // The declared date is the age statement; the API ignores this field
+        // since P0-02. Sent only because older API versions still require it,
+        // and the screen calls register() only for an eligible date.
+        'ageConfirmed': true,
       },
     );
     return email;
   }
+
+  // ── P0-02 neutral age gate ────────────────────────────────────────────────
+
+  /// True once this device declared an ineligible birth date.
+  Future<bool> isAgeGateLocked() async =>
+      await _storage.readAgeGateLock() != null;
+
+  /// Closes the gate on this device for good. Survives logout.
+  Future<void> lockAgeGate() => _storage.writeAgeGateLock(DateTime.now());
+
+  /// Records the declaration against the device on the server
+  /// (`devices.age_gate_failed_at` / `age_declared_at`). Only the date is
+  /// sent; the server stores timestamps, never the date.
+  Future<void> declareDeviceAge(DateTime dateOfBirth) =>
+      _apiClient.postJson<void>(
+        ApiEndpoints.deviceAgeDeclaration,
+        body: {'dateOfBirth': _dateOnlyIso(dateOfBirth)},
+      );
+
+  /// Neutral birth-date + terms step for accounts with `requiresOnboarding`.
+  /// On [AgeGate.notEligibleCode] the device is locked and the session ends
+  /// (the server has already revoked it); the exception is rethrown.
+  Future<void> completeOnboarding({
+    required DateTime dateOfBirth,
+    required bool acceptedTerms,
+    required bool acceptedCommunityGuidelines,
+  }) async {
+    try {
+      await _apiClient.postJson<Map<String, Object?>>(
+        ApiEndpoints.userMeOnboarding,
+        body: {
+          'dateOfBirth': _dateOnlyIso(dateOfBirth),
+          'acceptedTerms': acceptedTerms,
+          'acceptedCommunityGuidelines': acceptedCommunityGuidelines,
+        },
+      );
+    } on ApiException catch (e) {
+      if (e.code == AgeGate.notEligibleCode) {
+        await lockAgeGate();
+        await logout(reason: LogoutReason.manual);
+      }
+      rethrow;
+    }
+    _currentUser = _currentUser?._onboarded();
+  }
+
+  static String _dateOnlyIso(DateTime d) =>
+      DateTime(d.year, d.month, d.day).toIso8601String();
 
   Future<AuthUser> verifyEmail({
     required String email,

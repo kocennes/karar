@@ -3,8 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../app_services.dart';
+import '../auth/age_gate.dart';
 import '../auth/auth_service.dart';
 import '../providers.dart';
+import '../../features/auth/age_onboarding_screen.dart';
 import '../../features/auth/change_username_sheet.dart';
 import '../../features/auth/login_screen.dart';
 import '../../features/auth/register_screen.dart';
@@ -48,6 +50,13 @@ import '../../shared/models/post.dart';
 GoRouter buildRouter(AppServices services) => GoRouter(
       initialLocation: '/splash',
       debugLogDiagnostics: false,
+      // P0-02: a signed-in account without a birth date sees nothing but the
+      // neutral birth-date step (also after an app restart or a deep link).
+      redirect: (_, state) => ageOnboardingRedirect(
+        requiresOnboarding:
+            services.authService.currentUser?.requiresOnboarding == true,
+        location: state.matchedLocation,
+      ),
       routes: [
         GoRoute(
           path: '/splash',
@@ -318,6 +327,11 @@ GoRouter buildRouter(AppServices services) => GoRouter(
           ),
         ),
         GoRoute(
+          path: ageOnboardingPath,
+          builder: (_, __) =>
+              AgeOnboardingScreen(authService: services.authService),
+        ),
+        GoRoute(
           path: '/auth/verify-email',
           builder: (_, state) => _VerifyEmailWrapper(
             authService: services.authService,
@@ -342,6 +356,8 @@ class _LoginWrapper extends ConsumerWidget {
       onSuccess: () async {
         final user = authService.currentUser;
         final isNewUser = user?.isNewUser == true;
+        if (!await _completeAgeOnboarding(context, authService)) return;
+        if (!context.mounted) return;
         await _migrateGuestDataAndRefresh(authService);
 
         if (authService.currentUser != null && isNewUser) {
@@ -390,6 +406,8 @@ class _RegisterWrapperState extends ConsumerState<_RegisterWrapper> {
       onSuccess: () async {
         final user = widget.authService.currentUser;
         final isNewUser = user?.isNewUser == true;
+        if (!await _completeAgeOnboarding(context, widget.authService)) return;
+        if (!context.mounted) return;
         await _migrateGuestDataAndRefresh(widget.authService);
 
         if (widget.authService.currentUser != null && isNewUser) {
@@ -458,6 +476,20 @@ class _VerifyEmailWrapper extends ConsumerWidget {
       },
     );
   }
+}
+
+/// P0-02: an account without a birth date (Google sign-up, old accounts)
+/// passes the neutral birth-date step before anything else, guest data
+/// migration included. False when the step was not completed (refused or
+/// abandoned); the screen has then already ended the session.
+Future<bool> _completeAgeOnboarding(
+  BuildContext context,
+  AuthService authService,
+) async {
+  if (authService.currentUser?.requiresOnboarding != true) return true;
+  final completed = await context.push<bool>(ageOnboardingPath);
+  return completed == true &&
+      authService.currentUser?.requiresOnboarding == false;
 }
 
 Future<void> _migrateGuestDataAndRefresh(AuthService authService) async {

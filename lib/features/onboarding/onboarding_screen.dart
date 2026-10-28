@@ -57,9 +57,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     ),
     _OnboardingStep(
       icon: Icons.visibility_off_rounded,
-      title: 'Tamamen anonim',
-      description: 'Hesap açmadan katılabilirsin. Oylar gizli, '
-          'kimse kimin ne oyladığını göremez. Sadece dürüst kararlar.',
+      title: 'Oylar gizli',
+      description: 'Kimse kimin ne oyladığını göremez. '
+          'Paylaşım ve yorum için hesap gerekir. Sadece dürüst kararlar.',
     ),
   ];
 

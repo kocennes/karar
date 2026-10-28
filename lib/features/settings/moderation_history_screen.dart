@@ -394,6 +394,7 @@ class _ReportTile extends StatelessWidget {
         'spam' => 'Spam',
         'self_harm' => 'Kendine zarar',
         'illegal' => 'Yasadışı içerik',
+        'minor' => 'Reşit olmayan kullanıcı',
         _ => 'Diğer',
       };
 
