@@ -15,6 +15,7 @@ const _reasons = [
   ('spam', 'Spam'),
   ('self_harm', 'Kendine Zarar Verme'),
   ('illegal', 'Yasadışı İçerik'),
+  ('minor', 'Reşit Olmayan Kullanıcı'),
   ('other', 'Diğer'),
 ];
 

@@ -229,6 +229,8 @@ public sealed record RegisterRequest(
     [Required] string Gender,
     bool AcceptedTerms = false,
     bool AcceptedCommunityGuidelines = false,
+    // Ignored since P0-02: the declared DateOfBirth is the age statement. Kept so older
+    // clients that still send it keep deserializing.
     bool AgeConfirmed = false
 );
 
@@ -254,6 +256,20 @@ public sealed record ResendOtpRequest(
 
 public sealed record GoogleSignInRequest(
     [Required] string IdToken
+);
+
+// P0-02: neutral birth-date + terms step for accounts without a date of birth (Google sign-up,
+// legacy accounts). DateOfBirth is nullable so a missing value is a 400, not 0001-01-01.
+public sealed record CompleteOnboardingRequest(
+    DateTime? DateOfBirth,
+    bool AcceptedTerms = false,
+    bool AcceptedCommunityGuidelines = false
+);
+
+// P0-02: neutral age declaration for a device (guest vote gate, register screen lock).
+// The date itself is never stored.
+public sealed record AgeDeclarationRequest(
+    DateTime? DateOfBirth
 );
 
 public sealed record LoginRequest(

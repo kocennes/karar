@@ -83,7 +83,16 @@ public sealed class ReportThresholdService(IConfiguration? configuration = null)
         return withIp + withoutIp;
     }
 
+    // Critical reasons count toward the lower weighted auto-hide threshold (Critical, 3.0) in
+    // Evaluate. 'minor' is deliberately not one of them: it is a claim about the author rather
+    // than the content, other reporters cannot check it, and hiding the post does not settle the
+    // account question. It gets queue priority instead (PriorityQueueReasons).
     public bool IsCriticalReason(string reason) => reason is "self_harm" or "illegal";
+
+    // Reasons the admin report queue (GET /api/v1/admin/reports) lists first, oldest first within
+    // each group. Queue order only: no effect on auto-hide. P0-02 adds 'minor' (a possibly
+    // under-age user) so it reaches a moderator ahead of routine reports.
+    public static readonly string[] PriorityQueueReasons = ["self_harm", "illegal", "minor"];
 }
 
 public sealed record ReportSignal(string Fingerprint, string? IpBlock, string Reason, double Weight = 1.0);
