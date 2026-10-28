@@ -108,6 +108,19 @@ public class RealStackRegressionTests
         Assert.Contains(anonymousId, ownerIds);
     }
 
+    [Fact]
+    public async Task MainFeed_FirstTrendingPage_Returns200()
+    {
+        // Page 1 of the default trending feed runs the diversity pass, whose outer SELECT reads is_owner.
+        var deviceToken = await RegisterDeviceAsync();
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/posts");
+        request.Headers.Add("X-Device-Token", deviceToken);
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
     [Theory]
     [InlineData("/api/v1/admin/categories/health")]
     [InlineData("/api/v1/admin/analytics/feed-quality/posts")]

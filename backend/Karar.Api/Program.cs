@@ -1424,7 +1424,7 @@ app.MapGet("/api/v1/posts", async (
                 SELECT p.id, p.title, p.content, p.image_url, c.id AS cat_id, c.name AS cat_name, c.emoji,
                        p.vote_count_hakli, p.vote_count_haksiz, p.comment_count,
                        v.vote_type, p.trend_score, p.created_at,
-                       (p.device_id = @deviceId OR p.user_id = @userId),
+                       (p.device_id = @deviceId OR p.user_id = @userId) AS is_owner,
                        p.is_anonymous,
                        ROW_NUMBER() OVER (PARTITION BY p.category_id ORDER BY p.trend_score DESC, p.created_at DESC) AS cat_rank,
                        ROW_NUMBER() OVER (PARTITION BY COALESCE(p.user_id::text, p.device_id::text) ORDER BY p.trend_score DESC, p.created_at DESC) AS author_rank
