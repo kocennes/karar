@@ -10,7 +10,14 @@ ALTER TABLE devices
     ADD COLUMN IF NOT EXISTS age_gate_failed_at TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS age_declared_at    TIMESTAMPTZ;
 
--- 3) New report reason 'minor' ("Reşit olmayan kullanıcı").
+-- 3) Account-level refusal. Set when an account without a birth date declares an ineligible one
+--    in /users/me/onboarding, so the same account cannot retry from a fresh device:
+--    /users/me/onboarding, /auth/login, /auth/google and /auth/refresh refuse it from then on.
+--    Timestamp only: date_of_birth stays NULL, the declared date is never stored.
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS age_gate_failed_at TIMESTAMPTZ;
+
+-- 4) New report reason 'minor' ("Reşit olmayan kullanıcı").
 -- V1 created reports.reason with a column-level CHECK that Postgres auto-named reports_reason_check
 -- (V58 and V65 rely on the same convention). This list is a superset of V1 and of V65
 -- (PR #19, 'misinformation') and equals the POST /api/v1/reports allowlist. On a fresh

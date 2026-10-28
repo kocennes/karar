@@ -3230,7 +3230,7 @@ app.MapPut("/api/v1/posts/{id:guid}", async (
 
     await redis.MarkPostDirtyAsync(id);
     return Results.NoContent();
-});
+}).RequireAgeGate();
 
 app.MapPost("/api/v1/posts/{id:guid}/save", async (
     Guid id,
@@ -4467,7 +4467,7 @@ app.MapPut("/api/v1/comments/{id:guid}", async (
     return affected == 0
         ? NotFound("COMMENT_NOT_EDITABLE", "Yorum bulunamadı veya düzenleme süresi doldu.")
         : Results.NoContent();
-});
+}).RequireAgeGate();
 
 app.MapPost("/api/v1/comments/{id:guid}/upvote", async (
     Guid id,
@@ -8562,7 +8562,8 @@ app.MapPost("/api/v1/auth/google", async (
     // Mevcut kullanıcı var mı? (google_id veya email ile bul)
     await using var findCmd = new NpgsqlCommand(
         """
-        SELECT id, username, email, karma, auth_provider, date_of_birth IS NULL
+        SELECT id, username, email, karma, auth_provider, date_of_birth IS NULL,
+               age_gate_failed_at IS NOT NULL
         FROM users
         WHERE google_id = @googleId OR (email = @email AND auth_provider = 'google')
         LIMIT 1
@@ -8593,8 +8594,16 @@ app.MapPost("/api/v1/auth/google", async (
         karma = findReader.GetInt32(3);
         authProvider = findReader.GetString(4);
         requiresOnboarding = findReader.GetBoolean(5);
+        var ageGateRefused = findReader.GetBoolean(6);
         isNewUser = false;
         await findReader.CloseAsync();
+
+        // P0-02: an account refused at the onboarding step gets no tokens, from any device.
+        if (ageGateRefused)
+        {
+            await transaction.RollbackAsync();
+            return AgeGateService.NotEligibleResult();
+        }
 
         await using var updateCmd = new NpgsqlCommand(
             "UPDATE users SET google_id = @googleId, updated_at = NOW() WHERE id = @id",
@@ -8610,6 +8619,14 @@ app.MapPost("/api/v1/auth/google", async (
         await findReader.CloseAsync();
         isNewUser = true;
         requiresOnboarding = true;
+
+        // P0-02: a refused device cannot sign up a new account. Checked before the INSERT so no
+        // users row (personal data: e-mail, Google id) is created for someone who will be refused.
+        if (await AgeGateService.IsDeviceLockedAsync(connection, deviceId.Value, transaction))
+        {
+            await transaction.RollbackAsync();
+            return AgeGateService.NotEligibleResult();
+        }
 
         // E-posta Google'dan alındığından doğrulanmış kabul edilir
         var baseUsername = googleEmail.Split('@')[0]
@@ -8813,7 +8830,7 @@ app.MapPost("/api/v1/auth/login", async (
     await using var findCmd = new NpgsqlCommand(
         """
         SELECT id, username, email, password_hash, email_verified, karma, auth_provider, is_banned,
-               is_2fa_enabled, totp_secret, date_of_birth IS NULL
+               is_2fa_enabled, totp_secret, date_of_birth IS NULL, age_gate_failed_at IS NOT NULL
         FROM users
         WHERE (lower(username) = @identifier OR email = @identifier)
           AND auth_provider = 'password'
@@ -8843,6 +8860,7 @@ app.MapPost("/api/v1/auth/login", async (
     var totpSecret = reader.IsDBNull(9) ? null : reader.GetString(9);
     // P0-02: password accounts created before V31 may have no date of birth.
     var requiresOnboarding = reader.GetBoolean(10);
+    var ageGateRefused = reader.GetBoolean(11);
     await reader.CloseAsync();
 
     if (isBanned)
@@ -8898,6 +8916,15 @@ app.MapPost("/api/v1/auth/login", async (
             await bruteForce.RecordFailedAttemptAsync(bfIdentity);
             return BadRequest("INVALID_BACKUP_CODE", "Yedek kod geçersiz veya daha önce kullanıldı.");
         }
+    }
+
+    // P0-02: an account refused at the onboarding step gets no tokens. Checked only after the
+    // credentials are proven, so the refusal is not revealed to someone guessing usernames; the
+    // rollback also leaves a backup code unspent.
+    if (ageGateRefused)
+    {
+        await transaction.RollbackAsync();
+        return AgeGateService.NotEligibleResult();
     }
 
     var accessToken = jwtService.GenerateAccessToken(userId, username);
@@ -8958,7 +8985,8 @@ app.MapPost("/api/v1/auth/refresh", async (
 
     await using var findCmd = new NpgsqlCommand(
         """
-        SELECT rt.id, rt.user_id, rt.expires_at, u.username, u.email, u.karma, u.auth_provider, u.is_banned
+        SELECT rt.id, rt.user_id, rt.expires_at, u.username, u.email, u.karma, u.auth_provider, u.is_banned,
+               u.age_gate_failed_at IS NOT NULL
         FROM refresh_tokens rt
         JOIN users u ON u.id = rt.user_id
         WHERE rt.token_hash = @hash AND rt.revoked_at IS NULL
@@ -8983,9 +9011,12 @@ app.MapPost("/api/v1/auth/refresh", async (
     var karma = reader.GetInt32(5);
     var authProvider = reader.GetString(6);
     var isBanned = reader.GetBoolean(7);
+    // P0-02: the onboarding refusal revokes every refresh token; this also covers a token
+    // rotated concurrently with that refusal.
+    var ageGateRefused = reader.GetBoolean(8);
     await reader.CloseAsync();
 
-    if (expiresAt < DateTimeOffset.UtcNow || isBanned)
+    if (expiresAt < DateTimeOffset.UtcNow || isBanned || ageGateRefused)
     {
         await transaction.RollbackAsync();
         return Unauthorized();
@@ -9210,7 +9241,7 @@ app.MapPost("/api/v1/users/me/migrate-guest-data", async (
 
     await transaction.CommitAsync();
     return Results.NoContent();
-});
+}).RequireAgeGate(); // P0-02: guest content cannot be attached to an account the gate would refuse
 
 app.MapGet("/api/v1/users/username-availability", async (
     string username,
@@ -9375,7 +9406,7 @@ app.MapPut("/api/v1/users/me", async (
     {
         return Conflict("USERNAME_TAKEN", "Bu kullanıcı adı zaten alınmış.");
     }
-});
+}).RequireAgeGate();
 
 app.MapPut("/api/v1/users/me/notification-preferences", async (
     NotificationPreferencesRequest request,
@@ -9503,7 +9534,9 @@ app.MapPost("/api/v1/users/me/accept-policy", async (
 
 // P0-02: neutral birth-date + terms step for accounts that have no date of birth (Google sign-up,
 // password accounts older than V31). The date is set once and never overwritten here. An
-// ineligible date is not stored: the device is locked and the account's sessions are revoked.
+// ineligible date is not stored: the device and the account are marked refused (timestamps only)
+// and the account's sessions are revoked. A refused account, or a request from a refused device
+// or on behalf of an account whose own device is refused, stays refused (always on, no flag).
 app.MapPost("/api/v1/users/me/onboarding", async (
     CompleteOnboardingRequest request,
     HttpRequest httpRequest,
@@ -9543,13 +9576,19 @@ app.MapPost("/api/v1/users/me/onboarding", async (
     await using var transaction = await connection.BeginTransactionAsync();
 
     await using var userCmd = new NpgsqlCommand(
-        "SELECT device_id, date_of_birth IS NULL FROM users WHERE id = @id AND deleted_at IS NULL FOR UPDATE",
+        """
+        SELECT device_id, date_of_birth IS NULL, age_gate_failed_at IS NOT NULL
+        FROM users
+        WHERE id = @id AND deleted_at IS NULL
+        FOR UPDATE
+        """,
         connection,
         transaction
     );
     userCmd.Parameters.AddWithValue("id", userId);
     Guid accountDeviceId;
     bool missingDateOfBirth;
+    bool accountRefused;
     await using (var userReader = await userCmd.ExecuteReaderAsync())
     {
         if (!await userReader.ReadAsync())
@@ -9558,6 +9597,7 @@ app.MapPost("/api/v1/users/me/onboarding", async (
         }
         accountDeviceId = userReader.GetGuid(0);
         missingDateOfBirth = userReader.GetBoolean(1);
+        accountRefused = userReader.GetBoolean(2);
     }
 
     if (!missingDateOfBirth)
@@ -9567,16 +9607,23 @@ app.MapPost("/api/v1/users/me/onboarding", async (
         return Results.Ok(new OnboardingStatusResponse(RequiresOnboarding: false));
     }
 
-    var deviceId = requestDeviceId ?? accountDeviceId;
-    if (await AgeGateService.IsDeviceLockedAsync(connection, deviceId, transaction))
+    // The same account cannot retry from a fresh device, and neither device involved may be a
+    // refused one: the one sending the request or the one the account was created on.
+    if (accountRefused
+        || await AgeGateService.IsDeviceLockedAsync(connection, accountDeviceId, transaction)
+        || (requestDeviceId is { } requestDeviceValue
+            && requestDeviceValue != accountDeviceId
+            && await AgeGateService.IsDeviceLockedAsync(connection, requestDeviceValue, transaction)))
     {
         await transaction.RollbackAsync();
         return AgeGateService.NotEligibleResult();
     }
 
+    var deviceId = requestDeviceId ?? accountDeviceId;
     if (ageDecision == AgeGateDecision.NotEligible)
     {
         await AgeGateService.MarkDeviceFailedAsync(connection, deviceId, transaction);
+        await AgeGateService.MarkAccountFailedAsync(connection, userId, transaction);
         await using var revokeCmd = new NpgsqlCommand(
             "UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = @id AND revoked_at IS NULL",
             connection,
@@ -10872,7 +10919,7 @@ app.MapPost("/api/v1/posts/{id:guid}/comments/pin", async (
 
     await transaction.CommitAsync();
     return Results.NoContent();
-});
+}).RequireAgeGate();
 
 app.MapDelete("/api/v1/posts/{id:guid}/comments/pin", async (
     Guid id,

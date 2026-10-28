@@ -585,7 +585,7 @@ Admin API statik token kabul etmez (`Admin__Token` ve `Admin__SkipEmailOtp` kald
 - `Supabase__Key`
 - `Supabase__Bucket`
 - Firebase/Google servis ayarlari
-- `AgeGate__Enforce` (varsayilan `false`): `true` iken dogum tarihi olmayan girisli kullanicilar gonderi, oy, yorum ve yorum tepkilerinde `403 AGE_VERIFICATION_REQUIRED` alir. Yalniz dogum tarihi adimini (`POST /api/v1/users/me/onboarding`) iceren uygulama surumu yayindayken acilmali.
+- `AgeGate__Enforce` (varsayilan `false`): `true` iken gonderi/yorum olusturma ve duzenleme, oy, yorum tepkileri, yorum sabitleme, profil duzenleme ve misafir verisi tasima girisli hesap ister: JWT yok veya gecersizse `401 AUTH_REQUIRED` (post oyu misafire acik kalir), dogum tarihi olmayan hesap `403 AGE_VERIFICATION_REQUIRED`, reddedilmis hesap veya cihaz (misafir oyu dahil) `403 AGE_NOT_ELIGIBLE` alir. Yalniz dogum tarihi adimini (`POST /api/v1/users/me/onboarding`) iceren uygulama surumu yayindayken acilmali. Reddedilmis hesabin `/auth/login`, `/auth/google` ve `/auth/refresh` ile token alamamasi bayraktan bagimsiz, her zaman aciktir.
 - `AgeGate__GuestVote` (varsayilan `false`): `true` iken misafir cihaz ilk oyundan once `POST /api/v1/devices/age-declaration` ile notr yas beyani yapmali; yoksa `403 AGE_DECLARATION_REQUIRED`. Hukuk gorusu beklenmeli.
 
 Admin panel:

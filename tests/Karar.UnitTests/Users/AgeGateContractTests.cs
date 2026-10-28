@@ -7,6 +7,7 @@ using Karar.Api.Services;
 using Karar.UnitTests;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Karar.UnitTests.Users;
 
@@ -54,6 +55,7 @@ public sealed class AgeGateContractTests
                      AgeGateCodes.NotEligibleMessage,
                      AgeGateCodes.VerificationRequiredMessage,
                      AgeGateCodes.DeclarationRequiredMessage,
+                     AgeGateCodes.SignInRequiredMessage,
                  })
         {
             message.Should().NotMatchRegex(@"\d", "the threshold must never be shown");
@@ -96,15 +98,44 @@ public sealed class AgeGateContractTests
         (await service.CheckWriteAsync(request, AgeGateScope.Vote)).Should().BeNull();
     }
 
+    // The Enforce cases below are refused before any SQL (the connection string points at a
+    // closed port); the database paths are covered by AgeGateDbTests in Karar.IntegrationTests.
+
     [Fact]
-    public async Task CheckWrite_EnforceOnly_LeavesGuestsAlone()
+    public async Task CheckWrite_Enforce_GuestUserWrite_Is401AuthRequired_EvenWithADeviceToken()
     {
         var service = CreateService(new Dictionary<string, string?> { ["AgeGate:Enforce"] = "true" });
-        var request = new DefaultHttpContext().Request;
-        request.Headers["X-Device-Token"] = "device-token";
+        var context = new DefaultHttpContext();
+        context.Request.Headers["X-Device-Token"] = "device-token";
 
-        (await service.CheckWriteAsync(request, AgeGateScope.Vote)).Should().BeNull(
-            "guest votes are governed by AgeGate:GuestVote, not AgeGate:Enforce");
+        var refusal = await service.CheckWriteAsync(context.Request, AgeGateScope.UserWrite);
+
+        (await ExecuteAsync(refusal)).Should().Be((401, AgeGateCodes.SignInRequired),
+            "a device token alone must not create content while the gate is enforced");
+    }
+
+    [Theory]
+    [InlineData(AgeGateScope.UserWrite)]
+    [InlineData(AgeGateScope.Vote)]
+    public async Task CheckWrite_Enforce_InvalidBearer_Is401AuthRequired_InEveryScope(AgeGateScope scope)
+    {
+        var service = CreateService(new Dictionary<string, string?> { ["AgeGate:Enforce"] = "true" });
+        var context = new DefaultHttpContext();
+        context.Request.Headers.Authorization = "Bearer not-a-valid-jwt";
+        context.Request.Headers["X-Device-Token"] = "device-token";
+
+        var refusal = await service.CheckWriteAsync(context.Request, scope);
+
+        (await ExecuteAsync(refusal)).Should().Be((401, AgeGateCodes.SignInRequired),
+            "an expired or forged token must not fall back to the guest device");
+    }
+
+    [Fact]
+    public async Task CheckWrite_Enforce_GuestVoteWithoutDevice_LeavesTheEndpointToAnswer401()
+    {
+        var service = CreateService(new Dictionary<string, string?> { ["AgeGate:Enforce"] = "true" });
+
+        (await service.CheckWriteAsync(new DefaultHttpContext().Request, AgeGateScope.Vote)).Should().BeNull();
     }
 
     [Fact]
@@ -195,14 +226,49 @@ public sealed class AgeGateContractTests
         block.Should().Contain("POLICY_ACCEPTANCE_REQUIRED");
         block.Should().Contain("FOR UPDATE");
         block.Should().Contain("AND date_of_birth IS NULL", "an existing birth date is never overwritten");
-        block.Should().Contain("AgeGateService.IsDeviceLockedAsync(connection, deviceId, transaction)");
+        block.Should().Contain("age_gate_failed_at IS NOT NULL", "a refused account stays refused");
+        block.Should().Contain("AgeGateService.IsDeviceLockedAsync(connection, accountDeviceId, transaction)");
+        block.Should().Contain("AgeGateService.IsDeviceLockedAsync(connection, requestDeviceValue, transaction)");
         block.Should().Contain("UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = @id AND revoked_at IS NULL");
 
         var refusal = block.IndexOf("if (ageDecision == AgeGateDecision.NotEligible)", StringComparison.Ordinal);
         var write = block.IndexOf("SET date_of_birth", StringComparison.Ordinal);
         refusal.Should().BeGreaterThan(0);
         write.Should().BeGreaterThan(refusal, "the ineligible branch returns before date_of_birth is written");
-        block[refusal..write].Should().Contain("MarkDeviceFailedAsync").And.Contain("return AgeGateService.NotEligibleResult();");
+        block[refusal..write].Should().Contain("MarkDeviceFailedAsync")
+            .And.Contain("MarkAccountFailedAsync(connection, userId, transaction)")
+            .And.Contain("return AgeGateService.NotEligibleResult();");
+    }
+
+    [Fact]
+    public void SignIn_RefusesAnAccountMarkedAtOnboarding_BeforeIssuingTokens()
+    {
+        foreach (var (start, end) in new[]
+                 {
+                     ("app.MapPost(\"/api/v1/auth/google\"", "app.MapPost(\"/api/v1/auth/google/link\""),
+                     ("app.MapPost(\"/api/v1/auth/login\"", "app.MapPost(\"/api/v1/auth/refresh\""),
+                 })
+        {
+            var block = Slice(start, end);
+            block.Should().Contain("age_gate_failed_at IS NOT NULL");
+            var refusal = block.IndexOf("if (ageGateRefused)", StringComparison.Ordinal);
+            refusal.Should().BeGreaterThan(0, start);
+            refusal.Should().BeLessThan(block.IndexOf("GenerateAccessToken", StringComparison.Ordinal), start);
+        }
+
+        Slice("app.MapPost(\"/api/v1/auth/refresh\"", "app.MapPost(\"/api/v1/auth/logout\"")
+            .Should().Contain("u.age_gate_failed_at IS NOT NULL")
+            .And.Contain("|| isBanned || ageGateRefused");
+    }
+
+    [Fact]
+    public void GoogleSignUp_OnARefusedDevice_StopsBeforeTheUsersInsert()
+    {
+        var block = Slice("app.MapPost(\"/api/v1/auth/google\"", "app.MapPost(\"/api/v1/auth/google/link\"");
+        var lockCheck = block.IndexOf("AgeGateService.IsDeviceLockedAsync(connection, deviceId.Value, transaction)", StringComparison.Ordinal);
+        lockCheck.Should().BeGreaterThan(0);
+        lockCheck.Should().BeLessThan(block.IndexOf("INSERT INTO users", StringComparison.Ordinal),
+            "no users row (personal data) may be created for a refused device");
     }
 
     [Fact]
@@ -224,6 +290,11 @@ public sealed class AgeGateContractTests
     [InlineData("app.MapPost(\"/api/v1/comments/{id:guid}/reactions\", async (", ".RequireAgeGate();")]
     [InlineData("app.MapPost(\"/api/v1/comments/{id:guid}/upvote\", async (", ".RequireAgeGate();")]
     [InlineData("app.MapPost(\"/api/v1/comments/{id:guid}/downvote\", async (", ".RequireAgeGate();")]
+    [InlineData("app.MapPut(\"/api/v1/posts/{id:guid}\", async (", ".RequireAgeGate();")]
+    [InlineData("app.MapPut(\"/api/v1/comments/{id:guid}\", async (", ".RequireAgeGate();")]
+    [InlineData("app.MapPost(\"/api/v1/posts/{id:guid}/comments/pin\", async (", ".RequireAgeGate();")]
+    [InlineData("app.MapPut(\"/api/v1/users/me\", async (", ".RequireAgeGate();")]
+    [InlineData("app.MapPost(\"/api/v1/users/me/migrate-guest-data\", async (", ".RequireAgeGate();")]
     public void WriteEndpoints_CarryTheAgeGate(string startMarker, string gate)
     {
         EndpointBlock(startMarker).Should().Contain(gate);
@@ -236,15 +307,13 @@ public sealed class AgeGateContractTests
     }
 
     [Fact]
-    public void AgeGateFilter_RefusesSignedInUsersWithoutBirthDate_WithNeutral403()
+    public void ErrorCodes_MatchTheClientContract()
     {
-        var source = TestRepoPaths.ReadText("backend", "Karar.Api", "Services", "AgeGateService.cs");
-        source.Should().Contain("SELECT date_of_birth IS NULL FROM users WHERE id = @userId AND deleted_at IS NULL");
-        source.Should().Contain("AgeGateCodes.VerificationRequired");
-        source.Should().Contain("StatusCodes.Status403Forbidden");
         AgeGateCodes.VerificationRequired.Should().Be("AGE_VERIFICATION_REQUIRED");
         AgeGateCodes.DeclarationRequired.Should().Be("AGE_DECLARATION_REQUIRED");
         AgeGateCodes.NotEligible.Should().Be("AGE_NOT_ELIGIBLE");
+        AgeGateCodes.InvalidDateOfBirth.Should().Be("INVALID_DATE_OF_BIRTH");
+        AgeGateCodes.SignInRequired.Should().Be("AUTH_REQUIRED");
     }
 
     // ── Migration ────────────────────────────────────────────────────────────
@@ -254,6 +323,11 @@ public sealed class AgeGateContractTests
     {
         MigrationText.Should().Contain("ADD COLUMN IF NOT EXISTS age_gate_failed_at TIMESTAMPTZ");
         MigrationText.Should().Contain("ADD COLUMN IF NOT EXISTS age_declared_at    TIMESTAMPTZ");
+        MigrationText.Replace("\r\n", "\n")
+            .Should().Contain("ALTER TABLE users\n    ADD COLUMN IF NOT EXISTS age_gate_failed_at TIMESTAMPTZ;");
+        Regex.Matches(MigrationText, @"ADD COLUMN IF NOT EXISTS\s+\w+\s+(\w+)")
+            .Select(m => m.Groups[1].Value)
+            .Should().OnlyContain(type => type == "TIMESTAMPTZ", "only refusal/declaration timestamps, never a declared date");
         TestRepoPaths.ReadText("backend", "Karar.Api", "Services", "AgeGateService.cs")
             .Should().Contain("SET age_gate_failed_at = COALESCE(age_gate_failed_at, NOW())")
             .And.Contain("SET age_declared_at = COALESCE(age_declared_at, NOW())");
@@ -300,6 +374,21 @@ public sealed class AgeGateContractTests
         };
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
         return new AgeGateService(configuration, new Db(configuration), new JwtService(configuration));
+    }
+
+    // Runs the refusal like the endpoint pipeline would and returns (status, error.code).
+    private static async Task<(int Status, string? Code)> ExecuteAsync(IResult? result)
+    {
+        result.Should().NotBeNull();
+        var context = new DefaultHttpContext
+        {
+            RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider(),
+        };
+        context.Response.Body = new MemoryStream();
+        await result!.ExecuteAsync(context);
+        context.Response.Body.Position = 0;
+        using var json = await JsonDocument.ParseAsync(context.Response.Body);
+        return (context.Response.StatusCode, json.RootElement.GetProperty("error").GetProperty("code").GetString());
     }
 
     private static string Slice(string startMarker, string endMarker)
