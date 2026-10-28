@@ -13959,9 +13959,10 @@ static async Task<bool> ValidateCachedOtpAsync(IDatabase redis, string key, stri
 
 static IResult? ValidateRequest(object request)
 {
+    // RequestValidation also enforces attributes written on positional record parameters
+    // (all of Contracts/Requests.cs), which Validator.TryValidateObject alone ignores.
     var results = new List<ValidationResult>();
-    var context = new ValidationContext(request);
-    if (Validator.TryValidateObject(request, context, results, validateAllProperties: true))
+    if (RequestValidation.TryValidate(request, results))
     {
         return null;
     }
