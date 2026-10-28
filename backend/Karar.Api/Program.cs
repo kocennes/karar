@@ -8999,6 +8999,9 @@ app.MapPost("/api/v1/auth/refresh", async (
     await using var reader = await findCmd.ExecuteReaderAsync();
     if (!await reader.ReadAsync())
     {
+        // The open reader must be closed first: rolling back under it threw
+        // NpgsqlOperationInProgressException, so an unknown or revoked token answered 500, not 401.
+        await reader.CloseAsync();
         await transaction.RollbackAsync();
         return Unauthorized();
     }
