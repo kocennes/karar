@@ -5663,7 +5663,7 @@ app.MapGet("/api/v1/admin/reports", async (
                END as target_title
         FROM reports r
         WHERE r.status = @status
-        ORDER BY r.created_at ASC
+        ORDER BY (r.reason = ANY(@priorityReasons)) DESC, r.created_at ASC, r.id
         LIMIT @limit OFFSET @offset
         """,
         connection
@@ -5671,6 +5671,8 @@ app.MapGet("/api/v1/admin/reports", async (
     command.Parameters.AddWithValue("status", status);
     command.Parameters.AddWithValue("limit", limit);
     command.Parameters.AddWithValue("offset", offset);
+    // self_harm, illegal and (P0-02) minor reach a moderator first; queue order only.
+    command.Parameters.AddWithValue("priorityReasons", ReportThresholdService.PriorityQueueReasons);
 
     var reports = new List<AdminReportDto>();
     await using var reader = await command.ExecuteReaderAsync();
