@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:karar/core/api/api_client.dart';
@@ -343,5 +345,31 @@ void main() {
       'dwellSeconds': 7,
       'impressionToken': 'token-1',
     });
+  });
+
+  test('PostRepository sends discover metadata as a JSON string', () async {
+    // DiscoverEventRequest.Metadata is `string?` on the API and is stored as
+    // jsonb text; a JSON object here fails model binding with 400, so every
+    // event carrying a rankingReason was silently dropped.
+    RequestOptions? request;
+    final repository = PostRepository(
+      apiClient: ApiClient(
+        dio: _mockDio(
+          {},
+          statusCode: 204,
+          onRequest: (options) => request = options,
+        ),
+      ),
+    );
+
+    await repository.sendDiscoverEvent(
+      postId: 'post-3',
+      eventType: 'impression',
+      rankingReason: 'trending',
+    );
+
+    final body = request?.data as Map<String, dynamic>;
+    expect(body['metadata'], isA<String>());
+    expect(jsonDecode(body['metadata'] as String), {'ranking_reason': 'trending'});
   });
 }

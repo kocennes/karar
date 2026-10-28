@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -119,8 +120,10 @@ class PostRepository {
           'eventType': eventType,
           if (dwellSeconds != null) 'dwellSeconds': dwellSeconds,
           if (impressionToken != null) 'impressionToken': impressionToken,
+          // The API binds Metadata as a JSON *string* (stored as jsonb text);
+          // a JSON object fails model binding with 400 and the event is lost.
           if (rankingReason != null)
-            'metadata': {'ranking_reason': rankingReason},
+            'metadata': jsonEncode({'ranking_reason': rankingReason}),
         },
       );
     } catch (_) {}
