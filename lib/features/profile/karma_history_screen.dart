@@ -194,10 +194,10 @@ class _KarmaHero extends StatelessWidget {
                     gradient: KararGradients.streak,
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(
+                  child: const Icon(
                     Icons.star_rounded,
                     size: 28,
-                    color: kc.onCapsuleText,
+                    color: KararGradients.onStreak,
                   ),
                 ),
               ),

@@ -252,9 +252,10 @@ class _CategoryBanner extends StatelessWidget {
 }
 
 enum _HeaderPillTone {
-  /// Primary action on the banner: light capsule (white / #F4F3F8) with
-  /// #15131F text in both themes (16:1+).
-  light,
+  /// Primary action on the banner: the theme's capsule — white + capsule
+  /// shadow with #15131F text in light (18.3:1), tonal #24202F @ 92 % +
+  /// hairline with #F4F3F8 text in dark (≥ 11:1).
+  capsule,
 
   /// Secondary / "on" state: `OnColorChip` glass (black 22 %, high
   /// contrast: solid ink) with white text (≥ 7:1 on every palette).
@@ -286,7 +287,7 @@ class _HeaderPill extends StatelessWidget {
     final kc = context.kc;
     final highContrast = MediaQuery.maybeHighContrastOf(context) ?? false;
     final (bg, fg) = switch (tone) {
-      _HeaderPillTone.light => (kc.capsule, kc.onCapsuleText),
+      _HeaderPillTone.capsule => (kc.capsule, kc.onCapsuleText),
       _HeaderPillTone.glass => (
           highContrast ? KararGlass.chipHighContrast : KararGlass.chipOnColor,
           kc.onColor,
@@ -305,8 +306,10 @@ class _HeaderPill extends StatelessWidget {
         decoration: BoxDecoration(
           color: bg,
           borderRadius: KararRadius.all(20),
-          boxShadow:
-              tone == _HeaderPillTone.light ? KararShadow.capsule : null,
+          border: tone == _HeaderPillTone.capsule ? kc.capsuleBorder : null,
+          boxShadow: tone == _HeaderPillTone.capsule
+              ? KararShadow.capsuleOf(Theme.of(context).brightness)
+              : null,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -338,9 +341,9 @@ class _FollowButton extends ConsumerWidget {
     final followedCategories = ref.watch(followedCategoriesProvider);
     final isFollowed = followedCategories.contains(categoryId);
 
-    // Not followed: the light capsule CTA. Followed: glass with a gold star.
+    // Not followed: the capsule CTA. Followed: glass with a gold star.
     return _HeaderPill(
-      tone: isFollowed ? _HeaderPillTone.glass : _HeaderPillTone.light,
+      tone: isFollowed ? _HeaderPillTone.glass : _HeaderPillTone.capsule,
       iconColor: isFollowed ? context.kc.gold : null,
       onTap: () {
         final user = ref.read(currentUserProvider);

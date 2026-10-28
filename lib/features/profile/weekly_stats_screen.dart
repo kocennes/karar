@@ -169,7 +169,7 @@ class _WeekHeader extends StatelessWidget {
                   Text(
                     '${stats.streak} gün seri',
                     style: AppTypography.label.copyWith(
-                      color: kc.onCapsuleText,
+                      color: KararGradients.onStreak,
                     ),
                   ),
                 ],

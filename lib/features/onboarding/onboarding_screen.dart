@@ -273,9 +273,10 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   }
 }
 
-/// 56 px light capsule CTA on the gradient steps: `capsule` (white in
-/// light, the spec off-white #F4F3F8 in dark) with #15131F text (≥ 16:1).
-/// Not red: red reads as "Haksız".
+/// 56 px capsule CTA on the gradient steps: `capsule` with `onCapsuleText`
+/// — white + capsule shadow with #15131F text in light (18.3:1), tonal
+/// #24202F @ 92 % + white 8 % hairline with #F4F3F8 text in dark (≥ 11:1;
+/// no off-white glare block). Not red: red reads as "Haksız".
 class _CapsuleButton extends StatelessWidget {
   const _CapsuleButton({
     super.key,
@@ -293,7 +294,7 @@ class _CapsuleButton extends StatelessWidget {
       width: double.infinity,
       decoration: BoxDecoration(
         borderRadius: KararRadius.all(KararRadius.pill),
-        boxShadow: KararShadow.capsule,
+        boxShadow: KararShadow.capsuleOf(Theme.of(context).brightness),
       ),
       child: FilledButton(
         onPressed: onPressed,
@@ -303,6 +304,7 @@ class _CapsuleButton extends StatelessWidget {
           overlayColor: kc.onCapsuleText,
           minimumSize: const Size(64, 56),
           shape: const StadiumBorder(),
+          side: kc.capsuleSide,
           textStyle: AppTypography.buttonL,
           elevation: 0,
         ),

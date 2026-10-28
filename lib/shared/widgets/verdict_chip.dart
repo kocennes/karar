@@ -7,8 +7,9 @@ import '../models/post.dart';
 
 /// Where a [VerdictChip] sits.
 enum VerdictChipTone {
-  /// On cards/photos: light capsule + capsule shadow, theme-independent
-  /// capsule text colours (#116B34 / #B4232A / #5B576D).
+  /// On cards/photos: the theme's capsule with `onCapsule*` content (light:
+  /// white + capsule shadow, #116B34 / #B4232A / #5B576D text; dark: tonal
+  /// #24202F @ 92 % + hairline, #4ADE80 / #FF7A7A / #B6B2C6 text).
   onColor,
 
   /// On surfaces (compact cards): muted background, theme text tokens.
@@ -36,13 +37,16 @@ class VerdictChip extends StatelessWidget {
     final hakliText = onColor ? kc.onCapsuleHakli : kc.hakliText;
     final haksizText = onColor ? kc.onCapsuleHaksiz : kc.haksizText;
     final mutedText = onColor ? kc.onCapsuleMuted : kc.text2;
-    final hakliIcon = onColor ? kc.hakliFill : kc.hakliText;
-    final haksizIcon = onColor ? kc.haksizFill : kc.haksizText;
+    final hakliIcon = onColor ? kc.onCapsuleHakliIcon : kc.hakliText;
+    final haksizIcon = onColor ? kc.onCapsuleHaksizIcon : kc.haksizText;
 
     final decoration = BoxDecoration(
       color: onColor ? kc.capsule : kc.muted,
       borderRadius: KararRadius.all(17),
-      boxShadow: onColor ? KararShadow.capsule : null,
+      border: onColor ? kc.capsuleBorder : null,
+      boxShadow: onColor
+          ? KararShadow.capsuleOf(Theme.of(context).brightness)
+          : null,
     );
 
     if (!post.showPercentage) {
@@ -108,12 +112,14 @@ class VerdictChip extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Expanded(
-                // On the light capsule the fills read; on dark surfaces the
-                // dark-tuned bar tones match the bright labels beside them.
+                // Light: the vote fills (white capsule / light surfaces).
+                // Dark: the dark-tuned bar tones #30AF5F / #EB585B, which
+                // match the bright labels beside them and stay ≥ 3.6:1 on
+                // the dark capsule even over a white photo.
                 child: _SplitBar(
                   fraction: p / 100,
-                  hakli: onColor ? kc.hakliFill : kc.hakliBar,
-                  haksiz: onColor ? kc.haksizFill : kc.haksizBar,
+                  hakli: kc.hakliBar,
+                  haksiz: kc.haksizBar,
                 ),
               ),
               const SizedBox(width: 8),

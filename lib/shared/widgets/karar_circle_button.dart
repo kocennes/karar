@@ -26,8 +26,8 @@ enum KararCircleStyle {
   /// Brand fill (`primaryFill`, both themes) with a white icon.
   primary,
 
-  /// Light capsule (white / off-white #F4F3F8 in dark) + capsule shadow,
-  /// #15131F icon in both themes.
+  /// Capsule: white + capsule shadow with a #15131F icon in light; dark
+  /// tonal #24202F @ 92 % + white 8 % hairline with a #F4F3F8 icon in dark.
   capsule,
 }
 
@@ -116,7 +116,8 @@ class KararCircleButton extends StatelessWidget {
       case KararCircleStyle.capsule:
         fill = kc.capsule;
         fg = kc.onCapsuleText;
-        shadows = KararShadow.capsule;
+        shadows = KararShadow.capsuleOf(brightness);
+        side = kc.capsuleSide ?? BorderSide.none;
     }
 
     if (!enabled) {

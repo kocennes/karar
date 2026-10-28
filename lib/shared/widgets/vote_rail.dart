@@ -72,12 +72,16 @@ class VoteRailMetrics {
 /// The glass vote rail on post cards and Keşfet pages (spec §5.5 / §5.6).
 ///
 /// Items top→bottom: Haklı capsule, Haksız capsule, divider, Yorum capsule,
-/// Kaydet circle (if [onSave]), Paylaş circle (if [onShare]). Capsules are
-/// light in both themes (white / off-white #F4F3F8 in dark; text on them is
-/// theme-independent, ≥ 5:1). Kaydet / Paylaş are glass circles (black
-/// 22 % on gradients, 28 % on photos, white 28 % stroke, white icon) as in
-/// the reference, so only the vote and comment capsules are solid; a saved
-/// post shows a solid capsule with the brand bookmark.
+/// Kaydet circle (if [onSave]), Paylaş circle (if [onShare]). Capsules
+/// follow the theme: white + capsule shadow in light, dark tonal
+/// (#24202F @ 92 %) + white 8 % hairline in dark, with the matching
+/// `onCapsule*` content tones (text ≥ 4.5:1, icons ≥ 3:1 over any photo).
+/// A selected vote capsule is filled with the vote colour (white content)
+/// and ringed in `capsuleSelectedRing` (white / #F4F3F8 in dark).
+/// Kaydet / Paylaş are glass circles (black 22 % on gradients, 28 % on
+/// photos, white 28 % stroke, white icon) as in the reference, so only the
+/// vote and comment capsules are solid; a saved post shows a solid capsule
+/// with the brand bookmark.
 ///
 /// The rail does not change data itself: it calls [onVote] and re-renders
 /// whatever the provider state says (optimistic in feed, server-confirmed in
@@ -226,6 +230,7 @@ class _VoteRailState extends State<VoteRail> with TickerProviderStateMixin {
         fill: kc.voteFill(hakli),
         capsuleColor: kc.capsule,
         textColor: kc.onCapsuleText,
+        iconColor: kc.onCapsuleVoteIcon(hakli),
         onFill: kc.onColor,
         pending: widget.pendingVote == type,
       );
@@ -321,7 +326,9 @@ class _VoteRailState extends State<VoteRail> with TickerProviderStateMixin {
                   ? Icons.bookmark_rounded
                   : Icons.bookmark_border_rounded,
               size: 22,
-              color: widget.isSaved ? kc.primaryFill : kc.onColor,
+              // `primary`: #7D50F0 on the white capsule, lavender #A98BFF
+              // (≥ 4.68:1) on the dark one.
+              color: widget.isSaved ? kc.primary : kc.onColor,
             ),
           ),
         ),
@@ -362,6 +369,7 @@ class _VoteCapsule extends StatelessWidget {
     required this.fill,
     required this.capsuleColor,
     required this.textColor,
+    required this.iconColor,
     required this.onFill,
     required this.pending,
   });
@@ -375,14 +383,19 @@ class _VoteCapsule extends StatelessWidget {
   final Color capsuleColor;
   final Color textColor;
 
+  /// Vote icon colour on the unselected capsule.
+  final Color iconColor;
+
   /// Content colour on the selected (vote-filled) capsule.
   final Color onFill;
   final bool pending;
 
   @override
   Widget build(BuildContext context) {
+    final kc = context.kc;
+    final brightness = Theme.of(context).brightness;
     final fg = selected ? onFill : textColor;
-    final iconColor = selected ? onFill : fill;
+    final glyph = selected ? onFill : iconColor;
     final radius = size.width / 2;
     Widget capsule = AnimatedContainer(
       duration: KararMotion.d(context, KararMotion.base),
@@ -392,22 +405,24 @@ class _VoteCapsule extends StatelessWidget {
       decoration: BoxDecoration(
         color: selected ? fill : capsuleColor,
         borderRadius: BorderRadius.circular(radius),
-        // Selected ring in the capsule colour (white / off-white in dark).
+        // Selected: 2 px ring (white in light, #F4F3F8 in dark).
+        // Unselected: the dark-mode hairline (none in light).
         border: selected
             ? Border.all(
-                color: capsuleColor,
+                color: kc.capsuleSelectedRing,
                 width: 2,
                 strokeAlign: BorderSide.strokeAlignOutside,
               )
-            : null,
-        boxShadow:
-            selected ? KararShadow.capsuleSelected : KararShadow.capsule,
+            : kc.capsuleBorder,
+        boxShadow: selected
+            ? KararShadow.capsuleSelectedOf(brightness)
+            : KararShadow.capsuleOf(brightness),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, size: iconSize, color: iconColor),
+          Icon(icon, size: iconSize, color: glyph),
           const SizedBox(height: 3),
           Flexible(child: _RollingCount(count: count, color: fg)),
         ],
@@ -457,7 +472,8 @@ class _CountCapsule extends StatelessWidget {
       decoration: BoxDecoration(
         color: color,
         borderRadius: BorderRadius.circular(size.width / 2),
-        boxShadow: KararShadow.capsule,
+        border: context.kc.capsuleBorder,
+        boxShadow: KararShadow.capsuleOf(Theme.of(context).brightness),
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -508,8 +524,12 @@ class _RailCircle extends StatelessWidget {
       decoration: BoxDecoration(
         color: fill,
         shape: BoxShape.circle,
-        border: solid ? null : Border.all(color: KararGlass.stroke),
-        boxShadow: solid ? KararShadow.capsule : null,
+        border: solid
+            ? kc.capsuleBorder
+            : Border.all(color: KararGlass.stroke),
+        boxShadow: solid
+            ? KararShadow.capsuleOf(Theme.of(context).brightness)
+            : null,
       ),
       child: child,
     );

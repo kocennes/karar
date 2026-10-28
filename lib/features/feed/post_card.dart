@@ -778,6 +778,7 @@ class _SensitiveVeil extends StatelessWidget {
               decoration: BoxDecoration(
                 color: kc.capsule,
                 borderRadius: KararRadius.all(KararRadius.pill),
+                border: kc.capsuleBorder,
               ),
               child: Text(
                 'GÖSTER',

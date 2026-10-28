@@ -53,15 +53,73 @@ void main() {
     }
   });
 
-  test('capsule text is theme independent and AA on light capsules', () {
+  test('capsule content meets AA in both themes over any backdrop', () {
+    // The dark capsule is slightly translucent, so measure it composited
+    // over the extremes a photo or gradient can put behind it.
+    const backdrops = [Color(0xFFFFFFFF), Color(0xFF000000)];
     for (final k in [l, d]) {
-      _expectRatio(k.onCapsuleText, k.capsule, 4.5);
-      _expectRatio(k.onCapsuleMuted, k.capsule, 4.5);
-      _expectRatio(k.onCapsuleHakli, k.capsule, 4.5);
-      _expectRatio(k.onCapsuleHaksiz, k.capsule, 4.5);
-      // Icons on capsules are UI graphics (>= 3:1).
-      _expectRatio(k.hakliFill, k.capsule, 3);
-      _expectRatio(k.haksizFill, k.capsule, 3);
+      for (final backdrop in [...backdrops, k.canvas]) {
+        final capsule = Color.alphaBlend(k.capsule, backdrop);
+        _expectRatio(k.onCapsuleText, capsule, 4.5);
+        _expectRatio(k.onCapsuleMuted, capsule, 4.5);
+        _expectRatio(k.onCapsuleHakli, capsule, 4.5);
+        _expectRatio(k.onCapsuleHaksiz, capsule, 4.5);
+        // Icons and verdict-chip bar segments are UI graphics (>= 3:1).
+        _expectRatio(k.onCapsuleHakliIcon, capsule, 3);
+        _expectRatio(k.onCapsuleHaksizIcon, capsule, 3);
+        _expectRatio(k.onCapsuleVoteIcon(true), capsule, 3);
+        _expectRatio(k.onCapsuleVoteIcon(false), capsule, 3);
+        _expectRatio(k.hakliBar, capsule, 3);
+        _expectRatio(k.haksizBar, capsule, 3);
+        // Saved bookmark on the solid rail circle.
+        _expectRatio(k.primary, capsule, 3);
+      }
+      // Selected vote capsule: the ring separates the vote fill (>= 3:1).
+      _expectRatio(k.capsuleSelectedRing, k.hakliFill, 3);
+      _expectRatio(k.capsuleSelectedRing, k.haksizFill, 3);
+    }
+  });
+
+  test('light capsule tokens are unchanged', () {
+    expect(l.capsule, const Color(0xFFFFFFFF));
+    expect(l.onCapsuleText, const Color(0xFF15131F));
+    expect(l.onCapsuleMuted, const Color(0xFF5B576D));
+    expect(l.onCapsuleHakli, const Color(0xFF116B34));
+    expect(l.onCapsuleHaksiz, const Color(0xFFB4232A));
+    expect(l.onCapsuleHakliIcon, l.hakliFill);
+    expect(l.onCapsuleHaksizIcon, l.haksizFill);
+    expect(l.capsuleSelectedRing, l.capsule);
+    expect(l.capsuleSide, isNull);
+    expect(l.capsuleBorder, isNull);
+    expect(KararShadow.capsuleOf(Brightness.light), KararShadow.capsule);
+    expect(
+      KararShadow.capsuleSelectedOf(Brightness.light),
+      KararShadow.capsuleSelected,
+    );
+  });
+
+  test('dark capsules are dark tonal with a hairline, not glare blocks', () {
+    // Opaque enough that content contrast holds over any photo.
+    expect(d.capsule.a, greaterThanOrEqualTo(0.9));
+    // Dark tone: close to the dark surfaces, far from the light text.
+    final onCanvas = Color.alphaBlend(d.capsule, d.canvas);
+    expect(_contrastRatio(onCanvas, d.canvas), lessThan(1.5));
+    _expectRatio(d.text1, onCanvas, 10);
+    // Light content on it.
+    expect(d.onCapsuleText, d.text1);
+    expect(d.onCapsuleMuted, d.text2);
+    expect(d.onCapsuleHakli, d.hakliText);
+    expect(d.onCapsuleHaksiz, d.haksizText);
+    // Hairline edge instead of a (invisible) shadow.
+    expect(d.capsuleSide?.color, d.hairline);
+    expect(d.capsuleBorder, isNotNull);
+    expect(KararShadow.capsuleOf(Brightness.dark), isEmpty);
+    expect(KararShadow.capsuleSelectedOf(Brightness.dark), isEmpty);
+  });
+
+  test('ink on the streak gradient meets AA in both themes', () {
+    for (final stop in KararGradients.streak.colors) {
+      _expectRatio(KararGradients.onStreak, stop, 4.5);
     }
   });
 

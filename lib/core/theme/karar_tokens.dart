@@ -10,11 +10,16 @@ import 'package:flutter/material.dart';
 ///
 /// Vote colour usage matrix (enforce):
 /// * filled button/capsule + white label → `hakliFill` / `haksizFill`
-/// * icon on a white/off-white capsule → `hakliFill` / `haksizFill`
+/// * icon on a capsule → `onCapsuleHakliIcon` / `onCapsuleHaksizIcon`
+///   (light: the fills on the white capsule; dark: the bright text tones on
+///   the dark capsule)
+/// * text on a capsule → `onCapsuleHakli` / `onCapsuleHaksiz` (light: the
+///   dark text tones; dark: the bright text tones)
 /// * text on light surfaces → `hakliText` / `haksizText` (light values)
-/// * text on light capsules in BOTH themes → `onCapsuleHakli` / `onCapsuleHaksiz`
 /// * text on dark surfaces → `hakliText` / `haksizText` (dark values)
-/// Always pair a vote colour with the ✓ / ✕ glyph or the word.
+/// Capsules follow the theme: white in light, dark tonal in dark — never an
+/// off-white block on the dark canvas. Always pair a vote colour with the
+/// ✓ / ✕ glyph or the word.
 @immutable
 class KararColors extends ThemeExtension<KararColors> {
   const KararColors({
@@ -53,6 +58,8 @@ class KararColors extends ThemeExtension<KararColors> {
     required this.onCapsuleMuted,
     required this.onCapsuleHakli,
     required this.onCapsuleHaksiz,
+    required this.onCapsuleHakliIcon,
+    required this.onCapsuleHaksizIcon,
     required this.navPill,
     required this.sheet,
     required this.hairline,
@@ -146,18 +153,38 @@ class KararColors extends ThemeExtension<KararColors> {
   /// Modal barrier.
   final Color scrim;
 
-  /// Rail buttons, verdict chip and on-colour CTAs (onboarding "Devam").
-  /// Light white; dark the spec §2.2 off-white #F4F3F8 — never a dimmed
-  /// grey, which read as a disabled button on the vivid gradients
-  /// (#15131F text 16.6:1, #5B576D 6.28:1, #116B34 5.99:1, #B4232A 5.92:1,
-  /// #15803D icon 4.54:1, #D6363C icon 4.27:1, #7D50F0 icon 4.45:1).
+  /// Rail buttons, verdict chip, `CountPill` and on-colour CTAs (category
+  /// "Takip Et", onboarding "Devam", "GÖSTER").
+  ///
+  /// Light: white + [KararShadow.capsule] (#15131F text 18.3:1, #5B576D
+  /// 6.93:1, #116B34 6.61:1, #B4232A 6.53:1, #15803D icon 5.02:1,
+  /// #D6363C icon 4.72:1).
+  ///
+  /// Dark: tonal #24202F @ 92 % with the white 8 % [hairline] as its edge
+  /// ([capsuleBorder]; a shadow is invisible on the dark canvas). Neither
+  /// the off-white #F4F3F8 (a glare block on the near-black UI) nor a
+  /// dimmed light grey (read as a disabled button). Measured on the
+  /// worst-case composite over pure white (#35313F) / over the canvas
+  /// (#221E2D): text1 11.37 / 14.67:1, text2 6.08 / 7.85:1, #4ADE80
+  /// 7.21 / 9.30:1, #FF7A7A 4.97 / 6.42:1, lavender #A98BFF icon 4.68 /
+  /// 6.04:1, so text stays ≥ 4.5:1 and icons ≥ 3:1 over any photo.
   final Color capsule;
 
-  /// Text on capsules — theme-independent (capsules are light in both themes).
+  /// Content on [capsule]: dark ink tones in light, light tones in dark
+  /// (dark: text1 #F4F3F8, text2 #B6B2C6, #4ADE80, #FF7A7A — ratios on
+  /// [capsule]). [onCapsuleHakli] / [onCapsuleHaksiz] are for text (and
+  /// small glyphs set like text, e.g. `CountPill`).
   final Color onCapsuleText;
   final Color onCapsuleMuted;
   final Color onCapsuleHakli;
   final Color onCapsuleHaksiz;
+
+  /// Vote icons on [capsule] (rail ✓ / ✕, verdict chip glyphs). Light: the
+  /// vote fills #15803D / #D6363C (5.02 / 4.72:1 on white). Dark: the
+  /// bright text tones #4ADE80 / #FF7A7A (≥ 4.97:1 on the dark capsule;
+  /// the fills drop to ~2.5:1 there).
+  final Color onCapsuleHakliIcon;
+  final Color onCapsuleHaksizIcon;
 
   /// Floating nav pill fill (light white, dark #1F1C2A @ 94 %).
   final Color navPill;
@@ -242,6 +269,32 @@ class KararColors extends ThemeExtension<KararColors> {
   Color get hakliBar => voteBar(true);
   Color get haksizBar => voteBar(false);
 
+  /// Vote icon on a [capsule] for a side.
+  Color onCapsuleVoteIcon(bool hakli) =>
+      hakli ? onCapsuleHakliIcon : onCapsuleHaksizIcon;
+
+  /// Edge of a [capsule]: none in light (the capsule shadow lifts it), the
+  /// white 8 % [hairline] in dark. Drawn outside the box, so it never
+  /// changes a capsule's size or the position of its content.
+  BorderSide? get capsuleSide => isDark
+      ? BorderSide(
+          color: hairline,
+          strokeAlign: BorderSide.strokeAlignOutside,
+        )
+      : null;
+
+  /// [capsuleSide] as a box border (null in light).
+  Border? get capsuleBorder {
+    final side = capsuleSide;
+    return side == null ? null : Border.fromBorderSide(side);
+  }
+
+  /// 2 px ring around a selected (vote-filled) capsule. Light: the white
+  /// capsule colour. Dark: text1 #F4F3F8 — a ring in the dark capsule tone
+  /// vanished, so the light ring plus the vivid fill mark the choice
+  /// (4.54:1 against #15803D, 4.27:1 against #D6363C).
+  Color get capsuleSelectedRing => isDark ? onCapsuleText : capsule;
+
   /// Search-match highlight behind text on cards. Light: primaryContainer
   /// (#EEE8FD). Dark: primaryContainer was 1.20:1 on the card and the match
   /// vanished, so dark uses the brand fill at 55 % over `surface` (#4F3592,
@@ -290,6 +343,8 @@ class KararColors extends ThemeExtension<KararColors> {
     onCapsuleMuted: Color(0xFF5B576D),
     onCapsuleHakli: Color(0xFF116B34),
     onCapsuleHaksiz: Color(0xFFB4232A),
+    onCapsuleHakliIcon: Color(0xFF15803D),
+    onCapsuleHaksizIcon: Color(0xFFD6363C),
     navPill: Color(0xFFFFFFFF),
     sheet: Color(0xFFFFFFFF),
     hairline: Color(0x00FFFFFF),
@@ -346,11 +401,15 @@ class KararColors extends ThemeExtension<KararColors> {
     warnText: Color(0xFFF5C04E),
     mint: Color(0xFF57CA8C),
     scrim: Color(0x99000000), // rgba(0,0,0,.60)
-    capsule: Color(0xFFF4F3F8), // spec off-white (not a dimmed grey)
-    onCapsuleText: Color(0xFF15131F),
-    onCapsuleMuted: Color(0xFF5B576D),
-    onCapsuleHakli: Color(0xFF116B34),
-    onCapsuleHaksiz: Color(0xFFB4232A),
+    // Dark tonal capsule (#24202F @ 92 %) + hairline, not an off-white
+    // glare block; content in the light tones.
+    capsule: Color(0xEB24202F),
+    onCapsuleText: Color(0xFFF4F3F8),
+    onCapsuleMuted: Color(0xFFB6B2C6),
+    onCapsuleHakli: Color(0xFF4ADE80),
+    onCapsuleHaksiz: Color(0xFFFF7A7A),
+    onCapsuleHakliIcon: Color(0xFF4ADE80),
+    onCapsuleHaksizIcon: Color(0xFFFF7A7A),
     navPill: Color(0xF01F1C2A), // #1F1C2A @ 94 %
     sheet: Color(0xFF1F1C2A),
     hairline: Color(0x14FFFFFF), // white 8 %
@@ -406,6 +465,8 @@ class KararColors extends ThemeExtension<KararColors> {
     Color? onCapsuleMuted,
     Color? onCapsuleHakli,
     Color? onCapsuleHaksiz,
+    Color? onCapsuleHakliIcon,
+    Color? onCapsuleHaksizIcon,
     Color? navPill,
     Color? sheet,
     Color? hairline,
@@ -459,6 +520,8 @@ class KararColors extends ThemeExtension<KararColors> {
       onCapsuleMuted: onCapsuleMuted ?? this.onCapsuleMuted,
       onCapsuleHakli: onCapsuleHakli ?? this.onCapsuleHakli,
       onCapsuleHaksiz: onCapsuleHaksiz ?? this.onCapsuleHaksiz,
+      onCapsuleHakliIcon: onCapsuleHakliIcon ?? this.onCapsuleHakliIcon,
+      onCapsuleHaksizIcon: onCapsuleHaksizIcon ?? this.onCapsuleHaksizIcon,
       navPill: navPill ?? this.navPill,
       sheet: sheet ?? this.sheet,
       hairline: hairline ?? this.hairline,
@@ -518,6 +581,8 @@ class KararColors extends ThemeExtension<KararColors> {
       onCapsuleMuted: c(onCapsuleMuted, other.onCapsuleMuted),
       onCapsuleHakli: c(onCapsuleHakli, other.onCapsuleHakli),
       onCapsuleHaksiz: c(onCapsuleHaksiz, other.onCapsuleHaksiz),
+      onCapsuleHakliIcon: c(onCapsuleHakliIcon, other.onCapsuleHakliIcon),
+      onCapsuleHaksizIcon: c(onCapsuleHaksizIcon, other.onCapsuleHaksizIcon),
       navPill: c(navPill, other.navPill),
       sheet: c(sheet, other.sheet),
       hairline: c(hairline, other.hairline),
@@ -717,7 +782,8 @@ abstract final class KararShadow {
           ),
         ];
 
-  /// Rail buttons and verdict chip (both themes).
+  /// Rail buttons and verdict chip in light. Prefer [capsuleOf]: dark
+  /// capsules use `KararColors.capsuleBorder` (hairline) instead.
   static const List<BoxShadow> capsule = [
     BoxShadow(
       color: Color(0x29000000), // black 16 %
@@ -726,7 +792,7 @@ abstract final class KararShadow {
     ),
   ];
 
-  /// Selected vote capsule.
+  /// Selected vote capsule in light. Prefer [capsuleSelectedOf].
   static const List<BoxShadow> capsuleSelected = [
     BoxShadow(
       color: Color(0x40000000), // black 25 %
@@ -734,6 +800,16 @@ abstract final class KararShadow {
       blurRadius: 18,
     ),
   ];
+
+  /// Capsule shadow: [capsule] in light, none in dark (invisible on the
+  /// dark canvas; the capsule hairline marks the edge instead).
+  static List<BoxShadow> capsuleOf(Brightness b) =>
+      b == Brightness.dark ? const [] : capsule;
+
+  /// Selected vote capsule shadow: [capsuleSelected] in light, none in dark
+  /// (the light `capsuleSelectedRing` marks the choice instead).
+  static List<BoxShadow> capsuleSelectedOf(Brightness b) =>
+      b == Brightness.dark ? const [] : capsuleSelected;
 
   /// Brand CTA glow (light only).
   static List<BoxShadow> primaryButton(Brightness b) => b == Brightness.dark
@@ -764,18 +840,18 @@ abstract final class KararShadow {
         KararShadowKind.none => const [],
         KararShadowKind.soft => soft(b),
         KararShadowKind.float => float(b),
-        KararShadowKind.capsule => capsule,
+        KararShadowKind.capsule => capsuleOf(b),
       };
 
   /// Dark-mode hairline that replaces a shadow (null in light / for none).
-  /// soft → white 8 %, float → white 9 %, cards → white 10 %.
+  /// soft and capsule → white 8 %, float → white 9 %, cards → white 10 %.
   static Color? hairlineFor(KararShadowKind kind, Brightness b) {
     if (b != Brightness.dark) return null;
     return switch (kind) {
       KararShadowKind.none => null,
       KararShadowKind.soft => const Color(0x14FFFFFF),
       KararShadowKind.float => const Color(0x17FFFFFF),
-      KararShadowKind.capsule => null,
+      KararShadowKind.capsule => const Color(0x14FFFFFF),
     };
   }
 
@@ -926,6 +1002,11 @@ abstract final class KararGradients {
   static const LinearGradient streak = LinearGradient(
     colors: [Color(0xFFF5C04E), Color(0xFFE8873A)],
   );
+
+  /// Ink on [streak] (streak label, karma star) in both themes: #15131F,
+  /// 10.95:1 on the gold stop, 6.95:1 on the orange stop. (Was
+  /// `onCapsuleText`, which turned light with the dark capsules.)
+  static const Color onStreak = Color(0xFF15131F);
 
   /// Photo card scrims (§2.4): top 38 % → 0 over the top 26 %, bottom
   /// 0 at 30 % → 52 % at 52 % → 80 % at 100 %.
