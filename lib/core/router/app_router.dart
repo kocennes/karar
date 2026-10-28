@@ -13,6 +13,7 @@ import '../../features/auth/register_screen.dart';
 import '../../features/auth/sessions_screen.dart';
 import '../../features/auth/two_factor_setup_screen.dart';
 import '../../features/auth/verify_email_screen.dart';
+import '../../features/auth/widgets/age_gate_widgets.dart';
 import '../../features/create_post/create_post_screen.dart';
 import '../../features/feed/category_screen.dart';
 import '../../features/feed/feed_screen.dart';
@@ -330,6 +331,10 @@ GoRouter buildRouter(AppServices services) => GoRouter(
           path: ageOnboardingPath,
           builder: (_, __) =>
               AgeOnboardingScreen(authService: services.authService),
+        ),
+        GoRoute(
+          path: ageRefusalPath,
+          builder: (_, __) => const AgeRefusalScreen(),
         ),
         GoRoute(
           path: '/auth/verify-email',

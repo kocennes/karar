@@ -12,8 +12,10 @@ import 'widgets/auth_layout.dart';
 
 /// P0-02: neutral birth-date + terms step for accounts that have no birth
 /// date yet (`requiresOnboarding`: Google sign-up, old accounts). Calls
-/// `POST /api/v1/users/me/onboarding`. Pops `true` when done; an ineligible
-/// date locks the device, ends the session and shows the neutral refusal.
+/// `POST /api/v1/users/me/onboarding`. The server decides: a 200 pops `true`
+/// (or opens the feed); only its 403 `AGE_NOT_ELIGIBLE` refuses, after the
+/// central handler has locked the device and ended the session. No local age
+/// check here: the device clock and time zone must not overrule the server.
 /// Going back abandons the sign-in (the session is closed).
 class AgeOnboardingScreen extends StatefulWidget {
   const AgeOnboardingScreen({super.key, required this.authService});
@@ -45,7 +47,8 @@ class _AgeOnboardingScreenState extends State<AgeOnboardingScreen> {
     try {
       locked = await widget.authService.isAgeGateLocked();
     } catch (_) {}
-    if (locked) await _endSession();
+    // A refused device keeps no session, even one that needs this step.
+    if (locked) await widget.authService.applyAgeRefusal();
     if (mounted) setState(() => _locked = locked);
   }
 
@@ -56,11 +59,9 @@ class _AgeOnboardingScreenState extends State<AgeOnboardingScreen> {
     } catch (_) {}
   }
 
-  Future<void> _refuse() async {
-    try {
-      await widget.authService.lockAgeGate();
-    } catch (_) {}
-    await _endSession();
+  /// UI only: the lock and the session were handled centrally
+  /// (`AgeGateCoordinator` → `AuthService.applyAgeRefusal`).
+  void _showRefusal() {
     if (!mounted) return;
     setState(() {
       _locked = true;
@@ -84,46 +85,40 @@ class _AgeOnboardingScreenState extends State<AgeOnboardingScreen> {
       return;
     }
 
-    final dob = _dob!;
-    final eligible = AgeGate.isEligible(dob);
     setState(() {
       _isLoading = true;
       _error = null;
     });
-    // Lock first so the gate stays closed even if the request fails.
-    if (!eligible) {
-      try {
-        await widget.authService.lockAgeGate();
-      } catch (_) {}
-    }
 
     try {
-      // Sent for an ineligible date too: the server locks the device and
-      // revokes the account's sessions; it never stores that date.
+      // Every date goes to the server: it locks the device and revokes the
+      // account's sessions for an ineligible one, and never stores that date.
       await widget.authService.completeOnboarding(
-        dateOfBirth: dob,
+        dateOfBirth: _dob!,
         acceptedTerms: true,
         acceptedCommunityGuidelines: true,
       );
-    } catch (e) {
-      if (!eligible ||
-          (e is ApiException && e.code == AgeGate.notEligibleCode)) {
-        await _refuse();
+    } on ApiException catch (e) {
+      if (e.code == AgeGate.notEligibleCode) {
+        _showRefusal();
         return;
       }
       if (!mounted) return;
       setState(() {
         _isLoading = false;
-        _error =
-            e is ApiException ? e.message : 'Bir şey ters gitti. Tekrar dene.';
+        _error = e.friendlyMessage;
+      });
+      return;
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _error = 'Bir şey ters gitti. Tekrar dene.';
       });
       return;
     }
 
-    if (!eligible) {
-      await _refuse();
-      return;
-    }
+    // 200: the server accepted the date; trust it.
     if (!mounted) return;
     if (context.canPop()) {
       context.pop(true);
@@ -148,7 +143,7 @@ class _AgeOnboardingScreenState extends State<AgeOnboardingScreen> {
           children: [
             const AuthHeader(
               title: 'Bir adım kaldı',
-              subtitle: Text('Devam etmek için doğum tarihini gir.'),
+              subtitle: Text(AgeGate.birthDatePrompt),
             ),
             BirthDateField(
               value: _dob,
@@ -211,7 +206,9 @@ class _AgeOnboardingScreenState extends State<AgeOnboardingScreen> {
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop && !_isLoading) _leave();
       },
-      child: AuthScaffold(child: body),
+      // No "Kapat": the redirect would bounce it straight back here. The way
+      // out is "Vazgeç ve çıkış yap" (and the system back gesture).
+      child: AuthScaffold(showLeading: false, child: body),
     );
   }
 }

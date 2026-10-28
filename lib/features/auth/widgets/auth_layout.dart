@@ -19,11 +19,17 @@ import '../../../shared/widgets/verdict_chip.dart';
 /// * Desktop (≥ 1024): split screen — a violet brand panel on the left and
 ///   the form (max 420) centred on the right.
 class AuthScaffold extends StatelessWidget {
-  const AuthScaffold({super.key, required this.child});
+  const AuthScaffold({super.key, required this.child, this.showLeading = true});
 
   final Widget child;
 
-  Widget _leading(BuildContext context) {
+  /// False for a screen the router holds the user on (the birth-date step):
+  /// "Kapat" would go to the feed and the redirect would bounce straight
+  /// back. Such a screen offers its own way out.
+  final bool showLeading;
+
+  Widget? _leading(BuildContext context) {
+    if (!showLeading) return null;
     if (Navigator.of(context).canPop()) return const BackButton();
     return IconButton(
       icon: const Icon(Icons.close_rounded),
@@ -55,6 +61,7 @@ class AuthScaffold extends StatelessWidget {
       );
     }
 
+    final leading = _leading(context);
     return Scaffold(
       body: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -65,10 +72,11 @@ class AuthScaffold extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-                    child: _leading(context),
-                  ),
+                  if (leading != null)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+                      child: leading,
+                    ),
                   Expanded(child: Center(child: form)),
                 ],
               ),

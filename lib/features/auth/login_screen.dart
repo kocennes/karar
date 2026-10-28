@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/api/api_exception.dart';
+import '../../core/auth/age_gate.dart';
 import '../../core/auth/auth_service.dart';
 import '../../core/layout/breakpoints.dart';
 import '../../core/utils/validators.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/theme/karar_tokens.dart';
 import '../../shared/widgets/karar_button.dart';
+import 'widgets/age_gate_widgets.dart';
 import 'widgets/auth_layout.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -33,7 +35,23 @@ class _LoginScreenState extends State<LoginScreen> {
   var _failedAttempts = 0;
   String? _error;
 
+  /// P0-02: the neutral refusal replaces the form (refused account, or Google
+  /// sign-in on a refused device). Lock and session are handled centrally.
+  var _ageRefused = false;
+
   bool get _isLocked => _failedAttempts >= 5;
+
+  bool _isAgeRefusal(Object e) =>
+      e is ApiException && e.code == AgeGate.notEligibleCode;
+
+  void _showAgeRefusal() {
+    if (!mounted) return;
+    setState(() {
+      _ageRefused = true;
+      _isLoading = false;
+      _error = null;
+    });
+  }
 
   @override
   void dispose() {
@@ -63,6 +81,10 @@ class _LoginScreenState extends State<LoginScreen> {
       _failedAttempts = 0;
       widget.onSuccess?.call();
     } on ApiException catch (e) {
+      if (_isAgeRefusal(e)) {
+        _showAgeRefusal();
+        return;
+      }
       if (e.code == 'EMAIL_NOT_VERIFIED') {
         if (mounted) {
           context.go('/auth/verify-email', extra: _identifierCtrl.text.trim());
@@ -94,9 +116,15 @@ class _LoginScreenState extends State<LoginScreen> {
       _error = null;
     });
     try {
+      // A refused device never reaches Google or the API: loginWithGoogle
+      // checks the lock first and throws the refusal.
       await widget.authService.loginWithGoogle();
       widget.onSuccess?.call();
     } catch (e) {
+      if (_isAgeRefusal(e)) {
+        _showAgeRefusal();
+        return;
+      }
       setState(() => _error = _friendlyError(e));
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -119,6 +147,8 @@ class _LoginScreenState extends State<LoginScreen> {
       color: kc.text1,
       fontFeatures: AppTypography.tabular,
     );
+
+    if (_ageRefused) return const AuthScaffold(child: AgeGateRefusal());
 
     return AuthScaffold(
       child: Form(

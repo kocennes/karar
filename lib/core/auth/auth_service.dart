@@ -47,10 +47,17 @@ class AuthUser {
     return DateTime.now().difference(usernameChangedAt!).inDays >= 30;
   }
 
-  factory AuthUser.fromJson(Map<String, Object?> json) {
+  /// [previous]: the user this response updates. Responses that omit
+  /// `requiresOnboarding` (`PUT /users/me`, older APIs) keep its value for the
+  /// same account instead of silently dropping it to false.
+  factory AuthUser.fromJson(
+    Map<String, Object?> json, {
+    AuthUser? previous,
+  }) {
     final user = json['user'] as Map<String, Object?>? ?? json;
+    final id = (user['id'] ?? user['userId']) as String;
     return AuthUser(
-      id: (user['id'] ?? user['userId']) as String,
+      id: id,
       username: user['username'] as String,
       email: user['email'] as String,
       karma: user['karma'] as int? ?? 0,
@@ -66,11 +73,12 @@ class AuthUser {
       // Top level on auth responses, the profile itself on GET /users/me.
       requiresOnboarding: json['requiresOnboarding'] as bool? ??
           user['requiresOnboarding'] as bool? ??
+          (previous?.id == id ? previous?.requiresOnboarding : null) ??
           false,
     );
   }
 
-  AuthUser _onboarded() => AuthUser(
+  AuthUser _withRequiresOnboarding(bool value) => AuthUser(
         id: id,
         username: username,
         email: email,
@@ -83,10 +91,56 @@ class AuthUser {
         joinedAt: joinedAt,
         isNewUser: isNewUser,
         is2faEnabled: is2faEnabled,
+        requiresOnboarding: value,
       );
 }
 
 enum LogoutReason { manual, sessionExpired }
+
+/// P0-02: the neutral refusal as an error, for flows the app refuses itself
+/// (a locked device) exactly as the server would.
+const ageRefusalError = ApiException(
+  statusCode: 403,
+  code: AgeGate.notEligibleCode,
+  message: AgeGate.refusalMessage,
+);
+
+/// Google + Firebase sign-in, the only platform SDKs [AuthService] talks to.
+/// Replaceable in tests.
+class GoogleAuthBridge {
+  GoogleAuthBridge() : _googleSignIn = GoogleSignIn(scopes: ['email']);
+
+  final GoogleSignIn _googleSignIn;
+
+  /// Runs the Google account picker and returns the Firebase ID token the
+  /// API expects. Throws when cancelled.
+  Future<String> idToken() async {
+    final googleUser = await _googleSignIn.signIn();
+    if (googleUser == null) throw Exception('Google girişi iptal edildi.');
+
+    final googleAuth = await googleUser.authentication;
+    final credential = GoogleAuthProvider.credential(
+      accessToken: googleAuth.accessToken,
+      idToken: googleAuth.idToken,
+    );
+
+    final userCredential =
+        await FirebaseAuth.instance.signInWithCredential(credential);
+    final idToken = await userCredential.user?.getIdToken();
+    if (idToken == null) throw Exception('Firebase ID token alınamadı.');
+    return idToken;
+  }
+
+  /// Best effort; never throws.
+  Future<void> signOut() async {
+    try {
+      await _googleSignIn.signOut();
+    } catch (_) {}
+    try {
+      await FirebaseAuth.instance.signOut();
+    } catch (_) {}
+  }
+}
 
 class AuthService {
   AuthService({
@@ -94,15 +148,16 @@ class AuthService {
     required ApiClient apiClient,
     void Function(LogoutReason)? onLogout,
     Future<void> Function()? onBeforeLogout,
+    GoogleAuthBridge? google,
   })  : _storage = storage,
         _apiClient = apiClient,
         _onBeforeLogout = onBeforeLogout,
         _onLogout = onLogout,
-        _googleSignIn = GoogleSignIn(scopes: ['email']);
+        _google = google ?? GoogleAuthBridge();
 
   final SecureStorage _storage;
   final ApiClient _apiClient;
-  final GoogleSignIn _googleSignIn;
+  final GoogleAuthBridge _google;
   Future<void> Function()? _onBeforeLogout;
   void Function(LogoutReason)? _onLogout;
 
@@ -131,7 +186,7 @@ class AuthService {
       final json = await _apiClient.getJson<Map<String, Object?>>(
         ApiEndpoints.userMe,
       );
-      _currentUser = AuthUser.fromJson(json);
+      _currentUser = AuthUser.fromJson(json, previous: _currentUser);
     } catch (_) {
       // Token geçersiz ya da süresi dolmuş; refresh dene
       final refreshed = await refreshAccessToken();
@@ -198,30 +253,59 @@ class AuthService {
       );
 
   /// Neutral birth-date + terms step for accounts with `requiresOnboarding`.
-  /// On [AgeGate.notEligibleCode] the device is locked and the session ends
-  /// (the server has already revoked it); the exception is rethrown.
+  /// The server decides: a 200 completes the step whatever the local clock
+  /// says. A 403 [AgeGate.notEligibleCode] is answered centrally (lock, no
+  /// session, see [applyAgeRefusal]) before it is rethrown here.
   Future<void> completeOnboarding({
     required DateTime dateOfBirth,
     required bool acceptedTerms,
     required bool acceptedCommunityGuidelines,
   }) async {
+    await _apiClient.postJson<Map<String, Object?>>(
+      ApiEndpoints.userMeOnboarding,
+      body: {
+        'dateOfBirth': _dateOnlyIso(dateOfBirth),
+        'acceptedTerms': acceptedTerms,
+        'acceptedCommunityGuidelines': acceptedCommunityGuidelines,
+      },
+    );
+    _currentUser = _currentUser?._withRequiresOnboarding(false);
+  }
+
+  /// A write answered [AgeGate.verificationRequiredCode]: the account has no
+  /// birth date after all. The router redirect now holds it at the step.
+  void markRequiresOnboarding() {
+    _currentUser = _currentUser?._withRequiresOnboarding(true);
+  }
+
+  /// The neutral refusal's state change, for every [AgeGate.notEligibleCode]:
+  /// the device lock is set and no session remains (the app session, Google
+  /// and Firebase). True when this changed anything, i.e. the refusal is new
+  /// to this device or ended a session.
+  Future<bool> applyAgeRefusal() async {
+    var changed = false;
     try {
-      await _apiClient.postJson<Map<String, Object?>>(
-        ApiEndpoints.userMeOnboarding,
-        body: {
-          'dateOfBirth': _dateOnlyIso(dateOfBirth),
-          'acceptedTerms': acceptedTerms,
-          'acceptedCommunityGuidelines': acceptedCommunityGuidelines,
-        },
-      );
-    } on ApiException catch (e) {
-      if (e.code == AgeGate.notEligibleCode) {
+      if (!await isAgeGateLocked()) {
         await lockAgeGate();
-        await logout(reason: LogoutReason.manual);
+        changed = true;
       }
-      rethrow;
+    } catch (_) {}
+
+    var hasSession = isLoggedIn;
+    if (!hasSession) {
+      try {
+        hasSession = await _storage.readRefreshToken() != null ||
+            await _storage.readAccessToken() != null;
+      } catch (_) {}
     }
-    _currentUser = _currentUser?._onboarded();
+    if (hasSession) {
+      await logout(reason: LogoutReason.manual);
+      return true;
+    }
+    // A refused Google sign-in has no app session yet, but Google and
+    // Firebase are signed in.
+    if (changed) await _google.signOut();
+    return changed;
   }
 
   static String _dateOnlyIso(DateTime d) =>
@@ -243,20 +327,17 @@ class AuthService {
         body: {'email': email},
       );
 
+  /// Google can create an account, so a refused device does not get to start
+  /// it at all: no account picker, no API call, the neutral refusal instead
+  /// ([ageRefusalError]). Covers every screen that offers Google sign-in.
   Future<AuthUser> loginWithGoogle() async {
-    final googleUser = await _googleSignIn.signIn();
-    if (googleUser == null) throw Exception('Google girişi iptal edildi.');
+    var locked = false;
+    try {
+      locked = await isAgeGateLocked();
+    } catch (_) {}
+    if (locked) throw ageRefusalError;
 
-    final googleAuth = await googleUser.authentication;
-    final credential = GoogleAuthProvider.credential(
-      accessToken: googleAuth.accessToken,
-      idToken: googleAuth.idToken,
-    );
-
-    final userCredential =
-        await FirebaseAuth.instance.signInWithCredential(credential);
-    final idToken = await userCredential.user?.getIdToken();
-    if (idToken == null) throw Exception('Firebase ID token alınamadı.');
+    final idToken = await _google.idToken();
 
     final json = await _apiClient.postJson<Map<String, Object?>>(
       ApiEndpoints.authGoogle,
@@ -298,13 +379,7 @@ class AuthService {
       }
     } catch (_) {}
 
-    try {
-      await _googleSignIn.signOut();
-    } catch (_) {}
-
-    try {
-      await FirebaseAuth.instance.signOut();
-    } catch (_) {}
+    await _google.signOut();
 
     await _storage.clearAuthTokens();
     _currentUser = null;
@@ -318,8 +393,7 @@ class AuthService {
       body: password == null ? null : {'password': password},
     );
     await _onBeforeLogout?.call();
-    await _googleSignIn.signOut();
-    await FirebaseAuth.instance.signOut();
+    await _google.signOut();
     await _storage.clearAuthTokens();
     _currentUser = null;
     TabAuthSync.notifyLoggedOut();
@@ -363,7 +437,8 @@ class AuthService {
       ApiEndpoints.userMe,
       body: {'username': newUsername},
     );
-    _currentUser = AuthUser.fromJson(json);
+    // PUT /users/me omits requiresOnboarding.
+    _currentUser = AuthUser.fromJson(json, previous: _currentUser);
   }
 
   Future<void> updateProfile({String? username, String? bio}) async {
@@ -374,7 +449,8 @@ class AuthService {
       ApiEndpoints.userMe,
       body: body,
     );
-    _currentUser = AuthUser.fromJson(json);
+    // PUT /users/me omits requiresOnboarding.
+    _currentUser = AuthUser.fromJson(json, previous: _currentUser);
   }
 
   Future<bool> isUsernameAvailable(String username) async {

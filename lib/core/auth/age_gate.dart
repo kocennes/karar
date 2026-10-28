@@ -1,5 +1,3 @@
-import 'package:flutter/material.dart' show DateUtils;
-
 /// P0-02: temporary neutral age gate, in place until the e-Devlet age token.
 ///
 /// "Neutral": the UI never shows the threshold, the date picker does not lean
@@ -14,12 +12,16 @@ import 'package:flutter/material.dart' show DateUtils;
 ///   `{dateOfBirth, acceptedTerms, acceptedCommunityGuidelines}` →
 ///   `200 {"requiresOnboarding": false}`.
 /// * `POST /api/v1/devices/age-declaration` `{dateOfBirth}` → `204`.
-/// * Error codes below, in the usual `{error: {code, message}}` envelope.
+/// * Error codes below, in the usual `{error: {code, message}}` envelope. The
+///   app answers them in one place: `ApiClient` → `AgeGateCoordinator`.
 abstract final class AgeGate {
   // Not shown anywhere in the UI.
   static const int _minimumAge = 18;
 
-  /// 403: the declared date is not eligible, or this device was refused before.
+  /// 403: the declared date is not eligible, the device or the account was
+  /// refused before. Can come from register, onboarding, `/auth/google`,
+  /// `/auth/login`, the device declaration and (with `AgeGate:Enforce`) any
+  /// write.
   static const notEligibleCode = 'AGE_NOT_ELIGIBLE';
 
   /// 403 from a write endpoint (server flag `AgeGate:Enforce`): the account has
@@ -32,11 +34,23 @@ abstract final class AgeGate {
   /// 400: a future or implausible date (a typo, not an age statement).
   static const invalidDateCode = 'INVALID_DATE_OF_BIRTH';
 
-  static const refusalTitle = 'Kayıt tamamlanamadı';
+  /// Fits a refused sign-up, a refused sign-in and a refused existing account.
+  static const refusalTitle = 'Devam edilemiyor';
   static const refusalMessage = "Üzgünüz, Karar'ı kullanamıyorsun.";
 
-  static DateTime today([DateTime? now]) =>
-      DateUtils.dateOnly(now ?? DateTime.now());
+  /// Asks for the birth date (onboarding step, guest declaration sheet).
+  static const birthDatePrompt = 'Devam etmek için doğum tarihini gir.';
+
+  /// The server's offset: Turkey keeps UTC+3 all year (no DST).
+  static const _serverOffset = Duration(hours: 3);
+
+  /// Today's date in Turkey, the calendar the server checks ages against,
+  /// whatever the device's time zone. Date part only. Use this everywhere a
+  /// birth date is compared with "today" (eligibility, the picker's end).
+  static DateTime today([DateTime? now]) {
+    final turkey = (now ?? DateTime.now()).toUtc().add(_serverOffset);
+    return DateTime(turkey.year, turkey.month, turkey.day);
+  }
 
   static int ageOn(DateTime dateOfBirth, DateTime today) {
     var age = today.year - dateOfBirth.year;
@@ -46,6 +60,7 @@ abstract final class AgeGate {
     return age;
   }
 
+  /// Local pre-check only (register screen). The server has the final word.
   static bool isEligible(DateTime dateOfBirth, {DateTime? now}) =>
       ageOn(dateOfBirth, today(now)) >= _minimumAge;
 }
@@ -59,6 +74,7 @@ String? ageOnboardingRedirect({
   if (!requiresOnboarding) return null;
   const open = {
     ageOnboardingPath,
+    ageRefusalPath,
     '/splash',
     '/onboarding',
     '/policy-acceptance',
@@ -68,3 +84,7 @@ String? ageOnboardingRedirect({
 }
 
 const ageOnboardingPath = '/auth/onboarding';
+
+/// The neutral refusal page, for refusals outside the auth screens (which
+/// show it in place).
+const ageRefusalPath = '/age-gate';

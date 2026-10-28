@@ -170,6 +170,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
+    // Local pre-check against today's Turkish date (as the server counts), so
+    // no account data is sent for an ineligible date; the server still checks.
     if (!AgeGate.isEligible(_selectedDob!)) {
       await _closeAgeGate(declaredDob: _selectedDob);
       return;
@@ -233,8 +235,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _error = null;
     });
     try {
+      // A refused device never reaches Google or the API (see
+      // AuthService.loginWithGoogle); a refusal from /auth/google has already
+      // locked the device and ended the session centrally.
       await widget.authService.loginWithGoogle();
       widget.onSuccess?.call();
+    } on ApiException catch (e) {
+      if (e.code == AgeGate.notEligibleCode) {
+        await _closeAgeGate();
+        return;
+      }
+      setState(() => _error = e.friendlyMessage);
     } catch (e) {
       setState(() => _error = e.toString().replaceAll('Exception:', '').trim());
     } finally {

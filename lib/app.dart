@@ -18,6 +18,7 @@ import 'core/theme/font_size_provider.dart';
 import 'core/theme/theme_provider.dart';
 import 'core/utils/sw_update_service.dart';
 import 'core/web/tab_auth_sync.dart';
+import 'features/auth/age_gate_ui.dart';
 import 'features/feed/feed_provider.dart';
 import 'features/notifications/notifications_provider.dart';
 import 'shared/widgets/maintenance_screen.dart';
@@ -65,6 +66,9 @@ class _KararAppState extends ConsumerState<KararApp>
       ref.read(maintenanceMessageProvider.notifier).state = null;
       ref.read(maintenanceProvider.notifier).state = true;
     });
+
+    // P0-02: age-gate errors from any request (see AgeGateCoordinator).
+    widget.services.ageGate.bindUi(routerAgeGateUi(_router));
 
     // Remote Config'den bakım modu kontrolü — API 503 gelmeden önce de devreye girer
     WidgetsBinding.instance.addPostFrameCallback((_) {

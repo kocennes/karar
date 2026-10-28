@@ -5,6 +5,7 @@ import 'analytics/analytics_service.dart';
 import 'analytics/session_tracker.dart';
 import 'api/api_client.dart';
 import 'app_review/rating_service.dart';
+import 'auth/age_gate_coordinator.dart';
 import 'auth/auth_service.dart';
 import 'auth/device_service.dart';
 import 'auth/device_token_store.dart';
@@ -20,6 +21,7 @@ class AppServices {
     required this.apiClient,
     required this.deviceService,
     required this.authService,
+    required this.ageGate,
     required this.postRepository,
     required this.notificationRepository,
     required this.notificationService,
@@ -34,6 +36,7 @@ class AppServices {
   final ApiClient apiClient;
   final DeviceService deviceService;
   final AuthService authService;
+  final AgeGateCoordinator ageGate;
   final PostRepository postRepository;
   final NotificationRepository notificationRepository;
   final NotificationService notificationService;
@@ -68,6 +71,11 @@ class AppServices {
       onLogout: onLogout,
     );
 
+    // P0-02: every API error with an age-gate code is answered here; the app
+    // shell binds the UI (refusal page, birth-date step, declaration sheet).
+    final ageGate = AgeGateCoordinator(authService: authService);
+    apiClient.setAgeGateHooks(ageGate);
+
     final deviceService = DeviceService(
       apiClient: apiClient,
       tokenStore: tokenStore,
@@ -100,6 +108,7 @@ class AppServices {
       apiClient: apiClient,
       deviceService: deviceService,
       authService: authService,
+      ageGate: ageGate,
       postRepository: PostRepository(apiClient: apiClient),
       notificationRepository: NotificationRepository(apiClient: apiClient),
       notificationService: notificationService,
