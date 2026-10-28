@@ -45,8 +45,8 @@ public sealed class BrigadeCoordinatedDetectorJob(
 
     internal async Task DetectAsync(CancellationToken ct)
     {
-        // A brigade is itself traffic: the API stays active for IdleAfter after the burst, so detection still runs.
-        if (activityTracker.IsIdle())
+        // A brigade is itself traffic; gate on the vote window so a burst is still inspected after it ends.
+        if (activityTracker.IsIdle(TimeSpan.FromMinutes(VoteWindowMinutes)))
         {
             logger.LogDebug("BrigadeCoordinatedDetectorJob: API idle, cycle skipped (free tier)");
             return;

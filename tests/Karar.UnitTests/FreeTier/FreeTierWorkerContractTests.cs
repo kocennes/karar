@@ -70,7 +70,8 @@ public sealed class FreeTierWorkerContractTests
         var source = Worker(file);
 
         source.Should().Contain("ActivityTracker activityTracker", "the gate is injected through the constructor");
-        source.Should().Contain("activityTracker.IsIdle()", "the gate is consulted before DB work");
+        // IsIdle() or IsIdle(window): lookback jobs gate on their own window (see LookbackWindowJobs_...).
+        source.Should().Contain("activityTracker.IsIdle(", "the gate is consulted before DB work");
         source.Should().Contain("BackgroundService", "only hosted timer workers are in scope");
     }
 

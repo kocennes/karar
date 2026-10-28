@@ -51,8 +51,9 @@ public sealed class ViralNotificationJob(
 
     public async Task RunAsync(CancellationToken ct = default)
     {
-        // Velocity needs votes in the last 30 min, i.e. traffic; idle means there is nothing viral.
-        if (activityTracker.IsIdle())
+        // Velocity needs votes in the last 30 min; gate on that window, not IdleAfter, so a burst
+        // followed by silence is still scored before the window empties.
+        if (activityTracker.IsIdle(VelocityWindow))
         {
             logger.LogDebug("ViralNotificationJob: API idle, cycle skipped (free tier)");
             return;

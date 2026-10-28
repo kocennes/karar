@@ -13,6 +13,12 @@ public sealed class SubnetBanMiddleware(RequestDelegate next, SubnetBanService s
 
     public async Task InvokeAsync(HttpContext context)
     {
+        if (SkipsBanCheck(context.Request.Path))
+        {
+            await next(context);
+            return;
+        }
+
         var ip = context.Connection.RemoteIpAddress;
         if (await subnetBan.IsBannedAsync(ip))
         {

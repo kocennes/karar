@@ -21,12 +21,17 @@ public sealed class ActivityTrackingMiddleware(RequestDelegate next, ActivityTra
 
     private static readonly PathString OgShellPrefix = new("/posts");
 
-    public Task InvokeAsync(HttpContext context)
+    public async Task InvokeAsync(HttpContext context)
     {
-        if (CountsAsUserActivity(context.Request.Path, context.Request.Headers.UserAgent))
-            activity.MarkRequest();
+        await next(context);
 
-        return next(context);
+        // Yanıt verildikten sonra işaretlenir: tarayıcı botlarının 404/401/429 aldığı istekler
+        // kullanıcı aktivitesi değildir; aksi halde her tarama Neon'u 10 dk uyanık tutardı.
+        if (context.Response.StatusCode < 400
+            && CountsAsUserActivity(context.Request.Path, context.Request.Headers.UserAgent))
+        {
+            activity.MarkRequest();
+        }
     }
 
     public static bool CountsAsUserActivity(PathString path, string? userAgent)
