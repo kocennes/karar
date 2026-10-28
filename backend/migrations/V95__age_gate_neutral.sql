@@ -14,8 +14,8 @@ ALTER TABLE devices
 -- V1 created reports.reason with a column-level CHECK that Postgres auto-named reports_reason_check
 -- (V58 and V65 rely on the same convention). This list is a superset of V1 and of V65
 -- (PR #19, 'misinformation') and equals the POST /api/v1/reports allowlist. On a fresh
--- database V65 runs first and V95 widens it. A database that gets V95 before V65 would be
--- narrowed again by V65 unless V65 carries the same list, so V65 should include 'minor' too.
+-- database V65 runs first and V95 widens it. A database that gets V95 before V65 is safe too:
+-- V65 skips itself when the constraint already allows 'misinformation' (PR #19, 4d20727).
 ALTER TABLE reports
     DROP CONSTRAINT IF EXISTS reports_reason_check;
 
