@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Karar.Api.Models;
 
 namespace Karar.Api.Contracts;
@@ -295,7 +296,11 @@ public sealed record AuthTokensResponse(
     string RefreshToken,
     DateTimeOffset AccessTokenExpiresAt,
     bool IsNewUser = false,
-    UserProfile? User = null
+    UserProfile? User = null,
+    // P0-02: true when users.date_of_birth is NULL; the client must run the neutral
+    // birth-date step (POST /api/v1/users/me/onboarding) before entering the app.
+    // Omitted (null) by endpoints that do not compute it, e.g. /auth/refresh.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? RequiresOnboarding = null
 );
 
 public sealed record UserProfile(
@@ -310,7 +315,9 @@ public sealed record UserProfile(
     int CommentCount = 0,
     bool Is2faEnabled = false,
     string? Bio = null,
-    DateTimeOffset? UsernameChangedAt = null
+    DateTimeOffset? UsernameChangedAt = null,
+    // P0-02: set only on the caller's own profile (GET /api/v1/users/me); never on public profiles.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? RequiresOnboarding = null
 );
 
 public sealed record TwoFactorSetupResponse(
@@ -373,3 +380,5 @@ public sealed record PolicyStatusResponse(
     int CurrentTermsVersion,
     int CurrentPrivacyVersion
 );
+
+public sealed record OnboardingStatusResponse(bool RequiresOnboarding);

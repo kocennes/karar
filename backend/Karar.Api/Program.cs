@@ -163,6 +163,7 @@ builder.Services.AddSingleton<BusinessMetricsService>();
 builder.Services.AddKararObservability(builder.Configuration, builder.Environment);
 builder.Services.AddSingleton<SubnetBanService>();
 builder.Services.AddSingleton<VoteBrigadeGuard>();
+builder.Services.AddSingleton<AgeGateService>();
 builder.Services.AddScoped<RequestDevice>();
 builder.Services.AddRateLimiter(options =>
 {
@@ -1013,6 +1014,51 @@ app.MapDelete("/api/v1/devices/fcm-token", async (
 
     return Results.NoContent();
 });
+
+// P0-02: neutral age declaration bound to the device. Used before a guest's first vote when
+// AgeGate:GuestVote is on, and by the register screen to record an ineligible date without
+// sending any other personal data. Only timestamps are stored, never the date itself.
+app.MapPost("/api/v1/devices/age-declaration", async (
+    AgeDeclarationRequest request,
+    HttpRequest httpRequest,
+    Db db,
+    RequestDevice requestDevice
+) =>
+{
+    var deviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+    if (deviceId is null)
+    {
+        return Unauthorized();
+    }
+
+    if (request.DateOfBirth is null)
+    {
+        return BadRequest("VALIDATION_ERROR", "Doğum tarihi gerekli.");
+    }
+
+    var ageDecision = AgeGateService.Evaluate(
+        DateOnly.FromDateTime(request.DateOfBirth.Value),
+        AgeGateService.TodayInTurkey());
+    if (ageDecision == AgeGateDecision.InvalidDate)
+    {
+        return AgeGateService.InvalidDateResult();
+    }
+
+    await using var connection = await db.OpenConnectionAsync();
+    if (await AgeGateService.IsDeviceLockedAsync(connection, deviceId.Value))
+    {
+        return AgeGateService.NotEligibleResult();
+    }
+
+    if (ageDecision == AgeGateDecision.NotEligible)
+    {
+        await AgeGateService.MarkDeviceFailedAsync(connection, deviceId.Value);
+        return AgeGateService.NotEligibleResult();
+    }
+
+    await AgeGateService.MarkDeviceDeclaredAsync(connection, deviceId.Value);
+    return Results.NoContent();
+}).RequireRateLimiting("auth-strict");
 
 // Public moderation transparency report — cached 6h, no auth required.
 app.MapGet("/api/v1/moderation/transparency", async (Db db, RedisService redis) =>
@@ -2825,7 +2871,7 @@ app.MapPost("/api/v1/posts", async (
         $"/api/v1/posts/{newPostId}",
         new CreatePostResponse(newPostId, request.Title, newPostStatus, newPostCreatedAt, postSlug)
     );
-}).RequireRateLimiting("post-create");
+}).RequireRateLimiting("post-create").RequireAgeGate();
 
 app.MapGet("/api/v1/posts/{id:guid}", async (
     Guid id,
@@ -3770,7 +3816,7 @@ app.MapPost("/api/v1/posts/{id:guid}/vote", async (
     });
 
     return Results.Ok(response);
-}).RequireRateLimiting("vote");
+}).RequireRateLimiting("vote").RequireAgeGate(AgeGateScope.Vote);
 
 app.MapDelete("/api/v1/posts/{id:guid}/vote", async (
     Guid id,
@@ -4312,7 +4358,7 @@ app.MapPost("/api/v1/posts/{id:guid}/comments", async (
         new { post_id = id, status });
 
     return Results.Created($"/api/v1/comments/{commentId}", new CommentMutationResponse(commentId, request.Content, status, createdAt));
-});
+}).RequireAgeGate();
 
 app.MapDelete("/api/v1/comments/{id:guid}", async (
     Guid id,
@@ -4429,7 +4475,7 @@ app.MapPost("/api/v1/comments/{id:guid}/upvote", async (
     Db db,
     RequestDevice requestDevice,
     RedisService redis
-) => await SetCommentUpvoteAsync(id, httpRequest, db, requestDevice, redis, shouldUpvote: true));
+) => await SetCommentUpvoteAsync(id, httpRequest, db, requestDevice, redis, shouldUpvote: true)).RequireAgeGate();
 
 app.MapDelete("/api/v1/comments/{id:guid}/upvote", async (
     Guid id,
@@ -4444,7 +4490,7 @@ app.MapPost("/api/v1/comments/{id:guid}/downvote", async (
     HttpRequest httpRequest,
     Db db,
     RequestDevice requestDevice
-) => await SetCommentDownvoteAsync(id, httpRequest, db, requestDevice, shouldDownvote: true));
+) => await SetCommentDownvoteAsync(id, httpRequest, db, requestDevice, shouldDownvote: true)).RequireAgeGate();
 
 app.MapDelete("/api/v1/comments/{id:guid}/downvote", async (
     Guid id,
@@ -4489,7 +4535,7 @@ app.MapPost("/api/v1/comments/{id:guid}/reactions", async (
 
     var comment = await ReadCommentDtoAsync(connection, id, deviceId.Value, userId);
     return comment is null ? NotFound("COMMENT_NOT_FOUND", "Yorum bulunamadı.") : Results.Ok(comment);
-});
+}).RequireAgeGate();
 
 app.MapDelete("/api/v1/comments/{id:guid}/reactions", async (
     Guid id,
@@ -4539,7 +4585,8 @@ app.MapPost("/api/v1/reports", async (
         return BadRequest("INVALID_TARGET_TYPE", "Hedef tipi post veya comment olmalı.");
     }
 
-    if (request.Reason is not ("hate_speech" or "harassment" or "personal_info" or "misinformation" or "spam" or "self_harm" or "illegal" or "other"))
+    // Must equal the reports_reason_check list (V95). 'minor' = "Reşit olmayan kullanıcı" (P0-02).
+    if (request.Reason is not ("hate_speech" or "harassment" or "personal_info" or "misinformation" or "spam" or "self_harm" or "illegal" or "minor" or "other"))
     {
         return BadRequest("INVALID_REPORT_REASON", "Geçersiz rapor sebebi.");
     }
@@ -8195,25 +8242,28 @@ app.MapPost("/api/v1/auth/register", async (
             "Kullanim kosullari ve topluluk kurallari kabul edilmeden hesap olusturulamaz.");
     }
 
-    if (!request.AgeConfirmed)
-    {
-        return BadRequest(
-            "AGE_CONFIRMATION_REQUIRED",
-            "18 yaş ve üzeri olduğunu onaylamadan hesap oluşturamazsın.");
-    }
-
-    var today = DateOnly.FromDateTime(DateTime.UtcNow);
+    // P0-02 neutral age gate: the declared birth date is the age statement (the separate
+    // "18+" checkbox is gone, request.AgeConfirmed is ignored). A refusal never names the
+    // threshold, and a device that was refused once stays refused.
     var dob = DateOnly.FromDateTime(request.DateOfBirth);
-    var age = today.Year - dob.Year;
-    if (dob > today.AddYears(-age)) age--;
-    if (age < 18)
+    var ageDecision = AgeGateService.Evaluate(dob, AgeGateService.TodayInTurkey());
+    if (ageDecision == AgeGateDecision.InvalidDate)
     {
-        return BadRequest(
-            "UNDER_AGE",
-            "Karar'a katılmak için 18 yaşında veya daha büyük olmalısın.");
+        return AgeGateService.InvalidDateResult();
     }
 
     await using var connection = await db.OpenConnectionAsync();
+
+    if (await AgeGateService.IsDeviceLockedAsync(connection, deviceId.Value))
+    {
+        return AgeGateService.NotEligibleResult();
+    }
+
+    if (ageDecision == AgeGateDecision.NotEligible)
+    {
+        await AgeGateService.MarkDeviceFailedAsync(connection, deviceId.Value);
+        return AgeGateService.NotEligibleResult();
+    }
 
     // Kullanıcı adı veya e-posta daha önce alınmış mı?
     await using var checkCmd = new NpgsqlCommand(
@@ -8363,7 +8413,7 @@ app.MapPost("/api/v1/auth/verify-email", async (
         UPDATE users
         SET email_verified = TRUE, updated_at = NOW()
         WHERE email = @email AND email_verified = FALSE
-        RETURNING id, username, karma, auth_provider
+        RETURNING id, username, karma, auth_provider, date_of_birth IS NULL
         """,
         connection,
         transaction
@@ -8380,6 +8430,7 @@ app.MapPost("/api/v1/auth/verify-email", async (
     var username = userReader.GetString(1);
     var karma = userReader.GetInt32(2);
     var authProvider = userReader.GetString(3);
+    var requiresOnboarding = userReader.GetBoolean(4);
     await userReader.CloseAsync();
 
     // OTP sil
@@ -8412,7 +8463,8 @@ app.MapPost("/api/v1/auth/verify-email", async (
         accessToken,
         refreshToken,
         DateTimeOffset.UtcNow.AddMinutes(15),
-        User: new UserProfile(userId, username, email, karma, authProvider, true)
+        User: new UserProfile(userId, username, email, karma, authProvider, true),
+        RequiresOnboarding: requiresOnboarding
     ));
 }).RequireRateLimiting("auth-strict");
 
@@ -8510,7 +8562,7 @@ app.MapPost("/api/v1/auth/google", async (
     // Mevcut kullanıcı var mı? (google_id veya email ile bul)
     await using var findCmd = new NpgsqlCommand(
         """
-        SELECT id, username, email, karma, auth_provider
+        SELECT id, username, email, karma, auth_provider, date_of_birth IS NULL
         FROM users
         WHERE google_id = @googleId OR (email = @email AND auth_provider = 'google')
         LIMIT 1
@@ -8528,6 +8580,9 @@ app.MapPost("/api/v1/auth/google", async (
     int karma;
     string authProvider;
     bool isNewUser;
+    // P0-02: Google sign-up collects no birth date or terms acceptance. Until the account has a
+    // date of birth the client must run the neutral onboarding step (POST /api/v1/users/me/onboarding).
+    bool requiresOnboarding;
 
     if (await findReader.ReadAsync())
     {
@@ -8537,6 +8592,7 @@ app.MapPost("/api/v1/auth/google", async (
         userEmail = findReader.GetString(2);
         karma = findReader.GetInt32(3);
         authProvider = findReader.GetString(4);
+        requiresOnboarding = findReader.GetBoolean(5);
         isNewUser = false;
         await findReader.CloseAsync();
 
@@ -8553,6 +8609,7 @@ app.MapPost("/api/v1/auth/google", async (
     {
         await findReader.CloseAsync();
         isNewUser = true;
+        requiresOnboarding = true;
 
         // E-posta Google'dan alındığından doğrulanmış kabul edilir
         var baseUsername = googleEmail.Split('@')[0]
@@ -8625,7 +8682,8 @@ app.MapPost("/api/v1/auth/google", async (
             refreshToken,
             accessTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(15),
             isNewUser = true,
-            user = new UserProfile(userId, username, userEmail, 0, authProvider, true)
+            user = new UserProfile(userId, username, userEmail, 0, authProvider, true),
+            requiresOnboarding = true
         })
         : Results.Ok(new AuthTokensResponse(
             userId,
@@ -8633,7 +8691,8 @@ app.MapPost("/api/v1/auth/google", async (
             accessToken,
             refreshToken,
             DateTimeOffset.UtcNow.AddMinutes(15),
-            User: new UserProfile(userId, username, userEmail, karma, authProvider, true)
+            User: new UserProfile(userId, username, userEmail, karma, authProvider, true),
+            RequiresOnboarding: requiresOnboarding
         ));
 }).RequireRateLimiting("auth-strict");
 
@@ -8754,7 +8813,7 @@ app.MapPost("/api/v1/auth/login", async (
     await using var findCmd = new NpgsqlCommand(
         """
         SELECT id, username, email, password_hash, email_verified, karma, auth_provider, is_banned,
-               is_2fa_enabled, totp_secret
+               is_2fa_enabled, totp_secret, date_of_birth IS NULL
         FROM users
         WHERE (lower(username) = @identifier OR email = @identifier)
           AND auth_provider = 'password'
@@ -8782,6 +8841,8 @@ app.MapPost("/api/v1/auth/login", async (
     var isBanned = reader.GetBoolean(7);
     var is2faEnabled = reader.GetBoolean(8);
     var totpSecret = reader.IsDBNull(9) ? null : reader.GetString(9);
+    // P0-02: password accounts created before V31 may have no date of birth.
+    var requiresOnboarding = reader.GetBoolean(10);
     await reader.CloseAsync();
 
     if (isBanned)
@@ -8874,7 +8935,8 @@ app.MapPost("/api/v1/auth/login", async (
         accessToken,
         refreshToken,
         DateTimeOffset.UtcNow.AddMinutes(15),
-        User: new UserProfile(userId, username, email, karma, authProvider, true)
+        User: new UserProfile(userId, username, email, karma, authProvider, true),
+        RequiresOnboarding: requiresOnboarding
     ));
 }).RequireRateLimiting("auth-strict");
 
@@ -9011,7 +9073,8 @@ app.MapGet("/api/v1/users/me", async (
                u.bio,
                u.username_changed_at,
                (SELECT COUNT(*) FROM posts p WHERE p.user_id = u.id AND p.status != 'deleted') AS post_count,
-               (SELECT COUNT(*) FROM comments cm WHERE cm.device_id = u.device_id AND cm.status != 'deleted') AS comment_count
+               (SELECT COUNT(*) FROM comments cm WHERE cm.device_id = u.device_id AND cm.status != 'deleted') AS comment_count,
+               u.date_of_birth IS NULL AS requires_onboarding
         FROM users u
         WHERE u.id = @id AND u.deleted_at IS NULL
         """,
@@ -9034,7 +9097,9 @@ app.MapGet("/api/v1/users/me", async (
         Convert.ToInt32(reader.GetInt64(11)),
         reader.GetBoolean(7),
         reader.IsDBNull(8) ? null : reader.GetString(8),
-        reader.IsDBNull(9) ? null : reader.GetFieldValue<DateTimeOffset>(9)
+        reader.IsDBNull(9) ? null : reader.GetFieldValue<DateTimeOffset>(9),
+        // P0-02: lets the app resume the onboarding step after a restart.
+        RequiresOnboarding: reader.GetBoolean(12)
     ));
 });
 
@@ -9435,6 +9500,117 @@ app.MapPost("/api/v1/users/me/accept-policy", async (
 
     return Results.Ok(new MessageResponse("Politika kabulü kaydedildi."));
 });
+
+// P0-02: neutral birth-date + terms step for accounts that have no date of birth (Google sign-up,
+// password accounts older than V31). The date is set once and never overwritten here. An
+// ineligible date is not stored: the device is locked and the account's sessions are revoked.
+app.MapPost("/api/v1/users/me/onboarding", async (
+    CompleteOnboardingRequest request,
+    HttpRequest httpRequest,
+    Db db,
+    JwtService jwtService,
+    RequestDevice requestDevice,
+    ComplianceLogService complianceLog
+) =>
+{
+    var principal = GetJwtPrincipal(httpRequest, jwtService);
+    if (principal is null) return Unauthorized();
+    var userId = GetUserId(principal);
+
+    if (request.DateOfBirth is null)
+    {
+        return BadRequest("VALIDATION_ERROR", "Doğum tarihi gerekli.");
+    }
+
+    if (!request.AcceptedTerms || !request.AcceptedCommunityGuidelines)
+    {
+        return BadRequest(
+            "POLICY_ACCEPTANCE_REQUIRED",
+            "Kullanım koşulları ve topluluk kuralları kabul edilmeden devam edilemez.");
+    }
+
+    var ageDecision = AgeGateService.Evaluate(
+        DateOnly.FromDateTime(request.DateOfBirth.Value),
+        AgeGateService.TodayInTurkey());
+    if (ageDecision == AgeGateDecision.InvalidDate)
+    {
+        return AgeGateService.InvalidDateResult();
+    }
+
+    var requestDeviceId = await requestDevice.TryGetDeviceIdAsync(httpRequest);
+
+    await using var connection = await db.OpenConnectionAsync();
+    await using var transaction = await connection.BeginTransactionAsync();
+
+    await using var userCmd = new NpgsqlCommand(
+        "SELECT device_id, date_of_birth IS NULL FROM users WHERE id = @id AND deleted_at IS NULL FOR UPDATE",
+        connection,
+        transaction
+    );
+    userCmd.Parameters.AddWithValue("id", userId);
+    Guid accountDeviceId;
+    bool missingDateOfBirth;
+    await using (var userReader = await userCmd.ExecuteReaderAsync())
+    {
+        if (!await userReader.ReadAsync())
+        {
+            return NotFound("USER_NOT_FOUND", "Kullanıcı bulunamadı.");
+        }
+        accountDeviceId = userReader.GetGuid(0);
+        missingDateOfBirth = userReader.GetBoolean(1);
+    }
+
+    if (!missingDateOfBirth)
+    {
+        // Already onboarded: idempotent success, the stored date is never replaced.
+        await transaction.RollbackAsync();
+        return Results.Ok(new OnboardingStatusResponse(RequiresOnboarding: false));
+    }
+
+    var deviceId = requestDeviceId ?? accountDeviceId;
+    if (await AgeGateService.IsDeviceLockedAsync(connection, deviceId, transaction))
+    {
+        await transaction.RollbackAsync();
+        return AgeGateService.NotEligibleResult();
+    }
+
+    if (ageDecision == AgeGateDecision.NotEligible)
+    {
+        await AgeGateService.MarkDeviceFailedAsync(connection, deviceId, transaction);
+        await using var revokeCmd = new NpgsqlCommand(
+            "UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = @id AND revoked_at IS NULL",
+            connection,
+            transaction
+        );
+        revokeCmd.Parameters.AddWithValue("id", userId);
+        await revokeCmd.ExecuteNonQueryAsync();
+        await transaction.CommitAsync();
+        return AgeGateService.NotEligibleResult();
+    }
+
+    await using var updateCmd = new NpgsqlCommand(
+        """
+        UPDATE users
+           SET date_of_birth          = @dob,
+               terms_version_accepted = GREATEST(terms_version_accepted, @tv),
+               updated_at             = NOW()
+         WHERE id = @id AND deleted_at IS NULL AND date_of_birth IS NULL
+        """,
+        connection,
+        transaction
+    );
+    updateCmd.Parameters.AddWithValue("id", userId);
+    updateCmd.Parameters.AddWithValue("dob", DateOnly.FromDateTime(request.DateOfBirth.Value));
+    updateCmd.Parameters.AddWithValue("tv", (short)CurrentTermsVersion);
+    await updateCmd.ExecuteNonQueryAsync();
+    await transaction.CommitAsync();
+
+    var onboardingIp = httpRequest.HttpContext.Connection.RemoteIpAddress?.ToString();
+    _ = complianceLog.LogAsync("onboarding_completed", onboardingIp, deviceId, userId, null, "auth",
+        new { accepted_terms = true, accepted_community_guidelines = true, terms_version = CurrentTermsVersion });
+
+    return Results.Ok(new OnboardingStatusResponse(RequiresOnboarding: false));
+}).RequireRateLimiting("auth-strict");
 
 app.MapGet("/api/v1/users/me/data-export", async (
     HttpRequest httpRequest,

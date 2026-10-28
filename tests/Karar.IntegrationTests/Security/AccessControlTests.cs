@@ -29,6 +29,7 @@ public class AccessControlTests
     [InlineData("PUT", "/api/v1/users/me/notification-preferences")]
     [InlineData("GET", "/api/v1/users/me/policy-status")]
     [InlineData("POST", "/api/v1/users/me/accept-policy")]
+    [InlineData("POST", "/api/v1/users/me/onboarding")]
     [InlineData("GET", "/api/v1/users/me/posts")]
     [InlineData("GET", "/api/v1/users/me/comments")]
     [InlineData("GET", "/api/v1/users/me/saved")]
